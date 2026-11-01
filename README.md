@@ -10,8 +10,10 @@
 本项目源自一台 nradio 固件路由器上深度定制的 **8080 端口独立 LuCI 实例**（项目代号 `manper`），
 现已将其完整抽取为可分发的离线包，让**其他路由器不用刷机**，SSH 执行一条命令即可获得同款 UI：
 
-- 🌌 **星空动画登录页**（基于 bootstrap 主题深度定制）
-- 📊 **全新首页** `/admin/status/details`：网络状态、CPU/内存、在线设备一屏展示
+- 🎨 **双界面可切换**：`manper 定制风格`（星空登录 + 驾驶舱）↔ `MYOS UI`（移植自 MYOS 官方主题）
+- 📊 **MYOS UI 仪表盘**：5G 信号（RSRP/SINR/频段 n78）、运营商、SIM 卡名称、模组型号/固件/温度、
+  内存与存储、在线设备、双频 SSID、会话数、运行时间 —— 全部真实数据，10 秒自动刷新
+- 🌌 **两套登录页**：星空动画页（manper）／MYOS 壁纸卡片页（MYOS UI），随主题切换
 - 📶 **蜂窝网络面板**：SIM 卡管理、短信、信号详情（依赖宿主机带模组）
 - 🐳 **Docker 顶层菜单**、终端 ttyd、文件管理等常用入口
 - 🧩 独立于 80 端口原 LuCI 运行，**互不影响**，随时可卸载还原
@@ -161,31 +163,60 @@ for t in argon; do rm -f /www/luci-static/$t; ln -s $APP/www/luci-static/$t /www
 
 ```
 luci-theme-manper/
-├── manper.sh                  # 一键部署脚本（安装/更新/卸载/状态）
-├── files/                     # 部署到目标路由器的文件（按目标路径镜像存放）
+├── manper.sh                       # 一键部署脚本（安装/更新/卸载/状态）
+├── files/                          # 按目标路径镜像存放的部署文件
 │   ├── overlay/nradio-apps/openwrt-luci-8080/
-│   │   ├── www/               # 8080 实例站点：cgi-bin 调度器、luci-static/argon(定制层)、router3d、fontawesome
-│   │   │   └── luci-static/symlinks.list   # 符号链接清单，部署时自动重建
-│   │   └── usr/lib/lua/luci/view/          # 实例私有视图（登录页/首页/蜂窝/Docker/themes/argon 模板）
-│   ├── usr/lib/lua/           # 固件侧依赖（nradio.lua、cloudd、nradio 控制器、argon-config 0.9）
-│   ├── usr/share/rpcd/acl.d/  # argon-config rpcd ACL
-│   └── etc/config.argon.default  # /etc/config/argon 默认配置（仅缺失时写入）
-├── vendor-reference/          # nradio 固件侧参考控制器（admin/ 等，高级选项手动安装）
-├── res/                       # README 预览图
+│   │   ├── www/cgi-bin/luci        # 8080 调度器（双模式补丁在此）
+│   │   ├── www/luci-static/        # bootstrap 定制层 / c2000max-ui 主题资源 / router3d
+│   │   │   └── symlinks.list       # 符号链接清单，部署时自动重建
+│   │   └── usr/lib/lua/luci/view/  # 实例私有视图
+│   │       ├── admin_status/       # 驾驶舱、蜂窝、短信、Docker、myos_ui 仪表盘…
+│   │       └── themes/             # bootstrap(manper 外壳) / c2000max-ui(MYOS 外壳)
+│   ├── usr/lib/lua/luci/view/themes/c2000max-ui/  # 宿主侧同一套主题（登录页渲染路径需要）
+│   ├── usr/lib/lua/                # 固件侧依赖（nradio.lua、cloudd、nradio 控制器、argon-config）
+│   ├── usr/share/rpcd/acl.d/       # argon-config rpcd ACL
+│   └── etc/config.argon.default    # /etc/config/argon 默认配置（仅缺失时写入）
+├── vendor-reference/               # nradio 固件侧参考控制器（高级选项手动安装）
+├── res/                            # README 预览图
 └── README.md
 ```
 
-> `files/overlay/nradio-apps/openwrt-luci-8080/` 内的 `theme-backup40~42-*`、
-> `www/cgi-bin/luci.bak-*` 等为项目演进过程中的**历史备份档案**，一并保留于仓库；
-> 部署时脚本会自动去掉备份脚本的执行位，避免被当作 CGI 调用。
+> `files/overlay/.../theme-backup40~42-*`、`www/cgi-bin/luci.bak-*` 等是项目演进中的历史备份档案，
+> 一并保留；部署脚本会自动去掉备份脚本执行位，避免被当作 CGI 调用。
 
 ## 🛠️ 技术说明
 
-- **Argon 底层迁移（2026-11）**：主题底层已迁移至 [luci-theme-argon v2.4.3](https://github.com/jerrykuku/luci-theme-argon)（Lua 模板的最新版本，argon 3.x 为 ucode 模板、与 Lua LuCI 不兼容），并集成 **luci-app-argon-config 0.9**（CBI 版，适配老式 Lua LuCI）——8080 界面「系统 → Argon 主题设置」可配置主色调/透明度/毛玻璃/暗色模式。样式保持 manper 定制外观不变：`cascade.css`/`dark.css`/`mwrt-*` 定制层原样保留，2.4.3 的 cascade 备存于 `css/cascade-2.4.3.css` 供后续渐进切换
-- 8080 实例 = 独立 uhttpd 节点（`/etc/config/uhttpd` 中的 `openwrt8080` 段）+ 独立 docroot + 定制版 Lua CGI dispatcher（构建自己的菜单树，复用宿主机 Lua LuCI 运行时与控制器）
-- 私有视图层覆盖了登录页、首页、蜂窝、Docker、终端等页面；静态资源自带 bootstrap 定制层/c2000max-ui/router3d/fontawesome，其余通过 `symlinks.list` 链接宿主机资源
-  （argon 2.4.3 的 `cascade.css` 仍完整保留 `li.slide` / `.main-left .nav` 等服务端菜单选择器，已核对一致）
-- 源路由器为 OpenWrt 25.12-SNAPSHOT（mediatek/filogic, aarch64），但本项目是纯 Lua/静态资源，与 CPU 架构无关
+**架构**：8080 实例 = 独立 uhttpd 节点（`/etc/config/uhttpd` 的 `openwrt8080` 段）+ 独立 docroot + 定制版 Lua CGI dispatcher（自建菜单树，复用宿主机 Lua LuCI 运行时与控制器）。
+
+**双模式实现**（`/etc/config/argon` 的 `ui_theme` 决定，调度缓存按模式分键，切换即时生效）：
+
+| | manper 模式 | MYOS UI 模式 |
+| --- | --- | --- |
+| 媒体路径 | `/luci-static/bootstrap` | `/luci-static/c2000max-ui` |
+| 页面外壳 | 实例私有 `themes/bootstrap`（mwrt 定制层） | 移植的 `themes/c2000max-ui`（Lua 版 header/footer/sysauth） |
+| 首页 | 驾驶舱 `admin_status/nradio_details` | 仪表盘 `admin_status/myos_ui`（移植自官方主题） |
+| 菜单 | 服务端渲染 | 服务端预渲染骨架 + `menu.js` 增强（搜索/分组/音色图标） |
+| 登录页 | 星空页 `nradio_8080_sysauth` | MYOS 壁纸页 `themes/c2000max-ui/sysauth` |
+| 路由树 | 裁剪厂商路由（nradio/nradioadv 隐藏） | 保留原厂完整路由树 |
+
+**MYOS UI 数据适配**（替代上游的 `c2000max.ui` / `qmodem` rpcd）：
+
+| 数据 | 本机来源 |
+| --- | --- |
+| 模组 RSRP/SINR/频段/运营商/PCI/型号/固件/模组温度 | `ubus call infocd cpestatus` |
+| SIM 卡名称/槽位/ICCID/流量 | 同上（`sim_name`、`simno`、`iccid`、`sim_flow`、`sim_mon`） |
+| 整机 CPU/Wi-Fi 温度 | `ubus call infocd runtime` |
+| 上行接口 / 内存 / 闪存 / 运行时间 | `network.interface dump` + `system info` |
+| 无线 SSID | UCI `wireless`（本机无 `network.wireless` ubus 对象） |
+| 在线设备数 | `/proc/net/arp` 去重 |
+| 会话连接数 | `/proc/sys/net/netfilter/nf_conntrack_count` |
+
+首页每 10s 通过 `?state=1`（仅返回 JSON）自动刷新。
+
+**子页面统一**：`manper-subpage.css` 把 LuCI 旧控件（勾选框→胶囊开关、CBI 值行、fieldset 卡片、文本域、按钮）统一到 MYOS UI 风格；footer 补齐依赖 luci.js 的占位（本地时间）。
+
+> 源路由器为 OpenWrt 25.12-SNAPSHOT（mediatek/filogic, aarch64; HC-WT9500 / C2000 Ultra），
+> 本项目是纯 Lua / 静态资源，与 CPU 架构无关。
 
 ## 🔙 回滚
 
