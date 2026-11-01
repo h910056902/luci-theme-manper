@@ -214,3 +214,9 @@ rm -f /tmp/luci-indexcache-argon* /tmp/luci-indexcache-bootstrap*
 ## ⭐ Star 趋势
 
 如果本项目对你有帮助，欢迎点个 Star！
+
+### 已知固件缺陷（非本项目引入）
+
+`网络 → 网络诊断`（`/admin/network/diagnostics`）在**原厂 80 端口同样返回 500**：
+`Model 'admin_network/diagnostics' not found` —— 固件缺少
+`/usr/lib/lua/luci/model/cbi/admin_network/diagnostics.lua`。本项目未改动该文件，两种界面模式下表现一致。

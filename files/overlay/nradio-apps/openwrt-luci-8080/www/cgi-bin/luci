@@ -75,11 +75,15 @@ function parser.parse(path, ...)
 		-- So official view upgrades are followed automatically by removing
 		-- the same-named private file (prevents stale private view shadowing
 		-- the official new one -> white screen).
-		-- KP-MYOS-SWITCH: myos 模式只放行移植主题自身视图,其余页面走官方原版
+		-- KP-MYOS-SWITCH: myos 模式下, 实例私有视图仍然优先(它们才是本机能用的页面),
+		-- 只排除「驾驶舱首页」与 manper 旧外壳(避免抢走官方总览/主题)。
+		-- 这样 kp_docker/quickstart/istorerouter/ttyd 等只在实例里存在的页面才不会 404。
 		local kp_whitelist = false
 		if active_theme == "myos" then
-			kp_whitelist = name:match("^themes/c2000max%-ui/")
-				or name == "admin_status/myos_ui.htm"
+			local kp_excluded = (name == "admin_status/index.htm")
+				or name:match("^themes/bootstrap/")
+				or name:match("^themes/argon/")
+			kp_whitelist = not kp_excluded
 		else
 		kp_whitelist = name:match("^themes/bootstrap/")
 			or name == "admin_status/nradio_details.htm"
@@ -103,6 +107,7 @@ function parser.parse(path, ...)
 			or name == "istorerouter/index.htm"
 			or name == "istorerouter/main.htm"
 			or name == "istorerouter/main_dev.htm"
+		end
 		if kp_whitelist then
 			local kp_priv = private_viewdir .. "/" .. name
 			if require("nixio.fs").access(kp_priv) then
@@ -120,7 +125,6 @@ function parser.parse(path, ...)
 			end
 		end
 		-- KP-TTYD-VIEW-MARKER-END
-		end
 	end
 	return original_parse(path, ...)
 end
