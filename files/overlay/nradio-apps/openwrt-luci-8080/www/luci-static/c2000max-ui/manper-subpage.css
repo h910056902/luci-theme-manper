@@ -191,3 +191,95 @@
 	color: var(--text) !important;
 	border-color: var(--border) !important;
 }
+
+/* ---------- Docker 页(kdm-*): 自带硬编码浅色 + prefers-color-scheme 深色,
+   但本主题用 data-theme 切换, 故深色模式下需显式覆盖 ---------- */
+:root[data-theme="dark"] .c2000-ui .kdm-kpi,
+:root[data-theme="dark"] .c2000-ui .kdm-card,
+:root[data-theme="dark"] .c2000-ui .kdm-panel {
+	background: var(--surface) !important;
+	border-color: var(--border) !important;
+	color: var(--text) !important;
+}
+:root[data-theme="dark"] .c2000-ui .kdm-tab {
+	color: var(--text-secondary) !important;
+	background: transparent !important;
+}
+:root[data-theme="dark"] .c2000-ui .kdm-tab:hover {
+	background: var(--hover) !important;
+	color: var(--text) !important;
+}
+:root[data-theme="dark"] .c2000-ui .kdm-tab.on {
+	background: var(--accent-soft) !important;
+	color: var(--accent) !important;
+	border-color: var(--accent) !important;
+}
+:root[data-theme="dark"] .c2000-ui .kdm-kpi b,
+:root[data-theme="dark"] .c2000-ui .kdm-kpi strong,
+:root[data-theme="dark"] .c2000-ui .kdm-kpi span,
+:root[data-theme="dark"] .c2000-ui .kdm-kpi div {
+	color: var(--text) !important;
+}
+/* 代码/等宽文本块(容器日志、命令) */
+.c2000-ui code,
+.c2000-ui pre,
+.c2000-ui .kdm-log {
+	background: var(--surface-soft) !important;
+	color: var(--text) !important;
+	border-radius: var(--radius-sm, 6px);
+}
+
+/* Docker 按钮 / 表头在深色下仍是浅底 */
+:root[data-theme="dark"] .c2000-ui .kdm-btn {
+	background: var(--surface-soft) !important;
+	color: var(--text) !important;
+	border-color: var(--border) !important;
+}
+:root[data-theme="dark"] .c2000-ui .kdm-btn:hover {
+	background: var(--hover) !important;
+}
+:root[data-theme="dark"] .c2000-ui #maincontent th,
+:root[data-theme="dark"] .c2000-ui .cbi-section-table th {
+	background: var(--surface-soft) !important;
+	color: var(--text-secondary) !important;
+}
+
+/* 区块标题条用渐变背景(linear-gradient 白系), background-color 覆盖不到,
+   深色模式下必须同时清掉 background-image */
+:root[data-theme="dark"] .c2000-ui #maincontent h3,
+:root[data-theme="dark"] .c2000-ui #maincontent h4 {
+	background-image: none !important;
+	background-color: var(--surface-soft) !important;
+	color: var(--text) !important;
+	border-color: var(--border) !important;
+}
+/* 兜底: 深色模式下清除任何浅色渐变背景 */
+:root[data-theme="dark"] .c2000-ui #maincontent .kdm-kpi,
+:root[data-theme="dark"] .c2000-ui #maincontent .kdm-card {
+	background-image: none !important;
+}
+
+/* 实时图表(LuCI 生成的浅色 SVG)在深色模式下反色, 避免大白块 */
+:root[data-theme="dark"] .c2000-ui #maincontent embed {
+	filter: invert(1) hue-rotate(180deg) contrast(0.92);
+	border-radius: var(--radius-md, 10px);
+}
+
+/* 文件选择框(备份/升级页) */
+.c2000-ui input[type="file"] {
+	color: var(--text, #16233a);
+	font-size: var(--text-sm, 14px);
+}
+.c2000-ui input[type="file"]::file-selector-button {
+	margin-right: 10px;
+	padding: 7px 12px;
+	border: 1px solid var(--border, #e3e9f2);
+	border-radius: var(--radius-md, 10px);
+	background: var(--surface-soft, #f7f9fc);
+	color: var(--text, #16233a);
+	font-weight: 600;
+	cursor: pointer;
+}
+.c2000-ui input[type="file"]::file-selector-button:hover {
+	background: var(--hover, #eef2f7);
+}
