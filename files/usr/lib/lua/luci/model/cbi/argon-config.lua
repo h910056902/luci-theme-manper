@@ -26,8 +26,11 @@ if nxfs.access('/etc/config/argon') then
 	bing_background = uci:get_first('argon', 'global', 'bing_background')
 	-- manper 双主题: manper 定制层 | orig 原版 argon
 	ui_theme = uci:get_first('argon', 'global', 'ui_theme')
+	-- 首页样式: manper 驾驶舱 | myos MYOS 原厂初始版
+	ui_home = uci:get_first('argon', 'global', 'ui_home')
 end
 ui_theme = ui_theme or 'manper'
+ui_home = ui_home or 'manper'
 
 function glob(...)
     local iter, code, msg = nxfs.glob(...)
@@ -71,6 +74,14 @@ o:value('orig', 'Argon 原版(vanilla luci-theme-argon)')
 o.default = ui_theme
 o.rmempty = false
 o.description = translate('Switch the 8080 UI between manper customized theme and vanilla luci-theme-argon. Takes effect immediately after saving.')
+
+-- 首页样式开关: 驾驶舱单页 / MYOS 原厂初始版总览
+o = s:option(ListValue, 'ui_home', translate('Homepage Style (8080)'))
+o:value('manper', '驾驶舱单页(manper 定制)')
+o:value('myos', 'MYOS 原厂初始版(标准总览)')
+o.default = ui_home
+o.rmempty = false
+o.description = translate('Choose the landing page after login: manper cockpit dashboard or the original MYOS overview page.')
 
 o = s:option(ListValue, 'mode', translate('Theme mode'))
 o:value('normal', translate('Follow System'))

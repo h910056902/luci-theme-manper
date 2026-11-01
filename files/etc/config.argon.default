@@ -8,3 +8,4 @@ config global
 	option mode 'normal'
 	option bing_background '0'
 	option ui_theme 'manper'
+	option ui_home 'manper'

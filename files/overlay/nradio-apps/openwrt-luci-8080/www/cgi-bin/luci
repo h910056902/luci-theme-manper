@@ -21,12 +21,18 @@ require "luci.sgi.cgi"
 --   orig         = 原版 luci-theme-argon v2.4.3(luci-static/argon-orig)
 -- 在 argon-config「界面风格」中切换,保存后因缓存失效检查立即生效
 local active_theme = "argon"
+-- 首页样式: manper(驾驶舱 nradio_details) | myos(MYOS 原厂初始版 admin_status/index)
+local active_home = "manper"
 do
 	local ok_mu, manper_uci = pcall(require, "luci.model.uci")
 	if ok_mu and manper_uci then
 		pcall(function()
-			if manper_uci.cursor():get("argon", "@global[0]", "ui_theme") == "orig" then
+			local cur = manper_uci.cursor()
+			if cur:get("argon", "@global[0]", "ui_theme") == "orig" then
 				active_theme = "argon-orig"
+			end
+			if cur:get("argon", "@global[0]", "ui_home") == "myos" then
+				active_home = "myos"
 			end
 		end)
 	end
@@ -39,7 +45,7 @@ do
 	local ok_n, fs = pcall(require, "nixio.fs")
 	if ok_n and fs then
 			-- 缓存按主题分键: 切换 ui_theme 后自然走另一份缓存,不依赖 mtime 比较
-		local cache = "/tmp/luci-indexcache-" .. active_theme
+		local cache = "/tmp/luci-indexcache-" .. active_theme .. "-" .. active_home
 			local cst = fs.stat(cache)
 			if cst then
 				local cmt = tonumber(cst.mtime) or 0
@@ -86,6 +92,8 @@ function parser.parse(path, ...)
 			or name == "admin_status/nradio_8080_sysauth.htm"
 			-- 状态总览：换成实例私有的「驾驶舱」单页（一屏汇总）
 			or name == "admin_status/index.htm"
+			-- MYOS 原厂初始版首页(ui_home=myos 时使用)
+			or name == "admin_status/myos_home.htm"
 			or name == "quickstart/main.htm"
 			or name == "quickstart/home.htm"
 			or name == "quickstart/wizard.htm"
@@ -266,7 +274,9 @@ function luci.dispatcher.createtree()
 			status.nodes = status.nodes or {}
 			status.nodes.details = {
 				nodes = {},
-				target = luci.dispatcher.template("admin_status/nradio_details"),
+				-- ui_home=myos 时首页换回 MYOS 原厂初始版总览页
+				target = luci.dispatcher.template(
+					active_home == "myos" and "admin_status/myos_home" or "admin_status/nradio_details"),
 				-- 方案 A：与固件 admin/status 对齐，扁平挂在「状态」下，顺序紧随固件 overview
 				title = "概览",
 				order = 1,
@@ -4398,5 +4408,5 @@ do
 end
 -- KP-QUICKSTART-VIEWNS v3 END ============================================
 
-luci.dispatcher.indexcache = "/tmp/luci-indexcache-" .. active_theme
+luci.dispatcher.indexcache = "/tmp/luci-indexcache-" .. active_theme .. "-" .. active_home
 luci.sgi.cgi.run()

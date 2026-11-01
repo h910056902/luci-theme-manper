@@ -98,6 +98,25 @@ rm -f /tmp/luci-indexcache-argon*
 > 两套主题共用同一份壁纸目录（`/www/luci-static/argon/background/`），
 > 在 argon-config 上传的背景图两套主题都生效；主色调/透明度/暗色模式同样共用。
 
+### 首页样式（驾驶舱 / MYOS 原厂初始版）
+
+同一设置页的 **首页样式** 可以切换登录后的落地页，与主题**交叉组合**（2×2 都可选）：
+
+| 选项 | 首页 | 模板 |
+| --- | --- | --- |
+| `驾驶舱单页`（默认） | 一屏汇总的 dashboard（蜂窝/系统/温度/在线设备） | `admin_status/nradio_details.htm` |
+| `MYOS 原厂初始版` | 官方固件 2.1.7 的标准「总览」页（系统/内存/交换区/网络/DHCP） | `admin_status/myos_home.htm` |
+
+```sh
+uci set argon.@global[0].ui_home='myos'     # 原厂初始版首页
+uci set argon.@global[0].ui_home='manper'   # 驾驶舱
+uci commit argon
+```
+
+> 原厂首页模板取自官方固件包（`561410590/ssh-nradio-plugin-installer` 仓库中
+> `factory-bin-C2000MAX-2.1.7.n0.c1-extracted` 的 `admin_status/index.htm`），
+> 保留 `<%+header%>`/`<%+footer%>` 结构，因此会自动套用当前主题的外壳与配色。
+
 ## 🗑️ 卸载
 
 ```bash
