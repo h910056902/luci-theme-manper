@@ -1,0 +1,87 @@
+<%#
+ MYOS UI (c2000max-ui) — manper 移植版 Lua 尾模板
+ 上游: 561410590/immortalwrt-by-MYOS :: luci-theme-c2000max-ui (Apache-2.0)
+-%>
+<% local util = require "luci.util"
+   local boardinfo = util.ubus("system", "board") or {}
+   local fwdesc = (boardinfo.release and boardinfo.release.description) or "MYOS"
+   local media = "/luci-static/c2000max-ui" %>
+  </div>
+  <footer class="main-footer"><span class="firmware-compact"><%=util.pcdata(fwdesc)%></span><span class="firmware-version"><%=util.pcdata(fwdesc)%></span><span class="theme-credit">MYOS UI · C2000MAX UI by inst.</span></footer>
+</main>
+<script>
+/* manper 移植层: 侧栏开合 / 菜单搜索 / 账户菜单 / 仪表盘挂载 */
+(function () {
+  'use strict';
+  var body = document.body;
+
+  // 侧栏开合
+  function setDrawer(open) { body.classList.toggle('menu-open', !!open); }
+  document.querySelectorAll('[data-menu-toggle]').forEach(function (b) {
+    b.addEventListener('click', function () { setDrawer(!body.classList.contains('menu-open')); });
+  });
+  var closeBtn = document.querySelector('#close-menu');
+  if (closeBtn) closeBtn.addEventListener('click', function () { setDrawer(false); });
+  var backdrop = document.querySelector('.sidebar-backdrop');
+  if (backdrop) { backdrop.hidden = false; backdrop.addEventListener('click', function () { setDrawer(false); }); }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && body.classList.contains('menu-open')) setDrawer(false);
+  });
+
+  // 菜单搜索
+  var search = document.querySelector('#menu-search');
+  var nav = document.querySelector('#menu-tree');
+  if (search && nav) {
+    search.addEventListener('input', function () {
+      var q = search.value.trim().toLowerCase();
+      nav.querySelectorAll('details.menu-group').forEach(function (g) {
+        var hit = !q || (g.dataset.title || '').toLowerCase().indexOf(q) >= 0;
+        var childHit = false;
+        g.querySelectorAll('a.menu-link, a.nav-item').forEach(function (a) {
+          var own = !q || (a.textContent || '').toLowerCase().indexOf(q) >= 0;
+          a.style.display = own ? '' : 'none';
+          if (own) childHit = true;
+        });
+        g.style.display = (hit || childHit) ? '' : 'none';
+        if (q) g.open = true;
+      });
+    });
+  }
+
+  // 账户菜单
+  var acct = document.querySelector('#account-button');
+  var acctMenu = document.querySelector('#account-menu');
+  if (acct && acctMenu) {
+    acct.addEventListener('click', function () {
+      var open = acctMenu.hidden;
+      acctMenu.hidden = !open;
+      acct.setAttribute('aria-expanded', String(open));
+    });
+    document.addEventListener('click', function (e) {
+      if (!acctMenu.hidden && !acctMenu.contains(e.target) && !acct.contains(e.target)) {
+        acctMenu.hidden = true; acct.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+  var logout = document.querySelector('#logout-button');
+  if (logout) logout.addEventListener('click', function () { location.href = '/cgi-bin/luci/admin/logout'; });
+
+  // 主题切换按钮(theme.js 已应用外观, 这里只做点击切换)
+  document.querySelectorAll('[data-theme-choice]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      try { localStorage.setItem('c2000-appearance', b.dataset.themeChoice); } catch (err) {}
+      document.querySelectorAll('[data-theme-choice]').forEach(function (x) {
+        x.setAttribute('aria-pressed', String(x === b));
+      });
+      var mode = b.dataset.themeChoice;
+      var dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.appearance = mode;
+      document.documentElement.classList.toggle('dark', dark);
+    });
+  });
+})();
+</script>
+<script src="<%=media%>/menu.js?v=1.0.17" onerror="void 0"></script>
+<script src="<%=media%>/shell.js?v=1.0.17" onerror="void 0"></script>
+</body>
+</html>

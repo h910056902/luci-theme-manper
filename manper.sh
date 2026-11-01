@@ -193,21 +193,41 @@ do_install() {
 		msg "已写入 /etc/config/argon 默认配置(argon-config 可修改)"
 	fi
 
-	# 3c. 宿主机静态目录链接(强制重指: 旧安装/测试实例留下的断链会让主题读不到 dark.css → 500)
-	#     主题模板通过 /www/luci-static/argon/ 读取 dark.css / 壁纸
-	for _t in argon argon-orig; do
-		rm -f "/www/luci-static/${_t}"
-		ln -s "${APP_DIR}/www/luci-static/${_t}" "/www/luci-static/${_t}" 2>/dev/null \
-			&& msg "宿主链接 /www/luci-static/${_t} -> 实例目录"
+	# 3c. myos 主题(NRadio 原生 luci-theme-nradio-v3, 1:1): 静态/模板/根级登录外壳
+	#     仅缺失时安装,不覆盖 MYOS 设备自带的原厂文件
+	if [ -d "${SRC}/files/www/luci-static/nradio" ]; then
+		find "${SRC}/files/www/luci-static/nradio" -type f 2>/dev/null | while IFS= read -r _f; do
+			_rel=${_f#"${SRC}/files/www/"}
+			if [ ! -e "/www/${_rel}" ]; then
+				mkdir -p "/www/$(dirname "${_rel}")" 2>/dev/null
+				cp "${_f}" "/www/${_rel}"
+			fi
+		done
+		msg "myos 原生主题静态资源已就绪(/www/luci-static/nradio, 缺失补齐)"
+	fi
+	for _tv in header footer header_simple footer_simple; do
+		_ts="${SRC}/files/usr/lib/lua/luci/view/themes/nradio/${_tv}.htm"
+		_td="/usr/lib/lua/luci/view/themes/nradio/${_tv}.htm"
+		if [ -f "${_ts}" ] && [ ! -e "${_td}" ]; then
+			mkdir -p "/usr/lib/lua/luci/view/themes/nradio" 2>/dev/null
+			cp "${_ts}" "${_td}"
+		fi
 	done
-	# 3e. 背景图目录: argon-config 上传到 /www/luci-static/argon/background/,
-	#     经上面的链接即落在实例 argon/background(真实目录,勿再指向 /www 以免形成环)
-	mkdir -p "${APP_DIR}/www/luci-static/argon/background" 2>/dev/null
-	# 原版主题的背景目录也指向同一处,argon-config 上传的壁纸两套主题共用
-	if [ ! -L "${APP_DIR}/www/luci-static/argon-orig/background" ]; then
-		rm -rf "${APP_DIR}/www/luci-static/argon-orig/background" 2>/dev/null
-		ln -s /www/luci-static/argon/background "${APP_DIR}/www/luci-static/argon-orig/background" 2>/dev/null \
-			&& msg "原版主题背景目录已联动(共用壁纸)"
+	for _rv in header.htm footer.htm sysauth.htm; do
+		_rs="${SRC}/files/usr/lib/lua/luci/view/${_rv}"
+		if [ -f "${_rs}" ] && [ ! -e "/usr/lib/lua/luci/view/${_rv}" ]; then
+			cp "${_rs}" "/usr/lib/lua/luci/view/${_rv}"
+		fi
+	done
+	# 3d-2. MYOS UI 移植版主题(luci-theme-c2000max-ui 外观移植)视图
+	#       除实例私有目录外,同时装一份到宿主 viewdir ——
+	#       sysauth/页面渲染路径会直接解析宿主 viewdir,双份可确保登录页与首页都能解析。
+	if [ -d "${SRC}/files/overlay/nradio-apps/openwrt-luci-8080/usr/lib/lua/luci/view/themes/c2000max-ui" ]; then
+		mkdir -p "/usr/lib/lua/luci/view/themes" "/usr/lib/lua/luci/view/admin_status" 2>/dev/null
+		rm -rf "/usr/lib/lua/luci/view/themes/c2000max-ui"
+		cp -a "${SRC}/files/overlay/nradio-apps/openwrt-luci-8080/usr/lib/lua/luci/view/themes/c2000max-ui" "/usr/lib/lua/luci/view/themes/" 2>/dev/null
+		cp -a "${SRC}/files/overlay/nradio-apps/openwrt-luci-8080/usr/lib/lua/luci/view/admin_status/myos_ui.htm" "/usr/lib/lua/luci/view/admin_status/" 2>/dev/null
+		msg "MYOS UI 主题视图已安装(实例 + 宿主)"
 	fi
 
 	# 3f. 行尾规范化: LuCI 的 Lua 模板解析器把 \r 当作换行,
@@ -320,8 +340,8 @@ do_uninstall() {
 	rm -rf "${APP_ROOT}"/.manper-backup* 2>/dev/null
 	# 仅清空(不删)我们创建、且卸载后仍为空的厂商目录
 	rmdir /usr/lib/lua/cloudd /usr/lib/lua/luci/controller/nradio /usr/lib/lua/luci/controller/nradio_adv /usr/lib/lua/luci/view/argon-config 2>/dev/null
-	# 移除宿主机 /www/luci-static/argon(-orig) 兼容链接(仅当指向本实例)
-	for _hl in argon argon-orig; do
+	# 移除宿主机 /www/luci-static/argon 兼容链接(仅当指向本实例)
+	for _hl in argon; do
 		if [ -L "/www/luci-static/${_hl}" ] && [ "$(readlink "/www/luci-static/${_hl}" 2>/dev/null)" = "${APP_DIR}/www/luci-static/${_hl}" ]; then
 			rm -f "/www/luci-static/${_hl}"
 		fi

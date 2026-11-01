@@ -1,6 +1,7 @@
 # 8080 实例 www/luci-static 符号链接清单(部署脚本按此在路由器上重建)
 # 格式: <链接名> <目标路径>
 # 目标以 / 开头的指向宿主机固件自带静态资源,宿主机上不存在时跳过并提示
+argon bootstrap
 iform /www/luci-static/iform
 istore /www/luci-static/istore
 istorerouter /www/luci-static/istorerouter

@@ -1,0 +1,170 @@
+<%#
+ MYOS UI (c2000max-ui) — manper 移植版 Lua 外壳
+ 上游: 561410590/immortalwrt-by-MYOS :: luci-theme-c2000max-ui (Apache-2.0)
+ 说明: 上游为 ucode 模板(shell.ut/header.ut),本文件是等价 Lua 实现,
+       保留相同 DOM 结构/类名,使 c2000max-ui 的 CSS/JS 可原样工作。
+-%>
+<%
+	local util = require "luci.util"
+	local http = require "luci.http"
+	local disp = require "luci.dispatcher"
+	local fs   = require "nixio.fs"
+
+	local boardinfo = util.ubus("system", "board") or {}
+	local hostname = boardinfo.hostname or "MYOS"
+	local model    = boardinfo.model or "NRadio C2000"
+	local fwdesc   = (boardinfo.release and boardinfo.release.description) or ""
+	local media    = "/luci-static/c2000max-ui"
+
+	http.prepare_content("text/html; charset=UTF-8")
+
+	local node = disp.context.dispatched
+	local reqpath = table.concat(disp.context.request or {}, "/")
+	local homeurl = disp.build_url("admin", "status", "details")
+
+	-- 菜单图标: 按标题关键字映射到 sprite 中的 symbol
+	local function menu_icon(title)
+		local t = (title or ""):lower()
+		if t:match("状态") or t:match("status") then return "activity" end
+		if t:match("网络") or t:match("network") then return "globe" end
+		if t:match("无线") or t:match("wifi") then return "wifi" end
+		if t:match("系统") or t:match("system") then return "settings" end
+		if t:match("服务") or t:match("service") then return "grid" end
+		if t:match("docker") then return "layers" end
+		if t:match("终端") or t:match("terminal") then return "menu-terminal" end
+		return "grid"
+	end
+
+	local function svg(icon, extra)
+		write('<svg class="icon' .. (extra and (" " .. extra) or "") .. '" aria-hidden="true"><use href="#' .. icon .. '"/></svg>')
+	end
+
+	local function node_url(path_parts)
+		local p = { "cgi-bin/luci" }
+		for _, v in ipairs(path_parts) do p[#p + 1] = v end
+		return "/" .. table.concat(p, "/")
+	end
+
+	local function node_active(path_parts)
+		local want = table.concat(path_parts, "/")
+		return reqpath == want or reqpath:sub(1, #want + 1) == want .. "/"
+	end
+
+	-- 递归渲染菜单组(对应 menu.js 的 details.menu-group 结构)
+	local function render_node(node_tbl, path_parts, depth)
+		local children = {}
+		for _, name in ipairs(disp.node_childs(node_tbl) or {}) do
+			local ch = node_tbl.nodes[name]
+			if ch and not ch.hidden and ch.title and ch.satisfied ~= false then
+				children[#children + 1] = { name = name, node = ch }
+			end
+		end
+		if #children == 0 then
+			local cls = "menu-link" .. (depth == 0 and " menu-root-link" or "")
+			local act = node_active(path_parts) and ' aria-current="page" class="' .. cls .. ' active"' or (' class="' .. cls .. '"')
+			write('<a href="' .. node_url(path_parts) .. '"' .. act .. ' data-menu-item="true">')
+			svg(menu_icon(node_tbl.title))
+			write('<span>' .. util.pcdata(translate(node_tbl.title or "")) .. '</span></a>')
+			return
+		end
+		local open = ""
+		for _, ch in ipairs(children) do
+			local cp = {}
+			for _, v in ipairs(path_parts) do cp[#cp + 1] = v end
+			cp[#cp + 1] = ch.name
+			if node_active(cp) then open = " open" end
+		end
+		write('<details class="menu-group" data-menu-item="true" data-title="' .. util.pcdata(translate(node_tbl.title or "")) .. '" data-path="' .. table.concat(path_parts, "/") .. '"' .. open .. '>')
+		write('<summary class="menu-category">')
+		svg(menu_icon(node_tbl.title))
+		write('<span>' .. util.pcdata(translate(node_tbl.title or "")) .. '</span>')
+		svg("chevron")
+		write('</summary><div class="menu-children">')
+		for _, ch in ipairs(children) do
+			local cp = {}
+			for _, v in ipairs(path_parts) do cp[#cp + 1] = v end
+			cp[#cp + 1] = ch.name
+			render_node(ch.node, cp, depth + 1)
+		end
+		write('</div></details>')
+	end
+
+	local tree = disp.node()
+	local admin = tree and tree.nodes and tree.nodes.admin
+-%>
+<!doctype html>
+<html lang="<%=luci.i18n.context.lang%>">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#eef3f8">
+<title><%=util.pcdata(hostname)%> · <%=node and util.pcdata(translate(node.title or "")) or "MYOS"%></title>
+<script src="<%=media%>/theme.js?v=1.0.17"></script>
+<link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+<link rel="stylesheet" href="<%=media%>/tokens.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/components.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/styles.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/c2000max.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/luci-adapter.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/luci-components.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/density.css?v=1.0.17">
+<script src="/luci-static/resources/cbi.js"></script>
+<script src="<%=media%>/data.js?v=1.0.17"></script>
+<script src="<%=media%>/dashboard.js?v=1.0.17"></script>
+</head>
+<body class="c2000-ui lang_<%=luci.i18n.context.lang%>" data-page="<%=util.pcdata(reqpath)%>" data-home-url="<%=homeurl%>" data-device-model="<%=util.pcdata(model)%>">
+<a class="skip-link" href="#maincontent">跳到内容</a>
+<svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+<symbol id="home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+<symbol id="settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/></symbol>
+<symbol id="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+<symbol id="close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+<symbol id="menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></symbol>
+<symbol id="search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></symbol>
+<symbol id="layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 12.18-9.17 4.16a2 2 0 0 1-1.66 0L2 12.18"/><path d="m22 17.18-9.17 4.16a2 2 0 0 1-1.66 0L2 17.18"/></symbol>
+<symbol id="activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+<symbol id="menu-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></symbol>
+<symbol id="logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></symbol>
+</defs></svg>
+
+<button class="header-menu icon-button" data-menu-toggle aria-controls="sidebar" aria-expanded="false" aria-label="打开完整菜单"><svg class="icon"><use href="#menu"/></svg></button>
+<a class="brand" href="<%=homeurl%>" aria-label="MYOS 首页"><span>MY<span class="brand-max">OS</span></span><small><%=util.pcdata(model)%></small></a>
+<div class="sidebar-backdrop" hidden></div>
+<aside class="sidebar" id="sidebar" aria-label="完整菜单">
+  <div class="sidebar-heading"><div><strong>MYOS</strong><small><%=util.pcdata(model)%></small></div><button class="icon-button" id="close-menu" aria-label="关闭菜单"><svg class="icon"><use href="#close"/></svg></button></div>
+  <label class="menu-search"><svg class="icon"><use href="#search"/></svg><input id="menu-search" type="search" placeholder="搜索菜单或插件" aria-label="搜索菜单或插件" autocomplete="off"></label>
+  <nav class="navigation" id="menu-tree" aria-label="分类与插件">
+    <a class="nav-home nav-item" href="<%=homeurl%>" data-preview-panel="home"><svg class="icon"><use href="#home"/></svg><span>首页</span></a>
+<% if admin then
+     for _, name in ipairs(disp.node_childs(admin) or {}) do
+       local ch = admin.nodes[name]
+       if ch and not ch.hidden and ch.title then
+         render_node(ch, {"admin", name}, 0)
+       end
+     end
+   end %>
+  </nav>
+  <p class="menu-empty" hidden>未找到匹配的菜单或插件</p>
+  <div class="sidebar-footer"><span><i></i> <%=util.pcdata(fwdesc ~= "" and fwdesc or "MYOS")%></span><small id="menu-source">LuCI · <%=util.pcdata(model)%></small></div>
+</aside>
+
+<main class="main" id="home">
+  <div class="landscape" aria-hidden="true"><svg class="terrain" viewBox="0 0 1359 190" preserveAspectRatio="none"><defs><linearGradient id="terrain-fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d5dee9" stop-opacity=".72"/><stop offset=".58" stop-color="#e2e9f1" stop-opacity=".4"/><stop offset="1" stop-color="#eef2f7" stop-opacity="0"/></linearGradient></defs><path d="M0 0C155 17 272 73 450 76S657 96 827 67 1110-11 1359 9V190H0Z" fill="url(#terrain-fade)"/></svg><div class="horizon"></div></div>
+  <header class="topbar"><div id="indicators"></div>
+    <div class="theme-picker"><button type="button" class="theme-toggle icon-button" data-theme-toggle aria-label="外观模式" title="外观模式" aria-expanded="false" aria-controls="theme-options"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg></button>
+      <div class="theme-control" id="theme-options" role="group" aria-label="外观模式">
+        <div class="theme-festival" hidden><img alt="" width="42" height="42"><span><strong></strong><small></small></span></div>
+        <button type="button" data-theme-choice="light" aria-pressed="false" aria-label="浅色模式" title="浅色模式"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg><span class="theme-choice-label">浅色</span></button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false" aria-label="深色模式" title="深色模式"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg><span class="theme-choice-label">深色</span></button>
+        <button type="button" data-theme-choice="system" aria-pressed="true" aria-label="跟随系统" title="跟随系统"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg><span class="theme-choice-label">跟随系统</span></button>
+      </div>
+    </div>
+    <button class="account" id="account-button" aria-label="管理员菜单" aria-expanded="false" aria-controls="account-menu"><span class="avatar"><svg class="icon" aria-hidden="true"><use href="#user"/></svg></span><span>管理员</span><svg class="icon account-chevron" aria-hidden="true"><use href="#chevron"/></svg></button>
+    <div id="account-menu" class="account-menu" hidden><strong>管理员</strong><button type="button" id="logout-button">退出登录<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg></button></div>
+  </header>
+  <div id="maincontent" class="luci-content">

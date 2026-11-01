@@ -22,9 +22,9 @@
 
 ![preview](res/preview.png)
 
-**原版 luci-theme-argon（可切换）**
+**MYOS UI（可切换，外观移植自 MYOS 官方主题包）**
 
-![preview-orig](res/preview-orig.png)
+![preview-myos](res/preview-myos.png)
 
 > 两套主题并行安装、随时切换：8080 界面「系统 → Argon 主题设置 → 界面风格」。
 > `manper` = 星空登录页 + 驾驶舱首页等定制外观；`orig` = 上游 luci-theme-argon 原版外观（紫蓝 #5e72e4、浅色经典布局）。
@@ -77,45 +77,43 @@ export MANPER_DL_URL=https://ghproxy.com/https://github.com/h910056902/luci-them
 
 本项目属于 **UI/主题级部署**：不动系统分区、不刷机、不改防火墙，卸载即完全还原。
 
-## 🎨 双主题切换（manper / 原版 argon）
+## 🎨 双主题切换（manper / MYOS UI）
 
-安装后两套主题同时存在于路由器，可在 **8080 界面 → 系统 → Argon 主题设置 → 界面风格** 切换：
+安装后两套界面同时存在于路由器，可在 **8080 界面 → 系统 → Argon 主题设置 → 界面风格** 切换：
 
 | 选项 | 效果 | 静态目录 | 模板 |
 | --- | --- | --- | --- |
-| `manper 定制风格`（默认） | 星空登录页、驾驶舱首页、mwrt 定制层 | `luci-static/argon/` | `view/themes/argon/` |
-| `Argon 原版` | 上游 luci-theme-argon 原版外观 | `luci-static/argon-orig/` | `view/themes/argon-orig/` |
+| `manper 定制风格`（默认） | 星空登录页、驾驶舱首页、mwrt 定制层（你的原始定制） | `luci-static/bootstrap/` | `view/themes/bootstrap/` |
+| `MYOS UI` | **上游 MYOS 主题外观**：MYOS 侧栏 + 连接状态仪表盘 + 主题登录页 | `luci-static/c2000max-ui/` | `view/themes/c2000max-ui/` |
 
-保存后立即生效（dispatcher 检测 `/etc/config/argon` 变更后重建调度缓存）。也可命令行切换：
+切换即时生效（缓存按模式分键）。命令行：
 
 ```sh
-uci set argon.@global[0].ui_theme='orig'    # 原版
-uci set argon.@global[0].ui_theme='manper'  # 定制版
+uci set argon.@global[0].ui_theme='myos'     # MYOS UI
+uci set argon.@global[0].ui_theme='manper'   # manper 定制
 uci commit argon
-rm -f /tmp/luci-indexcache-argon*
 ```
 
-> 两套主题共用同一份壁纸目录（`/www/luci-static/argon/background/`），
-> 在 argon-config 上传的背景图两套主题都生效；主色调/透明度/暗色模式同样共用。
+### MYOS UI 是什么（外观移植说明）
 
-### 首页样式（驾驶舱 / MYOS 原厂初始版）
+界面外观取自 **[561410590/immortalwrt-by-MYOS](https://github.com/561410590/immortalwrt-by-MYOS)**
+的官方主题包 `luci-theme-c2000max-ui`（Apache-2.0），1:1 复刻其视觉与 DOM：
 
-同一设置页的 **首页样式** 可以切换登录后的落地页，与主题**交叉组合**（2×2 都可选）：
-
-| 选项 | 首页 | 模板 |
+| 层 | 上游实现 | 本项目移植 |
 | --- | --- | --- |
-| `驾驶舱单页`（默认） | 一屏汇总的 dashboard（蜂窝/系统/温度/在线设备） | `admin_status/nradio_details.htm` |
-| `MYOS 原厂初始版` | 官方固件 2.1.7 的标准「总览」页（系统/内存/交换区/网络/DHCP） | `admin_status/myos_home.htm` |
+| 页面外壳 | `ucode/template/.../header.ut` `shell.ut` `footer.ut` | `view/themes/c2000max-ui/*.htm`（等价 Lua 实现，同 DOM/类名） |
+| 登录页 | `sysauth.ut` + `login.css` | `view/themes/c2000max-ui/sysauth.htm` |
+| 仪表盘 | `dashboard.html` + `dashboard.js` + `data.js` | 原样使用（框架无关的纯前端） |
+| 数据 | rpcd `c2000max.ui` / `qmodem`（ucode） | **Lua + ubus**：system / network / wireless / conntrack |
 
-```sh
-uci set argon.@global[0].ui_home='myos'     # 原厂初始版首页
-uci set argon.@global[0].ui_home='manper'   # 驾驶舱
-uci commit argon
-```
+> 上游依赖 ucode LuCI 运行时（`/usr/share/ucode/luci` + `rpcd-mod-luci`），
+> 本机是 Lua LuCI，故页面外壳与登录页做了 Lua 等价移植；静态资源与仪表盘 JS 原样使用。
+> 模组/SIM/温度等卡片需要 `c2000max.ui`、`qmodem` 数据源，本机对应的 nradio 接口尚未接入，
+> 卡片会显示 “—” / “未获取”（这是主题自身对缺失数据的处理方式）。
 
-> 原厂首页模板取自官方固件包（`561410590/ssh-nradio-plugin-installer` 仓库中
-> `factory-bin-C2000MAX-2.1.7.n0.c1-extracted` 的 `admin_status/index.htm`），
-> 保留 `<%+header%>`/`<%+footer%>` 结构，因此会自动套用当前主题的外壳与配色。
+**已知边界**：MYOS UI 模式下，子页面仍走原厂 `nradio/*` 页面（原厂路由完整可用）；
+上游的 `c2000max.ui`/`qmodem` 适配层为 C2000MAX + QModem 固件专属，本机（WT9500）无对应服务。
+
 
 ## 🗑️ 卸载
 
@@ -149,12 +147,11 @@ rm -f /tmp/luci-indexcache-argon*; /etc/init.d/uhttpd restart
 ```
 
 **Q: 主题样式错乱（没有 dark.css / 壁纸）？**
-`/www/luci-static/argon` 与 `/www/luci-static/argon-orig` 必须指向实例目录。
 若曾被指向其它路径（如已删除的测试实例）会变成断链，重新指向即可：
 
 ```sh
 APP=/overlay/nradio-apps/openwrt-luci-8080
-for t in argon argon-orig; do rm -f /www/luci-static/$t; ln -s $APP/www/luci-static/$t /www/luci-static/$t; done
+for t in argon; do rm -f /www/luci-static/$t; ln -s $APP/www/luci-static/$t /www/luci-static/$t; done
 ```
 
 **Q: 国内下载脚本/离线包太慢？**
@@ -186,9 +183,7 @@ luci-theme-manper/
 
 - **Argon 底层迁移（2026-11）**：主题底层已迁移至 [luci-theme-argon v2.4.3](https://github.com/jerrykuku/luci-theme-argon)（Lua 模板的最新版本，argon 3.x 为 ucode 模板、与 Lua LuCI 不兼容），并集成 **luci-app-argon-config 0.9**（CBI 版，适配老式 Lua LuCI）——8080 界面「系统 → Argon 主题设置」可配置主色调/透明度/毛玻璃/暗色模式。样式保持 manper 定制外观不变：`cascade.css`/`dark.css`/`mwrt-*` 定制层原样保留，2.4.3 的 cascade 备存于 `css/cascade-2.4.3.css` 供后续渐进切换
 - 8080 实例 = 独立 uhttpd 节点（`/etc/config/uhttpd` 中的 `openwrt8080` 段）+ 独立 docroot + 定制版 Lua CGI dispatcher（构建自己的菜单树，复用宿主机 Lua LuCI 运行时与控制器）
-- 私有视图层覆盖了登录页、首页、蜂窝、Docker、终端等页面；静态资源自带 argon(定制层)/argon-orig/router3d/fontawesome，其余通过 `symlinks.list` 链接宿主机资源
-- **原版主题适配说明**：上游 luci-theme-argon 2.x 的侧栏菜单由 `luci.js` 客户端渲染，而本机是 Lua LuCI（无 `luci.js`）。
-  因此 `themes/argon-orig/header.htm` 保留上游 2.4.3 的 CSS/视觉，但侧栏改用**服务端渲染**菜单 + jQuery 栈
+- 私有视图层覆盖了登录页、首页、蜂窝、Docker、终端等页面；静态资源自带 bootstrap 定制层/c2000max-ui/router3d/fontawesome，其余通过 `symlinks.list` 链接宿主机资源
   （argon 2.4.3 的 `cascade.css` 仍完整保留 `li.slide` / `.main-left .nav` 等服务端菜单选择器，已核对一致）
 - 源路由器为 OpenWrt 25.12-SNAPSHOT（mediatek/filogic, aarch64），但本项目是纯 Lua/静态资源，与 CPU 架构无关
 

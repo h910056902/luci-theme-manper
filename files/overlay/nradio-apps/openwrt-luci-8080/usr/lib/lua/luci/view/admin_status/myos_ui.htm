@@ -1,0 +1,46 @@
+<%#
+ MYOS 仪表盘首页 — manper 移植版
+ 上游: 561410590/immortalwrt-by-MYOS :: luci-theme-c2000max-ui
+   dashboard.html (DOM 片段) + dashboard.js (C2000Dashboard.mount/update)
+ 差异: 原版由 ucode + rpcd(c2000max.ui/qmodem) 供数;此处用 Lua + ubus 供数,
+       缺失的适配项留空,卡片自动显示 "—"(模板本身的设计)。
+-%>
+<%+header%>
+<%
+	local fs    = require "nixio.fs"
+	local util  = require "luci.util"
+	local jsonc = require "luci.jsonc"
+
+	local APP = "/overlay/nradio-apps/openwrt-luci-8080"
+	local raw = fs.readfile(APP .. "/www/luci-static/c2000max-ui/dashboard.html") or ""
+	-- 相对资源改绝对路径(原版 max.js 在客户端做同样处理)
+	raw = raw:gsub('src="assets/', 'src="/luci-static/c2000max-ui/assets/')
+	write('<div class="c2000-dashboard-root">' .. raw .. '</div>')
+
+	-- 数据装配(Lua 侧, 对应 max.js 的 rpc 调用)
+	local state = {}
+	local ok_sys, sysinfo = pcall(util.ubus, "system", "info")
+	state.system = (ok_sys and sysinfo) or {}
+	local ok_net, netdump = pcall(util.ubus, "network.interface", "dump")
+	state.network = (ok_net and netdump) or {}
+	local ok_wl, wlstat = pcall(util.ubus, "network.wireless", "status")
+	state.wireless = (ok_wl and wlstat) or {}
+	local cnt = fs.readfile("/proc/sys/net/netfilter/nf_conntrack_count")
+	state.sessions = { count = cnt and (cnt:gsub("%s", "")) or nil }
+	state.config = {}
+
+	write('<script>window.__MYOS_STATE__=' .. jsonc.stringify(state) .. ';</script>')
+%>
+<script>
+(function () {
+	'use strict';
+	var root = document.querySelector('.c2000-dashboard-root');
+	if (!root || !window.C2000Dashboard) return;
+	var dashboard = window.C2000Dashboard.mount(root, function () {
+		var parts = Array.prototype.slice.call(arguments);
+		return '/cgi-bin/luci/' + parts.join('/');
+	});
+	dashboard.update(window.__MYOS_STATE__ || {});
+})();
+</script>
+<%+footer%>
