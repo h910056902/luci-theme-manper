@@ -69,8 +69,8 @@ o.rmempty = false
 
 -- manper 双主题开关: 切换 8080 实例界面风格(manper 定制层 / 原版 argon)
 o = s:option(ListValue, 'ui_theme', translate('UI Theme (8080)'))
-o:value('manper', 'manper 定制风格(星空登录/驾驶舱首页)')
-o:value('myos', 'NRadio 原生主题(MYOS 原厂 1:1)')
+o:value('manper', 'manper 定制风格(星空登录页 / 驾驶舱首页)')
+o:value('myos', 'MYOS UI(移植自 MYOS 官方主题, 含真实数据仪表盘)')
 o.default = ui_theme
 o.rmempty = false
 o.description = translate('Switch the 8080 UI between manper customized theme and vanilla luci-theme-argon. Takes effect immediately after saving.')

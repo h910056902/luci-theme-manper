@@ -193,6 +193,15 @@ do_install() {
 		msg "已写入 /etc/config/argon 默认配置(argon-config 可修改)"
 	fi
 
+	# 3c-0. 宿主 /www/luci-static/argon 链接
+	#       argon-config 控制器有一道守卫: 无此路径则不注册「Argon 主题设置」菜单。
+	#       实例里的 argon 是指向 bootstrap 的链接(cascade.css 存在), 故链接到实例即可。
+	for _t in argon; do
+		rm -f "/www/luci-static/${_t}"
+		ln -s "${APP_DIR}/www/luci-static/${_t}" "/www/luci-static/${_t}" 2>/dev/null \
+			&& msg "宿主链接 /www/luci-static/${_t} -> 实例目录"
+	done
+
 	# 3c. myos 主题(NRadio 原生 luci-theme-nradio-v3, 1:1): 静态/模板/根级登录外壳
 	#     仅缺失时安装,不覆盖 MYOS 设备自带的原厂文件
 	if [ -d "${SRC}/files/www/luci-static/nradio" ]; then
