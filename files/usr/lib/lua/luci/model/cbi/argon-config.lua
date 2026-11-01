@@ -61,6 +61,14 @@ o:value('1', translate('Bing Wallpapers'))
 o.default = bing_background
 o.rmempty = false
 
+-- manper 双主题开关: 切换 8080 实例界面风格(manper 定制层 / 原版 argon)
+o = s:option(ListValue, 'ui_theme', translate('UI Theme (8080)'))
+o:value('manper', 'manper 定制风格(星空登录/驾驶舱首页)')
+o:value('orig', 'Argon 原版(vanilla luci-theme-argon)')
+o.default = 'manper'
+o.rmempty = false
+o.description = translate('Switch the 8080 UI between manper customized theme and vanilla luci-theme-argon. Takes effect immediately after saving.')
+
 o = s:option(ListValue, 'mode', translate('Theme mode'))
 o:value('normal', translate('Follow System'))
 o:value('light', translate('Force Light'))

@@ -129,6 +129,8 @@ install_deps() { # install_deps <源目录> <清单输出文件>
 	# rpcd ACL 等宿主侧扩展文件
 	local share_src="${src_root%/usr/lib/lua}/usr/share"
 	[ -d "${share_src}" ] && cp -a "${share_src}/." "/usr/share/" 2>/dev/null
+	local libexec_src="${src_root%/usr/lib/lua}/usr/libexec"
+	[ -d "${libexec_src}" ] && cp -a "${libexec_src}/." "/usr/libexec/" 2>/dev/null
 	# 备份被覆盖的原文件
 	local bk="${APP_ROOT}/.manper-backup.$(date +%Y%m%d-%H%M%S)"
 	mkdir -p "${bk}"
@@ -191,12 +193,36 @@ do_install() {
 		msg "已写入 /etc/config/argon 默认配置(argon-config 可修改)"
 	fi
 
-	# 3c. 宿主机 /www/luci-static/argon 兼容链接
-	#     主题模板通过该路径读取 dark.css;同时让 80 端口原 LuCI 也能选用 argon
-	if [ ! -e "/www/luci-static/argon" ]; then
-		ln -s "${APP_DIR}/www/luci-static/argon" "/www/luci-static/argon" 2>/dev/null \
-			&& msg "已创建宿主链接 /www/luci-static/argon -> 实例目录"
+	# 3c. 宿主机静态目录链接(强制重指: 旧安装/测试实例留下的断链会让主题读不到 dark.css → 500)
+	#     主题模板通过 /www/luci-static/argon/ 读取 dark.css / 壁纸
+	for _t in argon argon-orig; do
+		rm -f "/www/luci-static/${_t}"
+		ln -s "${APP_DIR}/www/luci-static/${_t}" "/www/luci-static/${_t}" 2>/dev/null \
+			&& msg "宿主链接 /www/luci-static/${_t} -> 实例目录"
+	done
+	# 3e. 背景图目录: argon-config 上传到 /www/luci-static/argon/background/,
+	#     经上面的链接即落在实例 argon/background(真实目录,勿再指向 /www 以免形成环)
+	mkdir -p "${APP_DIR}/www/luci-static/argon/background" 2>/dev/null
+	# 原版主题的背景目录也指向同一处,argon-config 上传的壁纸两套主题共用
+	if [ ! -L "${APP_DIR}/www/luci-static/argon-orig/background" ]; then
+		rm -rf "${APP_DIR}/www/luci-static/argon-orig/background" 2>/dev/null
+		ln -s /www/luci-static/argon/background "${APP_DIR}/www/luci-static/argon-orig/background" 2>/dev/null \
+			&& msg "原版主题背景目录已联动(共用壁纸)"
 	fi
+
+	# 3f. 行尾规范化: LuCI 的 Lua 模板解析器把 \r 当作换行,
+	#     CRLF 会让 <% %> 生成的字符串被截断(报 unfinished string → 白屏 500)。
+	#     仓库已用 .gitattributes 强制 LF,这里再做一次防御(Windows 打包/上传场景)。
+	#     用 tr 探测(不用 $'\r',BusyBox ash 不支持该语法)。
+	ncrlf=0
+	for f in $(find "${APP_DIR}/usr/lib/lua/luci/view" "${APP_DIR}/www" \
+		-type f \( -name "*.htm" -o -name "*.lua" \) 2>/dev/null); do
+		if [ "$(tr -dc '\r' < "$f" 2>/dev/null | wc -c)" -gt 0 ]; then
+			tr -d '\r' < "$f" > "${f}.lf.tmp" 2>/dev/null && mv "${f}.lf.tmp" "$f"
+			ncrlf=$((ncrlf + 1))
+		fi
+	done
+	[ "${ncrlf}" -gt 0 ] && msg "已规范化 ${ncrlf} 个文件的行尾符(CRLF -> LF)"
 
 	# 4. 权限: cgi-bin 可执行;历史备份脚本去掉执行位(避免被当作 CGI 直接调用)
 	chmod +x "${APP_DIR}/www/cgi-bin/luci" "${APP_DIR}/www/cgi-bin/mwrt-svc" "${APP_DIR}/www/cgi-bin/mwrt-wifi" 2>/dev/null
@@ -294,10 +320,12 @@ do_uninstall() {
 	rm -rf "${APP_ROOT}"/.manper-backup* 2>/dev/null
 	# 仅清空(不删)我们创建、且卸载后仍为空的厂商目录
 	rmdir /usr/lib/lua/cloudd /usr/lib/lua/luci/controller/nradio /usr/lib/lua/luci/controller/nradio_adv /usr/lib/lua/luci/view/argon-config 2>/dev/null
-	# 移除宿主机 /www/luci-static/argon 兼容链接(仅当指向本实例)
-	if [ -L "/www/luci-static/argon" ] && [ "$(readlink /www/luci-static/argon 2>/dev/null)" = "${APP_DIR}/www/luci-static/argon" ]; then
-		rm -f "/www/luci-static/argon"
-	fi
+	# 移除宿主机 /www/luci-static/argon(-orig) 兼容链接(仅当指向本实例)
+	for _hl in argon argon-orig; do
+		if [ -L "/www/luci-static/${_hl}" ] && [ "$(readlink "/www/luci-static/${_hl}" 2>/dev/null)" = "${APP_DIR}/www/luci-static/${_hl}" ]; then
+			rm -f "/www/luci-static/${_hl}"
+		fi
+	done
 
 	# 2. 移除 8080 实例目录(留一份 .removed 备份以防万一)
 	if [ -d "${APP_DIR}" ]; then

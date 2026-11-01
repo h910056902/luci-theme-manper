@@ -16,29 +16,47 @@ local private_viewdir = instance_root .. "/usr/lib/lua/luci/view"
 require "luci.cacheloader"
 require "luci.sgi.cgi"
 
+-- manper 双主题(2026-11): /etc/config/argon 的 ui_theme 决定 8080 实例的界面风格
+--   manper(默认) = manper 定制层(luci-static/argon)
+--   orig         = 原版 luci-theme-argon v2.4.3(luci-static/argon-orig)
+-- 在 argon-config「界面风格」中切换,保存后因缓存失效检查立即生效
+local active_theme = "argon"
+do
+	local ok_mu, manper_uci = pcall(require, "luci.model.uci")
+	if ok_mu and manper_uci then
+		pcall(function()
+			if manper_uci.cursor():get("argon", "@global[0]", "ui_theme") == "orig" then
+				active_theme = "argon-orig"
+			end
+		end)
+	end
+end
+
 -- 插件安装/卸载后，本实例的调度树缓存会过期（缓存文件比控制器目录旧），
 -- 表现为新装的页面访问时提示「未注册任何页面」（如 /admin/services/kaiplus）。
 -- 这里在建树之前主动失效：控制器 / menu.d / CBI model 任一目录比缓存新就删缓存。
 do
 	local ok_n, fs = pcall(require, "nixio.fs")
 	if ok_n and fs then
-		local cache = "/tmp/luci-indexcache-argon"
-		local cst = fs.stat(cache)
-		if cst then
-			local cmt = tonumber(cst.mtime) or 0
-			for _, d in ipairs({
-				"/usr/lib/lua/luci/controller",
-				"/usr/lib/lua/luci/model/cbi",
-				"/usr/share/luci/menu.d",
-				"/overlay/nradio-apps/openwrt-luci-8080/usr/lib/lua/luci/view",
-			}) do
-				local dst = fs.stat(d)
-				if dst and (tonumber(dst.mtime) or 0) > cmt then
-					os.remove(cache)
-					break
+			local cache = "/tmp/luci-indexcache-argon"
+			local cst = fs.stat(cache)
+			if cst then
+				local cmt = tonumber(cst.mtime) or 0
+				for _, d in ipairs({
+					"/usr/lib/lua/luci/controller",
+					"/usr/lib/lua/luci/model/cbi",
+					"/usr/share/luci/menu.d",
+					"/overlay/nradio-apps/openwrt-luci-8080/usr/lib/lua/luci/view",
+					"/etc/config/argon",
+				}) do
+					local dst = fs.stat(d)
+					-- >= 而非 >: mtime 秒级粒度,同秒内改 ui_theme 也要失效重建
+					if dst and (tonumber(dst.mtime) or 0) >= cmt then
+						os.remove(cache)
+						break
+					end
 				end
 			end
-		end
 	end
 end
 
@@ -215,8 +233,9 @@ end
 
 -- argon 迁移(2026-11): 默认主题由 bootstrap(老 argon 1.8.4 分支)切换为 argon
 -- (基于 luci-theme-argon v2.4.3 底层 + manper 定制层)。保留 bootstrap 作为回退。
+-- 双主题: active_theme 由 /etc/config/argon 的 ui_theme 决定(argon | argon-orig)
 local function set_bootstrap_theme(node)
-	node.mediaurlbase = "/luci-static/argon"
+	node.mediaurlbase = "/luci-static/" .. active_theme
 	for _, child in pairs(node.nodes or {}) do
 		if type(child) == "table" then set_bootstrap_theme(child) end
 	end
@@ -232,7 +251,10 @@ function luci.dispatcher.createtree()
 		tree.nodes.nradioadv = nil
 		tree.nodes.authcheck = nil
 		admin.nodes = admin.nodes or {}
-		admin.sysauth_template = "admin_status/nradio_8080_sysauth"
+		-- 登录页跟随主题: 原版 argon 用自带 sysauth 登录页,manper 用定制星空登录页
+		admin.sysauth_template = (active_theme == "argon-orig")
+			and "themes/argon-orig/sysauth"
+			or "admin_status/nradio_8080_sysauth"
 		local status = admin.nodes.status
 		if not status then
 			-- order 与固件 controller/admin/status.lua 一致（固件为 20）
@@ -402,8 +424,12 @@ end
 
 function luci.dispatcher.httpdispatch(request, prefix)
 	local config = require "luci.config"
-	config.main.mediaurlbase = "/luci-static/argon"
-	config.themes = { Argon = "/luci-static/argon", Bootstrap = "/luci-static/bootstrap" }
+	config.main.mediaurlbase = "/luci-static/" .. active_theme
+	config.themes = {
+		Argon = "/luci-static/argon",
+		["Argon 原版"] = "/luci-static/argon-orig",
+		Bootstrap = "/luci-static/bootstrap",
+	}
 	return original_httpdispatch(request, prefix)
 end
 
@@ -4316,7 +4342,7 @@ do
 				pcall(function() i18n = require "luci.i18n" end)
 				if not ok_u or type(util) ~= "table" then util = {} end
 
-				local media = "/luci-static/argon"
+				local media = "/luci-static/" .. active_theme
 				pcall(function()
 					media = require("luci.config").main.mediaurlbase or media
 				end)
