@@ -1,0 +1,474 @@
+<%#
+ NRadio Docker 管理页（8080 隔离实例）
+ 信息架构对标 luci-app-dockerman：
+   /admin/docker  →  概览 · 容器 · 镜像 · 网络 · 数据卷 · 事件 · 配置（order 2..8）
+ 数据源：docker CLI，经 /cgi-bin/luci/admin/docker?action=docker&op=... 代理
+ 写操作：start/stop/restart/rm/rmi/rmnet/rmvol，均要求 confirm=1
+-%>
+<%+header%>
+
+<style type="text/css">
+/* ---------- 页签（对标 dockerman 的子页签条） ---------- */
+.kdm-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 14px;
+	border-bottom:1px solid rgba(15,23,32,.10);padding-bottom:8px}
+.kdm-tab{border:1px solid transparent;background:transparent;color:#667085;font-size:12.5px;
+	padding:5px 12px;border-radius:8px;cursor:pointer;
+	transition:background .16s ease,color .16s ease,border-color .16s ease}
+.kdm-tab:hover{background:#f2f5f9;color:#344054}
+.kdm-tab.on{background:rgba(31,111,235,.10);color:#1f6feb;border-color:rgba(31,111,235,.24);font-weight:600}
+.kdm-panel{display:none}
+.kdm-panel.on{display:block}
+
+/* ---------- KPI ---------- */
+.kdm-kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:14px}
+.kdm-kpi{border:1px solid rgba(15,23,32,.10);border-radius:12px;padding:12px 14px;background:#fff;
+	box-shadow:0 2px 10px rgba(15,23,32,.04);
+	transition:box-shadow .18s ease,transform .18s ease,border-color .18s ease}
+.kdm-kpi:hover{box-shadow:0 10px 24px rgba(15,23,32,.10);transform:translateY(-1px);border-color:rgba(15,23,32,.16)}
+.kdm-kpi-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.kdm-kpi-top > span{font-size:12px;color:#667085}
+.kdm-kpi-top > b{font-size:22px;font-weight:700;color:#101828;line-height:1.1;font-variant-numeric:tabular-nums}
+.kdm-kpi-top > b.sm{font-size:15px;font-weight:600}
+.kdm-kpi-sub{font-size:11.5px;color:#8a93a0;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kdm-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.kdm-dot.on{background:#22a06b;box-shadow:0 0 0 3px rgba(34,160,107,.18)}
+.kdm-dot.off{background:#98a2b3}
+
+/* ---------- 卡片 / 表格 ---------- */
+fieldset.cbi-section{border:1px solid rgba(15,23,32,.10);border-radius:12px;background:#fff;
+	padding:0;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,32,.04);margin-bottom:16px}
+fieldset.cbi-section > h3{margin:0;padding:11px 16px;font-size:14px;font-weight:600;color:#344054;
+	background:linear-gradient(180deg,#fbfcfd,#f5f7fa);border-bottom:1px solid rgba(15,23,32,.08);
+	display:flex;align-items:center;gap:8px}
+fieldset.cbi-section > .kdm-body{padding:10px 16px 14px}
+table.kdm-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+table.kdm-tbl th{text-align:left;font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:#667085;
+	font-weight:600;padding:8px 10px;background:#f8fafc;border-bottom:1px solid rgba(15,23,32,.10)}
+table.kdm-tbl td{padding:8px 10px;border-bottom:1px solid rgba(15,23,32,.06);vertical-align:middle}
+table.kdm-tbl tr:hover > td{background:rgba(31,111,235,.045)}
+table.kdm-tbl td.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:#475467}
+table.kdm-kv{width:100%;border-collapse:collapse;font-size:12.5px}
+table.kdm-kv td{padding:6px 4px;border-bottom:1px solid rgba(15,23,32,.06)}
+table.kdm-kv td:first-child{color:#667085;width:38%}
+table.kdm-kv td:last-child{color:#101828;font-variant-numeric:tabular-nums}
+.kdm-badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.kdm-badge.up{background:rgba(34,160,107,.12);color:#1d8a5b}
+.kdm-badge.down{background:rgba(100,116,139,.14);color:#64748b}
+.kdm-acts{display:flex;gap:6px;flex-wrap:wrap}
+.kdm-btn{border:1px solid rgba(15,23,32,.16);background:#fff;color:#344054;font-size:11.5px;
+	padding:2px 9px;border-radius:6px;cursor:pointer;transition:background .16s ease,border-color .16s ease}
+.kdm-btn:hover{background:#f2f5f9;border-color:rgba(15,23,32,.28)}
+.kdm-btn.danger{color:#c23b22;border-color:rgba(194,59,34,.28)}
+.kdm-btn.danger:hover{background:rgba(194,59,34,.08)}
+.kdm-empty{color:#8a93a0;font-size:12.5px;padding:10px 0}
+.kdm-hint{font-size:11.5px;color:#8a93a0;line-height:1.7;margin:10px 0 0}
+.kdm-hint code,pre.kdm-code{background:rgba(15,23,32,.05);padding:1px 5px;border-radius:4px;font-size:11px}
+pre.kdm-code{display:block;padding:10px 12px;border-radius:8px;overflow:auto;max-height:260px;
+	font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.6;margin:0}
+.kdm-bar{display:flex;align-items:center;gap:8px;margin-left:auto;font-weight:400;font-size:11.5px;color:#8a93a0}
+
+@media (prefers-color-scheme: dark){
+	.kdm-kpi{background:#1c1f26;border-color:rgba(255,255,255,.10)}
+	.kdm-kpi-top > b{color:#e6edf3}
+	.kdm-kpi-top > span,.kdm-kpi-sub{color:#98a2b3}
+	.kdm-tabs{border-bottom-color:rgba(255,255,255,.10)}
+	.kdm-tab{color:#98a2b3}
+	.kdm-tab:hover{background:#252a33;color:#cbd5e1}
+	.kdm-tab.on{background:rgba(31,111,235,.18);color:#8ab4ff;border-color:rgba(31,111,235,.36)}
+	fieldset.cbi-section{background:#1c1f26;border-color:rgba(255,255,255,.10)}
+	fieldset.cbi-section > h3{background:linear-gradient(180deg,#22262e,#1e2229);
+		border-bottom-color:rgba(255,255,255,.08);color:#cbd5e1}
+	table.kdm-tbl th{background:#22262e;color:#98a2b3;border-bottom-color:rgba(255,255,255,.10)}
+	table.kdm-tbl td{border-bottom-color:rgba(255,255,255,.06);color:#cbd5e1}
+	table.kdm-tbl tr:hover > td{background:rgba(255,255,255,.04)}
+	table.kdm-kv td{border-bottom-color:rgba(255,255,255,.06)}
+	table.kdm-kv td:last-child{color:#e6edf3}
+	.kdm-btn{background:#252a33;border-color:rgba(255,255,255,.14);color:#cbd5e1}
+	pre.kdm-code,.kdm-hint code{background:rgba(255,255,255,.08);color:#cbd5e1}
+}
+body.dark .kdm-kpi,body.dark fieldset.cbi-section{background:#1c1f26;border-color:rgba(255,255,255,.10)}
+body.dark table.kdm-tbl th{background:#22262e;color:#98a2b3}
+
+@media (prefers-reduced-motion: reduce){
+	*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+		transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
+:focus-visible{outline:2px solid #1f6feb;outline-offset:2px;border-radius:4px}
+</style>
+
+<h2 name="content">Docker</h2>
+
+<div class="kdm-tabs" id="kdm-tabs">
+	<button class="kdm-tab on" data-tab="overview">概览</button>
+	<button class="kdm-tab" data-tab="containers">容器</button>
+	<button class="kdm-tab" data-tab="images">镜像</button>
+	<button class="kdm-tab" data-tab="networks">网络</button>
+	<button class="kdm-tab" data-tab="volumes">数据卷</button>
+	<button class="kdm-tab" data-tab="events">事件</button>
+	<button class="kdm-tab" data-tab="config">配置</button>
+</div>
+
+<!-- ========== 概览 ========== -->
+<div class="kdm-panel on" data-panel="overview">
+	<div class="kdm-kpis">
+		<div class="kdm-kpi">
+			<div class="kdm-kpi-top"><span>引擎状态</span><b class="sm" id="kdm-state">—</b></div>
+			<div class="kdm-kpi-sub" id="kdm-pid">—</div>
+		</div>
+		<div class="kdm-kpi">
+			<div class="kdm-kpi-top"><span>容器</span><b id="kdm-ct">—</b></div>
+			<div class="kdm-kpi-sub" id="kdm-ct-sub">—</div>
+		</div>
+		<div class="kdm-kpi">
+			<div class="kdm-kpi-top"><span>镜像</span><b id="kdm-img">—</b></div>
+			<div class="kdm-kpi-sub" id="kdm-img-sub">—</div>
+		</div>
+		<div class="kdm-kpi">
+			<div class="kdm-kpi-top"><span>网络 / 数据卷</span><b id="kdm-nv">—</b></div>
+			<div class="kdm-kpi-sub" id="kdm-nv-sub">—</div>
+		</div>
+	</div>
+
+	<fieldset class="cbi-section">
+		<h3>系统占用
+			<span class="kdm-bar"><button class="kdm-btn" type="button" data-reload="overview">刷新</button></span>
+		</h3>
+		<div class="kdm-body">
+			<div id="kdm-df"><div class="kdm-empty">加载中…</div></div>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>引擎信息</h3>
+		<div class="kdm-body">
+			<table class="kdm-kv" id="kdm-info-tbl">
+				<tr><td>Server 版本</td><td id="kdm-i-ver">—</td></tr>
+				<tr><td>API 版本</td><td id="kdm-i-api">—</td></tr>
+				<tr><td>存储驱动</td><td id="kdm-i-drv">—</td></tr>
+				<tr><td>数据目录</td><td id="kdm-i-root">—</td></tr>
+				<tr><td>默认运行时</td><td id="kdm-i-rt">—</td></tr>
+				<tr><td>宿主内核</td><td id="kdm-i-kern">—</td></tr>
+			</table>
+			<p class="kdm-hint">
+				已加载自编译 <strong>veth</strong> 模块（内核未编入，由 <code>kp-veth</code> 开机加载），
+				<code>bridge</code> 网络可用、<code>-p</code> 端口映射正常；macvlan / ipvlan 仍不可用。
+			</p>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ========== 容器 ========== -->
+<div class="kdm-panel" data-panel="containers">
+	<fieldset class="cbi-section">
+		<h3>容器
+			<span class="kdm-bar"><span id="kdm-ct-note">—</span>
+			<button class="kdm-btn" type="button" data-reload="containers">刷新</button></span>
+		</h3>
+		<div class="kdm-body"><div id="kdm-ps"><div class="kdm-empty">加载中…</div></div></div>
+	</fieldset>
+</div>
+
+<!-- ========== 镜像 ========== -->
+<div class="kdm-panel" data-panel="images">
+	<fieldset class="cbi-section">
+		<h3>镜像
+			<span class="kdm-bar"><span id="kdm-img-note">—</span>
+			<button class="kdm-btn" type="button" data-reload="images">刷新</button></span>
+		</h3>
+		<div class="kdm-body"><div id="kdm-images"><div class="kdm-empty">加载中…</div></div></div>
+	</fieldset>
+</div>
+
+<!-- ========== 网络 ========== -->
+<div class="kdm-panel" data-panel="networks">
+	<fieldset class="cbi-section">
+		<h3>网络
+			<span class="kdm-bar"><span id="kdm-net-note">—</span>
+			<button class="kdm-btn" type="button" data-reload="networks">刷新</button></span>
+		</h3>
+		<div class="kdm-body">
+			<div id="kdm-nets"><div class="kdm-empty">加载中…</div></div>
+			<p class="kdm-hint">内置 <code>bridge</code> 网络可用（自编译 veth 模块）；容器也可用 <code>--network host</code>。</p>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ========== 数据卷 ========== -->
+<div class="kdm-panel" data-panel="volumes">
+	<fieldset class="cbi-section">
+		<h3>数据卷
+			<span class="kdm-bar"><span id="kdm-vol-note">—</span>
+			<button class="kdm-btn" type="button" data-reload="volumes">刷新</button></span>
+		</h3>
+		<div class="kdm-body"><div id="kdm-vols"><div class="kdm-empty">加载中…</div></div></div>
+	</fieldset>
+</div>
+
+<!-- ========== 事件 ========== -->
+<div class="kdm-panel" data-panel="events">
+	<fieldset class="cbi-section">
+		<h3>事件（近 2 小时）
+			<span class="kdm-bar"><span id="kdm-ev-note">—</span>
+			<button class="kdm-btn" type="button" data-reload="events">刷新</button></span>
+		</h3>
+		<div class="kdm-body"><div id="kdm-evs"><div class="kdm-empty">加载中…</div></div></div>
+	</fieldset>
+</div>
+
+<!-- ========== 配置 ========== -->
+<div class="kdm-panel" data-panel="config">
+	<fieldset class="cbi-section">
+		<h3>守护进程配置
+			<span class="kdm-bar"><button class="kdm-btn" type="button" data-reload="config">刷新</button></span>
+		</h3>
+		<div class="kdm-body">
+			<table class="kdm-kv">
+				<tr><td>配置文件（UCI alt_config_file）</td><td id="kdm-c-alt">—</td></tr>
+				<tr><td>data_root</td><td id="kdm-c-root">—</td></tr>
+				<tr><td>host（监听）</td><td id="kdm-c-host">—</td></tr>
+				<tr><td>iptables</td><td id="kdm-c-ipt">—</td></tr>
+				<tr><td>bip（网桥地址）</td><td id="kdm-c-pool">—</td></tr>
+			</table>
+			<p class="kdm-hint" style="margin-bottom:8px">/etc/docker/daemon.json</p>
+			<pre class="kdm-code" id="kdm-c-json">—</pre>
+			<p class="kdm-hint">
+				修改后执行：<code>/etc/init.d/dockerd restart</code>。
+				直接编辑 <code>/tmp/dockerd/daemon.json</code> 无效——该文件每次启动由 UCI 重新生成。
+			</p>
+		</div>
+	</fieldset>
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+(function () {
+	var URL = '<%=pcdata(luci.dispatcher.build_url("admin", "docker"))%>';
+	var active = 'overview';
+	var timer = null;
+
+	function esc(s) {
+		return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+		});
+	}
+	function get(op) {
+		return fetch(URL + '?action=docker&op=' + op + '&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); });
+	}
+	function post(op, target) {
+		var fd = new FormData();
+		fd.append('op', op);
+		fd.append('target', target);
+		fd.append('confirm', '1');
+		return fetch(URL + '?action=docker', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); });
+	}
+	function tbl(headers, rows) {
+		return '<table class="kdm-tbl"><thead><tr>' +
+			headers.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+			'</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+	}
+
+	/* ---- 概览 ---- */
+	function loadOverview() {
+		get('info').then(function (d) {
+			if (!d) return;
+			var st = document.getElementById('kdm-state');
+			if (st) st.innerHTML = '<i class="kdm-dot ' + (d.running ? 'on' : 'off') + '"></i>' + (d.running ? '运行中' : '未运行');
+			var pid = document.getElementById('kdm-pid');
+			if (pid) pid.textContent = d.running ? ('PID ' + (d.pid || '—')) : 'dockerd 未启动';
+			var ct = document.getElementById('kdm-ct'); if (ct) ct.textContent = (d.containers || 0);
+			var cts = document.getElementById('kdm-ct-sub'); if (cts) cts.textContent = '运行 ' + (d.running_containers || 0) + ' / 共 ' + (d.containers || 0);
+			var im = document.getElementById('kdm-img'); if (im) im.textContent = (d.images || 0);
+			var ims = document.getElementById('kdm-img-sub'); if (ims) ims.textContent = d.driver ? ('存储驱动 ' + d.driver) : '—';
+			var nv = document.getElementById('kdm-nv'); if (nv) nv.textContent = (d.networks || 0) + ' / ' + (d.volumes || 0);
+			var nvs = document.getElementById('kdm-nv-sub'); if (nvs) nvs.textContent = '网络 ' + (d.networks || 0) + ' · 卷 ' + (d.volumes || 0);
+			var m = { 'kdm-i-ver': d.version, 'kdm-i-api': d.apiver, 'kdm-i-drv': d.driver, 'kdm-i-root': d.root, 'kdm-i-rt': d.runtime, 'kdm-i-kern': d.kernel };
+			Object.keys(m).forEach(function (k) { var e = document.getElementById(k); if (e) e.textContent = m[k] || '—'; });
+		}).catch(function () {});
+
+		get('df').then(function (d) {
+			var box = document.getElementById('kdm-df');
+			if (!box) return;
+			var items = (d && d.items) || [];
+			if (!items.length) { box.innerHTML = '<div class="kdm-empty">无数据</div>'; return; }
+			box.innerHTML = tbl(['类型', '总数', '使用中', '大小', '可回收'], items.map(function (i) {
+				return '<tr><td>' + esc(i.type) + '</td><td>' + esc(i.total) + '</td><td>' + esc(i.active) +
+					'</td><td>' + esc(i.size) + '</td><td>' + esc(i.reclaimable) + '</td></tr>';
+			}));
+		}).catch(function () {});
+	}
+
+	/* ---- 容器 ---- */
+	function loadContainers() {
+		get('ps').then(function (d) {
+			var box = document.getElementById('kdm-ps');
+			var note = document.getElementById('kdm-ct-note');
+			if (!box) return;
+			var items = (d && d.items) || [];
+			if (note) note.textContent = items.length ? (items.length + ' 个') : '无容器';
+			if (!items.length) {
+				box.innerHTML = '<div class="kdm-empty">还没有容器。在「终端」里执行 <code>docker run -d --network host …</code></div>';
+				return;
+			}
+			box.innerHTML = tbl(['名称', '镜像', '状态', '端口', '操作'], items.map(function (c) {
+				var up = /^Up\b/.test(c.status || '');
+				return '<tr><td><strong>' + esc(c.name) + '</strong></td>' +
+					'<td class="mono">' + esc(c.image) + '</td>' +
+					'<td><span class="kdm-badge ' + (up ? 'up' : 'down') + '">' + esc(c.status) + '</span></td>' +
+					'<td class="mono">' + esc(c.ports || '—') + '</td>' +
+					'<td><div class="kdm-acts">' +
+					(up ? '<button class="kdm-btn" data-op="stop" data-t="' + esc(c.name) + '">停止</button>' +
+						  '<button class="kdm-btn" data-op="restart" data-t="' + esc(c.name) + '">重启</button>'
+						: '<button class="kdm-btn" data-op="start" data-t="' + esc(c.name) + '">启动</button>') +
+					'<button class="kdm-btn danger" data-op="rm" data-t="' + esc(c.name) + '">删除</button>' +
+					'</div></td></tr>';
+			}));
+			bind(box);
+		}).catch(function () {});
+	}
+
+	/* ---- 镜像 ---- */
+	function loadImages() {
+		get('images').then(function (d) {
+			var box = document.getElementById('kdm-images');
+			var note = document.getElementById('kdm-img-note');
+			if (!box) return;
+			var items = (d && d.items) || [];
+			if (note) note.textContent = items.length ? (items.length + ' 个') : '无镜像';
+			if (!items.length) { box.innerHTML = '<div class="kdm-empty">还没有镜像。</div>'; return; }
+			box.innerHTML = tbl(['仓库:标签', '镜像 ID', '大小', '操作'], items.map(function (i) {
+				return '<tr><td><strong>' + esc(i.repo) + '</strong>' +
+					(i.tag && i.tag !== '<none>' ? (':' + esc(i.tag)) : '') + '</td>' +
+					'<td class="mono">' + esc(i.id) + '</td><td>' + esc(i.size) + '</td>' +
+					'<td><div class="kdm-acts"><button class="kdm-btn danger" data-op="rmi" data-t="' + esc(i.repo) + '">删除</button></div></td></tr>';
+			}));
+			bind(box);
+		}).catch(function () {});
+	}
+
+	/* ---- 网络 ---- */
+	function loadNetworks() {
+		get('networks').then(function (d) {
+			var box = document.getElementById('kdm-nets');
+			var note = document.getElementById('kdm-net-note');
+			if (!box) return;
+			var items = (d && d.items) || [];
+			if (note) note.textContent = items.length ? (items.length + ' 个') : '无网络';
+			if (!items.length) { box.innerHTML = '<div class="kdm-empty">无网络</div>'; return; }
+			box.innerHTML = tbl(['名称', '驱动', '范围', '子网', '操作'], items.map(function (n) {
+				return '<tr><td><strong>' + esc(n.name) + '</strong></td><td>' + esc(n.driver) + '</td>' +
+					'<td>' + esc(n.scope) + '</td><td class="mono">' + esc(n.subnet || '—') + '</td>' +
+					'<td><div class="kdm-acts"><button class="kdm-btn danger" data-op="rmnet" data-t="' + esc(n.name) + '">删除</button></div></td></tr>';
+			}));
+			bind(box);
+		}).catch(function () {});
+	}
+
+	/* ---- 数据卷 ---- */
+	function loadVolumes() {
+		get('volumes').then(function (d) {
+			var box = document.getElementById('kdm-vols');
+			var note = document.getElementById('kdm-vol-note');
+			if (!box) return;
+			var items = (d && d.items) || [];
+			if (note) note.textContent = items.length ? (items.length + ' 个') : '无数据卷';
+			if (!items.length) { box.innerHTML = '<div class="kdm-empty">还没有数据卷。</div>'; return; }
+			box.innerHTML = tbl(['名称', '驱动', '挂载点', '操作'], items.map(function (v) {
+				return '<tr><td><strong>' + esc(v.name) + '</strong></td><td>' + esc(v.driver) + '</td>' +
+					'<td class="mono">' + esc(v.mountpoint || '—') + '</td>' +
+					'<td><div class="kdm-acts"><button class="kdm-btn danger" data-op="rmvol" data-t="' + esc(v.name) + '">删除</button></div></td></tr>';
+			}));
+			bind(box);
+		}).catch(function () {});
+	}
+
+	/* ---- 事件 ---- */
+	function loadEvents() {
+		get('events').then(function (d) {
+			var box = document.getElementById('kdm-evs');
+			var note = document.getElementById('kdm-ev-note');
+			if (!box) return;
+			var items = (d && d.items) || [];
+			if (note) note.textContent = items.length ? (items.length + ' 条') : '无事件';
+			if (!items.length) { box.innerHTML = '<div class="kdm-empty">近 2 小时没有事件。</div>'; return; }
+			box.innerHTML = tbl(['时间', '类型', '动作', '对象'], items.slice().reverse().map(function (e) {
+				var t = Number(e.time);
+				var ts = isNaN(t) ? e.time : new Date(t * 1000).toLocaleString();
+				return '<tr><td class="mono">' + esc(ts) + '</td><td>' + esc(e.type) + '</td>' +
+					'<td>' + esc(e.action) + '</td><td class="mono">' + esc(e.name || '—') + '</td></tr>';
+			}));
+		}).catch(function () {});
+	}
+
+	/* ---- 配置 ---- */
+	function loadConfig() {
+		get('config').then(function (d) {
+			if (!d) return;
+			var u = d.uci || {};
+			var m = { 'kdm-c-alt': u.alt, 'kdm-c-root': u.root, 'kdm-c-host': u.host, 'kdm-c-ipt': u.ipt, 'kdm-c-pool': u.pool };
+			Object.keys(m).forEach(function (k) { var e = document.getElementById(k); if (e) e.textContent = (m[k] === '' || m[k] == null) ? '（未设置）' : m[k]; });
+			var pre = document.getElementById('kdm-c-json');
+			if (pre) pre.textContent = (d.daemon_json && d.daemon_json.trim()) || '（文件不存在）';
+		}).catch(function () {});
+	}
+
+	function bind(root) {
+		Array.prototype.slice.call(root.querySelectorAll('[data-op]')).forEach(function (btn) {
+			btn.addEventListener('click', function () {
+				var op = btn.getAttribute('data-op');
+				var t = btn.getAttribute('data-t');
+				var label = { start: '启动', stop: '停止', restart: '重启', rm: '删除容器', rmi: '删除镜像', rmnet: '删除网络', rmvol: '删除数据卷' }[op] || op;
+				if (!confirm(label + ' ' + t + ' ？')) return;
+				btn.disabled = true;
+				post(op, t).then(function (r) {
+					btn.disabled = false;
+					if (!r || r.code !== 0) alert('失败：' + ((r && r.msg) || '未知错误'));
+					load(active);
+				}).catch(function (e) { btn.disabled = false; alert('失败：' + e); });
+			});
+		});
+	}
+
+	var loaders = {
+		overview: loadOverview, containers: loadContainers, images: loadImages,
+		networks: loadNetworks, volumes: loadVolumes, events: loadEvents, config: loadConfig
+	};
+
+	function load(name) {
+		var fn = loaders[name] || loadOverview;
+		try { fn(); } catch (e) {}
+	}
+
+	function activate(name) {
+		active = name;
+		Array.prototype.slice.call(document.querySelectorAll('.kdm-tab')).forEach(function (b) {
+			b.classList.toggle('on', b.getAttribute('data-tab') === name);
+		});
+		Array.prototype.slice.call(document.querySelectorAll('.kdm-panel')).forEach(function (p) {
+			p.classList.toggle('on', p.getAttribute('data-panel') === name);
+		});
+		load(name);
+	}
+
+	Array.prototype.slice.call(document.querySelectorAll('.kdm-tab')).forEach(function (b) {
+		b.addEventListener('click', function () { activate(b.getAttribute('data-tab')); });
+	});
+	Array.prototype.slice.call(document.querySelectorAll('[data-reload]')).forEach(function (b) {
+		b.addEventListener('click', function () { load(b.getAttribute('data-reload')); });
+	});
+
+	activate('overview');
+
+	// 概览与容器页 10 秒自动刷新；切到后台暂停
+	function tick() { if (!document.hidden) load(active); }
+	timer = setInterval(tick, 10000);
+	document.addEventListener('visibilitychange', function () {
+		if (document.hidden) { if (timer) { clearInterval(timer); timer = null; } }
+		else if (!timer) { timer = setInterval(tick, 10000); }
+	});
+})();
+//]]>
+</script>
+
+<%+footer%>

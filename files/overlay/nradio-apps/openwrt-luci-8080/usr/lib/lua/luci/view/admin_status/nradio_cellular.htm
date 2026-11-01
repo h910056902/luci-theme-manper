@@ -1,0 +1,2770 @@
+<%#
+ NRadio cellular status for the isolated LuCI instance on port 8080.
+ 数据源：
+   - ubus infocd cpestatus  → 当前卡槽蜂窝状态（只在首屏同步读，无 AT 延迟）
+   - ubus infocd runtime    → 设备状态补充
+   - ubus atsdcpe at_cmd    → AT^MONNC 邻小区（手动触发，避免首屏阻塞）
+   - ubus atsdcpe at_cmd    → AT^NRFREQLOCK? / AT^LTEFREQLOCK? 锁频现状
+   - ?action=poll           → 10 秒采样：当前指标 + 历史曲线 + 事件（只读）
+   - ?action=diag           → 下载纯文本诊断报告（只读）
+ 写操作一律 POST 到本页 ?action=... ，由服务端 nradio_change 逻辑处理并经 sysauth 校验。
+-%>
+<%
+	local fs = require "nixio.fs"
+	local sys = require "luci.sys"
+	local util = require "luci.util"
+	local jsonc = require "luci.jsonc"
+	local http = require "luci.http"
+	local dispatcher = require "luci.dispatcher"
+
+	local NET = "cpe"          -- 主卡槽（外置卡2 当前在用）
+	local NET_ALT = "cpe1"     -- 副卡槽
+
+	local function trim(v)
+		return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+	end
+
+	local function ubus(obj, method, args)
+		local cmd = "ubus call " .. obj .. " " .. method
+		if args then cmd = cmd .. " '" .. args .. "'" end
+		local raw = sys.exec(cmd .. " 2>/dev/null") or ""
+		local ok, data = pcall(jsonc.parse, raw)
+		if ok and type(data) == "table" then return data end
+		return nil
+	end
+
+	-- 发 AT 命令（经 ubus，稳定、无需额外进程）
+	-- 注意：cmd 里的双引号必须做 JSON 转义，否则 ubus 收到畸形 JSON
+	local function at(cmd, wait)
+		local jcmd = tostring(cmd):gsub("\\", "\\\\"):gsub('"', '\\"')
+		return ubus("atsd" .. NET, "at_cmd", string.format(
+			'{"cmd":"%s","wait":%d,"at_log_level":0,"block":1}',
+			jcmd, wait or 1500))
+	end
+
+	local function at_text(resp)
+		if type(resp) ~= "table" then return "" end
+		return tostring(resp.respone or "")
+	end
+
+	local function at_ok(resp)
+		return type(resp) == "table" and tostring(resp.code) == "0"
+	end
+
+	-- 取蜂窝状态（主卡槽优先；为空则退回副卡槽）
+	local function find_status()
+		local d = ubus("infocd", "cpestatus", '{"name":"' .. NET .. '"}')
+		local list = d and d.result
+		if type(list) ~= "table" then return nil, nil end
+		for _, entry in ipairs(list) do
+			local st = entry.status
+			if type(st) == "table" and st.name == NET then return st, entry end
+		end
+		for _, entry in ipairs(list) do
+			local st = entry.status
+			if type(st) == "table" and tostring(st.model or "") ~= "" then return st, entry end
+		end
+		local first = list[1]
+		return first and first.status or nil, first
+	end
+
+	local function fmt(bytes)
+		local n = tonumber(bytes) or 0
+		if n >= 1099511627776 then return string.format("%.2f TiB", n / 1099511627776) end
+		if n >= 1073741824 then return string.format("%.2f GiB", n / 1073741824) end
+		if n >= 1048576 then return string.format("%.2f MiB", n / 1048576) end
+		if n >= 1024 then return string.format("%.1f KiB", n / 1024) end
+		return tostring(n) .. " B"
+	end
+
+	local function fmt_dur(sec)
+		-- /proc/uptime 是浮点；%d 不接受浮点，必须取整，
+		-- 否则「运行不足 1 小时」分支会 500（bad argument #3 to 'format'）
+		local s = math.floor(tonumber(sec) or 0)
+		if s <= 0 then return "-" end
+		local d = math.floor(s / 86400)
+		local h = math.floor((s % 86400) / 3600)
+		local m = math.floor((s % 3600) / 60)
+		if d > 0 then return string.format("%d 天 %d 小时 %d 分", d, h, m) end
+		if h > 0 then return string.format("%d 小时 %d 分", h, m) end
+		return string.format("%d 分 %d 秒", m, s % 60)
+	end
+
+	-- 运营商 PLMN → 中文名
+	local PLMN = {
+		["46000"] = "中国移动", ["46002"] = "中国移动", ["46004"] = "中国移动",
+		["46007"] = "中国移动", ["46008"] = "中国移动",
+		["46001"] = "中国联通", ["46006"] = "中国联通", ["46009"] = "中国联通",
+		["46003"] = "中国电信", ["46005"] = "中国电信", ["46011"] = "中国电信",
+		["46015"] = "中国广电",
+	}
+
+	local function carrier(isp)
+		local k = trim(isp)
+		local m = PLMN[k]
+		if m then return m .. "（" .. k .. "）" end
+		return k ~= "" and k or "-"
+	end
+
+	-- 信号强度分级（RSRP，dBm）
+	local function sig_class(rsrp)
+		local v = tonumber(rsrp)
+		if not v or v == 0 then return "kpc-sig-none" end
+		if v >= -85 then return "kpc-sig-1" end
+		if v >= -95 then return "kpc-sig-2" end
+		if v >= -105 then return "kpc-sig-3" end
+		if v >= -115 then return "kpc-sig-4" end
+		return "kpc-sig-5"
+	end
+
+	local function sig_pct(rsrp)
+		local v = tonumber(rsrp)
+		if not v or v == 0 then return 0 end
+		local pct = math.floor((v + 140) * 100 / 60)
+		if pct < 5 then pct = 5 end
+		if pct > 100 then pct = 100 end
+		return pct
+	end
+
+	-- 解析 ^NRFREQLOCK? / ^LTEFREQLOCK? 回读值
+	-- 真实响应（含 AT 回显）：
+	--   AT^NRFREQLOCK?\r\r\n^NRFREQLOCK: 3\r\n0,7\r\n78\r\n41\r\n...\r\nOK\r\n
+	--   第 1 行是回显，第 2 行 ^KEY: <type>，第 3 行 <mobility>,<count>，随后每行一个频段
+	--   解锁时响应为：AT^NRFREQLOCK?\r\r\n^NRFREQLOCK: 0\r\nOK\r\n
+	local function parse_lock(resp, key)
+		local txt = at_text(resp)
+		if txt == "" then return nil end
+		-- 逐行拆；忽略回显行（以 AT 开头）
+		local lines = {}
+		for line in txt:gmatch("[^\r\n]+") do
+			line = trim(line)
+			if line ~= "" and not line:match("^AT") and line ~= "OK" then
+				lines[#lines + 1] = line
+			end
+		end
+		local t, mobility, bands = nil, "0", {}
+		for i, line in ipairs(lines) do
+			local n = line:match("^%^" .. key .. ":%s*(%d+)")
+			if n then
+				t = n
+				-- 紧跟的一行是 <mobility>,<count>
+				local nxt = lines[i + 1]
+				if nxt then
+					local m = nxt:match("^(%d+)%s*,")
+					if m then mobility = m end
+				end
+			elseif t and t ~= "0" then
+				local b = line:match("^(%d+)$")
+				if b then bands[#bands + 1] = b end
+			end
+		end
+		if not t then return nil end
+		if t == "0" then return { type = "0", mobility = "0", bands = {} } end
+		return { type = t, mobility = mobility, bands = bands }
+	end
+
+	local st = find_status()
+	local runtime = ubus("infocd", "runtime")
+
+	local cell = {}
+	cell.available     = type(st) == "table"
+	cell.mode          = cell.available and trim(st.mode) or ""
+	cell.carrier       = cell.available and carrier(st.isp or st.isp_company) or "-"
+	cell.sim_company   = cell.available and trim(st.sim_company) or ""
+	cell.band          = cell.available and trim(st.band) or ""
+	cell.earfcn        = cell.available and trim(st.earfcn) or ""
+	cell.pci           = cell.available and trim(st.pci) or ""
+	cell.tac           = cell.available and trim(st.tac) or ""
+	cell.cell          = cell.available and trim(st.cell) or ""
+	cell.rsrp          = cell.available and trim(st.rsrp) or ""
+	cell.rsrq          = cell.available and trim(st.rsrq) or ""
+	cell.sinr          = cell.available and trim(st.sinr) or ""
+	cell.dlbw          = cell.available and trim(st.DLBW) or ""
+	cell.ulbw          = cell.available and trim(st.ULBW) or ""
+	cell.ambr_dl       = cell.available and trim(st.NR5G_AMBR_DL) or ""
+	cell.ambr_ul       = cell.available and trim(st.NR5G_AMBR_UL) or ""
+	cell.cqi           = cell.available and trim(st.CQI) or ""
+	cell.model         = cell.available and trim(st.model) or ""
+	cell.revision      = cell.available and trim(st.revision) or ""
+	cell.model_temp    = cell.available and trim(st.model_temp) or ""
+	cell.imei          = cell.available and trim(st.imei) or ""
+	cell.imsi          = cell.available and trim(st.imsi) or ""
+	cell.iccid         = cell.available and trim(st.iccid) or ""
+	cell.sim_name      = cell.available and trim(st.sim_name) or ""
+	cell.simno         = cell.available and trim(st.simno) or ""
+	cell.simcount      = cell.available and trim(st.simcount) or ""
+	-- 字段名以模块实际返回为准（download/upload/sim_mon/sim_flow），保留旧名兜底
+	cell.flow_dl       = cell.available and trim(st.download or st.flow_dl) or "0"
+	cell.flow_ul       = cell.available and trim(st.upload or st.flow_ul) or "0"
+	cell.total_flow    = cell.available and trim(st.sim_flow or st.total_flow) or "0"
+	cell.mon_flow      = cell.available and trim(st.sim_mon or st.mon_flow) or "0"
+	cell.band_count    = cell.available and tostring(st.band_count or "") or ""
+	cell.dl_speed      = cell.available and trim(st.dl_speed) or ""
+	cell.ul_speed      = cell.available and trim(st.ul_speed) or ""
+
+	-- 载波聚合
+	local ca = {}
+	if cell.available and type(st.scc_carriers) == "table" then
+		for _, c in ipairs(st.scc_carriers) do
+			if type(c) == "table" then
+				ca[#ca + 1] = string.format("B%s / %s / PCI %s",
+					tostring(c.band or "-"), tostring(c.earfcn or "-"), tostring(c.pci or "-"))
+			else
+				ca[#ca + 1] = tostring(c)
+			end
+		end
+	end
+
+	-- 网络地址
+	local function addrs(node)
+		local out = {}
+		if type(node) ~= "table" then return out end
+		if type(node.ipaddrs) == "table" then
+			for _, a in ipairs(node.ipaddrs) do out[#out + 1] = tostring(a) end
+		end
+		return out
+	end
+	local function dns(node)
+		local out = {}
+		if type(node) ~= "table" then return out end
+		if type(node.dns) == "table" then
+			for _, a in ipairs(node.dns) do out[#out + 1] = tostring(a) end
+		end
+		return out
+	end
+	local v4 = cell.available and addrs(st.V4) or {}
+	local v4dns = cell.available and dns(st.V4) or {}
+	local v6 = cell.available and addrs(st.V6) or {}
+	local v6dns = cell.available and dns(st.V6) or {}
+
+	-- 锁频现状（只读回读）
+	local lock5 = parse_lock(at("AT^NRFREQLOCK?", 1500), "NRFREQLOCK")
+	local lock4 = parse_lock(at("AT^LTEFREQLOCK?", 1500), "LTEFREQLOCK")
+
+	-- 支持频段（来自 10086 同源：band5_support / band4_support 是固件常量）
+	local band5_support = {78, 41, 79, 28, 1, 8, 5, 3}
+	local band4_support = {1, 3, 5, 8, 34, 38, 39, 40, 41}
+
+	-- flash 消息
+	local flash = http.formvalue("kpc_msg") or ""
+
+	local model_name = "NRadio"
+	local board = {}
+	local function board_info()
+		local board_json = sys.exec("ubus call system board 2>/dev/null") or ""
+		local ok, d = pcall(jsonc.parse, board_json)
+		if ok and type(d) == "table" then return d end
+		return {}
+	end
+	board = board_info()
+	if board.model and board.model ~= "" then model_name = board.model end
+-%>
+<%+header%>
+
+<style type="text/css">
+/* 动效规范：系统开启「减少动态效果」时关闭动画与过渡（无障碍 + 低性能设备） */
+@media (prefers-reduced-motion: reduce){
+	*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+		transition-duration:.001ms!important;scroll-behavior:auto!important}
+	/* 标签页后台时暂停所有动画，省 CPU */
+}
+html.kp-idle *,html.kp-idle *::before,html.kp-idle *::after{animation-play-state:paused!important}
+/* 键盘导航焦点环（鼠标点击不显示） */
+:focus-visible{outline:2px solid #1f6feb;outline-offset:2px;border-radius:4px}
+</style>
+<link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
+<%
+	-- ===== 展示层辅助（只做格式换算，不发 AT） =====
+	local mode_up = trim(cell.mode):upper()
+	-- 模块回报的制式写法有 "NR SA" / "NR NSA" / "NR5G NSA" / "LTE" 等多种
+	local is_5g  = mode_up:find("NR", 1, true) ~= nil or mode_up:find("5G", 1, true) ~= nil
+	local is_lte = (not is_5g) and (mode_up:find("LTE", 1, true) ~= nil or mode_up:find("4G", 1, true) ~= nil)
+	local band_pre = is_5g and "n" or "B"
+
+	local function kp_sig_color(v)
+		local n = tonumber(v)
+		if not n or n == 0 then return "#8891a5" end
+		if n >= -95 then return "#34d399" end
+		if n >= -105 then return "#fbbf24" end
+		return "#f87171"
+	end
+
+	local function kp_sig_word(v)
+		local n = tonumber(v)
+		if not n or n == 0 then return "无信号" end
+		if n >= -85 then return "优秀" end
+		if n >= -95 then return "良好" end
+		if n >= -105 then return "一般" end
+		if n >= -115 then return "较差" end
+		return "极差"
+	end
+
+	local function kp_sig_bars(v)
+		local n = tonumber(v)
+		if not n or n == 0 then return 0 end
+		if n >= -85 then return 5 end
+		if n >= -95 then return 4 end
+		if n >= -105 then return 3 end
+		if n >= -115 then return 2 end
+		return 1
+	end
+
+	-- 锁频回读 → 状态 / 标签 / 明细
+	local function kp_lock_state(lk, fiveg)
+		if not lk then return "err", "读取失败", "模块未返回锁频信息" end
+		if lk.type == "0" then return "off", "未锁定", "自动选网" end
+		local body = "-"
+		if lk.type == "2" then
+			body = "频点 " .. table.concat(lk.bands, " / ")
+		else
+			local out = {}
+			local pre = fiveg and "n" or "B"
+			for _, b in ipairs(lk.bands) do out[#out + 1] = pre .. tostring(b) end
+			body = #out > 0 and table.concat(out, " / ") or "-"
+		end
+		local mob = (tostring(lk.mobility) == "1") and "允许切换小区" or "不允许切换小区"
+		return "on", (lk.type == "2") and "已锁频点" or "已锁频段", body .. " · " .. mob
+	end
+
+	local l5_state, l5_text, l5_body = kp_lock_state(lock5, true)
+	local l4_state, l4_text, l4_body = kp_lock_state(lock4, false)
+
+	-- 体验评分：RSRP 35 + SINR 30 + RSRQ 15 + CQI 10 + CA 10
+	local n_rsrp = tonumber(cell.rsrp) or 0
+	local n_sinr = tonumber(cell.sinr) or 0
+	local n_rsrq = tonumber(cell.rsrq) or 0
+	local n_cqi  = tonumber(cell.cqi) or 0
+	local score, score_word, score_tone = 0, "无信号", "warn"
+
+	if n_rsrp ~= 0 then
+		if n_rsrp >= -80 then score = score + 35
+		elseif n_rsrp >= -90 then score = score + 31
+		elseif n_rsrp >= -100 then score = score + 24
+		elseif n_rsrp >= -110 then score = score + 14
+		else score = score + 6 end
+
+		if n_sinr >= 20 then score = score + 30
+		elseif n_sinr >= 13 then score = score + 26
+		elseif n_sinr >= 5 then score = score + 18
+		elseif n_sinr >= 0 then score = score + 10
+		else score = score + 4 end
+
+		if n_rsrq <= -8 then score = score + 15
+		elseif n_rsrq <= -12 then score = score + 11
+		elseif n_rsrq <= -15 then score = score + 7
+		else score = score + 3 end
+
+		if n_cqi >= 12 then score = score + 10
+		elseif n_cqi >= 9 then score = score + 7
+		elseif n_cqi >= 6 then score = score + 4
+		else score = score + 2 end
+
+		score = score + (#ca > 0 and 10 or 4)
+
+		if score >= 85 then score_word, score_tone = "优", "on"
+		elseif score >= 70 then score_word, score_tone = "良", "on"
+		elseif score >= 55 then score_word, score_tone = "一般", "warn"
+		else score_word, score_tone = "差", "warn" end
+	end
+
+	-- 规则化建议（每条都带依据数值）
+	local advice = {}
+	if n_rsrp ~= 0 then
+		if n_sinr < 0 then
+			advice[#advice + 1] = "信噪比 " .. cell.sinr .. " dB 为负，干扰明显偏大。建议锁定当前频点，减少异频切换带来的抖动。"
+		end
+		if n_rsrp > -95 and n_cqi ~= 0 and n_cqi < 9 then
+			advice[#advice + 1] = "信号强（" .. cell.rsrp .. " dBm）但信道质量 CQI 仅 " .. cell.cqi .. "，可能是小区拥塞或签约限速，建议换频段对比。"
+		end
+		if #ca == 0 and is_5g then
+			advice[#advice + 1] = "当前未载波聚合。若所在位置有 n78 覆盖，可将 n78 一并加入白名单以提升峰值。"
+		end
+		if n_rsrp < -110 then
+			advice[#advice + 1] = "信号低于 -110 dBm，属于弱覆盖。建议调整天线朝向或加装外置天线后再做锁频。"
+		end
+		if #advice == 0 then
+			advice[#advice + 1] = "当前指标正常，无需调整锁频。如速率不达预期，可先扫描邻区对比 RSRP。"
+		end
+	end
+
+	local car_nr = {}
+	for _, c in ipairs(ca) do car_nr[#car_nr + 1] = tostring(c) end
+-%>
+<style type="text/css">
+/* ===== 蜂窝页组件（阶段十九）——仅本页，作用域 kpc-cell-page ===== */
+
+/* --- 深色信号舱（与首页 hero / 总览 hero 同源） --- */
+.kpc-cell-page .cell-hero{
+	position:relative;overflow:hidden;border-radius:16px;padding:18px 22px;margin:0 0 10px;
+	display:flex;flex-wrap:wrap;align-items:center;gap:14px 20px;
+	background:linear-gradient(120deg,#10182b 0%,#1a2740 55%,#173f3d 100%);
+	box-shadow:0 18px 36px -28px rgba(13,20,35,.85);color:#eef2f8}
+.kpc-cell-page .cell-hero::before{content:'';position:absolute;inset:0;pointer-events:none;
+	background:radial-gradient(60% 120% at 0% 0%,rgba(124,92,252,.28),transparent 55%),
+	           radial-gradient(50% 110% at 100% 100%,rgba(43,255,198,.18),transparent 60%)}
+.kpc-cell-page .cell-hero::after{content:'';position:absolute;inset:0;pointer-events:none;
+	background:repeating-radial-gradient(circle at calc(100% - 236px) 50%,rgba(255,255,255,.05) 0 1px,transparent 1px 26px);
+	-webkit-mask-image:radial-gradient(circle 380px at calc(100% - 236px) 50%,#000 0,transparent 100%);
+	        mask-image:radial-gradient(circle 380px at calc(100% - 236px) 50%,#000 0,transparent 100%)}
+.kpc-cell-page .cell-hero > *{position:relative;z-index:1}
+
+.kpc-cell-page .cell-id{order:1;flex:1 1 280px;display:flex;align-items:center;gap:13px;min-width:0}
+.kpc-cell-page .cell-brand{width:40px;height:40px;border-radius:12px;flex:0 0 auto;
+	display:inline-flex;align-items:center;justify-content:center;font-size:16px;color:#0e1626;
+	background:linear-gradient(135deg,#2bffc6,#7c5cfc);box-shadow:0 6px 16px -8px rgba(43,255,198,.9)}
+.kpc-cell-page .cell-id-t{min-width:0}
+.kpc-cell-page .cell-op{display:flex;align-items:center;gap:8px;min-width:0}
+.kpc-cell-page .cell-op-name{font-size:20px;font-weight:700;letter-spacing:.01em;line-height:1.2;
+	white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpc-cell-page .cell-badge{font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:6px;
+	color:#0e1626;background:linear-gradient(135deg,#2bffc6,#7de3cf)}
+.kpc-cell-page .cell-op-sub{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:5px;
+	font-size:11.5px;color:#a9b8cc}
+.kpc-cell-page .cell-dot{width:5px;height:5px;border-radius:50%;background:#2bffc6;
+	box-shadow:0 0 6px rgba(43,255,198,.7);flex:0 0 auto}
+.kpc-cell-page .cell-sep{color:#4d5a70}
+
+.kpc-cell-page .cell-mx{order:3;flex:1 1 100%;min-width:0;display:grid;
+	grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.kpc-cell-page .cell-m{display:flex;flex-direction:column;gap:5px;min-width:0;padding:9px 11px 10px;
+	border-radius:12px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.06)}
+.kpc-cell-page .cell-m > span{font-size:9.5px;font-weight:500;letter-spacing:.09em;text-transform:uppercase;
+	color:#8891a5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpc-cell-page .cell-m > strong{font-size:17px;font-weight:600;line-height:1.15;color:#eef0f6;
+	font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpc-cell-page .cell-m > strong small{font-size:10px;font-weight:500;color:#8891a5;margin-left:3px}
+.kpc-cell-page .cell-m > .cell-msub{font-size:10.5px;font-style:normal;color:#8891a5;
+	white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpc-cell-page .cell-bar{display:block;height:4px;border-radius:2px;background:rgba(127,127,140,.22);overflow:hidden}
+.kpc-cell-page .cell-bar > i{display:block;height:100%;border-radius:2px;transition:width .6s ease}
+.kpc-cell-page .cell-m.lv-good .cell-bar>i{background:linear-gradient(90deg,#10b981,#34d399)}
+.kpc-cell-page .cell-m.lv-fair .cell-bar>i{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+.kpc-cell-page .cell-m.lv-poor .cell-bar>i{background:linear-gradient(90deg,#ef4444,#f87171)}
+
+.kpc-cell-page .cell-sig{order:2;flex:0 0 300px;display:flex;align-items:center;gap:14px;
+	padding:14px 16px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06)}
+.kpc-cell-page .cell-ring{position:relative;width:92px;height:92px;flex:0 0 auto}
+.kpc-cell-page .cell-ring svg{width:100%;height:100%;display:block}
+.kpc-cell-page .cell-ring .rk-tk{fill:none;stroke:rgba(255,255,255,.07);stroke-width:6}
+.kpc-cell-page .cell-ring .rk-bg{fill:none;stroke:rgba(255,255,255,.09);stroke-width:7}
+.kpc-cell-page .cell-ring .rk-fg{fill:none;stroke:#34d399;stroke-width:7;stroke-linecap:round;
+	transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .8s ease}
+.kpc-cell-page .cell-ring .ct{position:absolute;inset:0;display:flex;flex-direction:column;
+	align-items:center;justify-content:center;gap:1px}
+.kpc-cell-page .cell-ring .ct b{font-size:23px;font-weight:600;line-height:1;color:#fff;font-variant-numeric:tabular-nums}
+.kpc-cell-page .cell-ring .ct i{font-size:9.5px;font-style:normal;color:#8891a5;letter-spacing:.05em}
+.kpc-cell-page .cell-sig-n{min-width:0}
+.kpc-cell-page .cell-sig-k{font-size:10.5px;letter-spacing:.04em;color:#8891a5}
+.kpc-cell-page .cell-sig-lv{font-size:14px;font-weight:600;margin:2px 0 7px;color:#34d399}
+.kpc-cell-page .cell-bars{display:flex;align-items:flex-end;gap:4px;height:26px}
+.kpc-cell-page .cell-bars span{width:4px;border-radius:2px;background:rgba(127,127,140,.25)}
+.kpc-cell-page .cell-bars span.on{background:linear-gradient(180deg,#22d3ee,#34d399)}
+
+.kpc-cell-page .cell-foot{display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+	margin:-2px 0 4px;padding:0 2px;font-size:11.5px;color:#7b8794}
+.kpc-cell-page .cell-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
+	background:#f2f8f8;border:1px solid #dcebea;color:#2f6e74}
+.kpc-cell-page .cell-chip b{font-weight:600;color:#123c3f}
+.kpc-cell-page .cell-foot .sp{flex:1}
+.kpc-cell-page .cell-live{font-size:12px;color:#8891a5}
+
+/* --- 通用小件 --- */
+.kpc-cell-page .cell-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 12px}
+.kpc-cell-page .cell-toolbar .sp{flex:1}
+.kpc-cell-page .cell-sec{border-top:1px solid #f2f4f7;padding:14px 16px}
+.kpc-cell-page .cell-sec:first-of-type{border-top:0}
+.kpc-cell-page .cell-sec-h{display:flex;align-items:center;gap:9px;margin-bottom:10px;font-size:.86rem;font-weight:600;color:#22333f}
+.kpc-cell-page .cell-sec-h .cell-num{width:20px;height:20px;border-radius:6px;flex:0 0 auto;
+	display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;
+	background:linear-gradient(135deg,#388087,#2bffc6)}
+.kpc-cell-page .cell-sec-h .cell-note,
+.kpc-cell-page .cell-sec-h em{margin-left:auto;font-style:normal;font-size:.74rem;font-weight:400;color:#8a93a0;text-shadow:none;text-align:left}
+
+.kpc-cell-page .cell-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
+.kpc-cell-page .cell-kv{min-width:0;padding:9px 11px;border-radius:9px;background:#fbfcfd;border:1px solid #eef1f4}
+.kpc-cell-page .cell-kv > span{display:block;font-size:.7rem;color:#8a93a0;letter-spacing:.02em;margin-bottom:2px}
+.kpc-cell-page .cell-kv > strong{display:block;font-size:.95rem;font-weight:600;color:#1f2d3d;
+	font-variant-numeric:tabular-nums;word-break:break-all}
+.kpc-cell-page .cell-kv > strong small{font-size:.7rem;font-weight:400;color:#98a2b3;margin-left:2px}
+.kpc-cell-page .cell-kv.is-key{background:linear-gradient(180deg,#f7fbfb,#fff);border-color:#dcebea}
+
+.kpc-cell-page .cell-pill{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 9px;border-radius:999px;
+	font-size:11.5px;font-weight:500;background:#f2f4f7;color:#667085;border:1px solid #e7eaee}
+.kpc-cell-page .cell-pill.on{background:rgba(52,211,153,.13);color:#1d8a5b;border-color:rgba(52,211,153,.32)}
+.kpc-cell-page .cell-pill.warn{background:rgba(240,160,32,.13);color:#b26a00;border-color:rgba(240,160,32,.32)}
+.kpc-cell-page .cell-pill::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.75}
+
+.kpc-cell-page .cell-lockrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0}
+.kpc-cell-page .cell-lockrow + .cell-lockrow{border-top:1px dashed #eef1f4}
+.kpc-cell-page .cell-lockrow > b{font-size:.8rem;color:#475467;min-width:64px}
+.kpc-cell-page .cell-lockrow > span.txt{font-size:.8rem;color:#1f2d3d}
+
+/* 分段选择 */
+.kpc-cell-page .cell-seg{display:inline-flex;padding:3px;border-radius:9px;background:#f2f4f7;gap:2px;flex-wrap:wrap}
+.kpc-cell-page .cell-seg label{position:relative;cursor:pointer}
+.kpc-cell-page .cell-seg input{position:absolute;opacity:0;pointer-events:none}
+.kpc-cell-page .cell-seg span{display:block;padding:6px 14px;border-radius:7px;font-size:.8rem;color:#475467;
+	transition:background-color .18s ease,color .18s ease,box-shadow .18s ease}
+.kpc-cell-page .cell-seg input:checked + span{background:linear-gradient(180deg,#3d8c93,#388087);color:#fff;font-weight:500;
+	box-shadow:0 3px 8px -6px rgba(56,128,135,.9)}
+.kpc-cell-page .cell-seg label:hover span{color:#2f6e74}
+
+/* 频段胶囊 */
+.kpc-cell-page .cell-bands{display:flex;flex-wrap:wrap;gap:6px}
+.kpc-cell-page .cell-bands label{position:relative;cursor:pointer}
+.kpc-cell-page .cell-bands input{position:absolute;opacity:0;pointer-events:none}
+.kpc-cell-page .cell-bands span{display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:999px;
+	font-size:.79rem;color:#344054;background:#fff;border:1px solid #d6dbe1;
+	transition:border-color .16s ease,box-shadow .16s ease;font-variant-numeric:tabular-nums}
+.kpc-cell-page .cell-bands label:hover span{border-color:#388087;color:#2f6e74;background:#f2f8f7}
+.kpc-cell-page .cell-bands input:checked + span{background:linear-gradient(180deg,#3d8c93,#388087);border-color:#2f6e74;
+	color:#fff;font-weight:500}
+.kpc-cell-page .cell-bandnote{font-size:.74rem;color:#8a93a0;margin:6px 0 0}
+.kpc-cell-page .cell-bandrow + .cell-bandrow{margin-top:10px}
+
+/* 指令预览 */
+.kpc-cell-page .cell-at{margin-top:10px;border:1px solid #e7eaee;border-radius:9px;background:#fbfcfd;overflow:hidden}
+.kpc-cell-page .cell-at > summary{cursor:pointer;padding:8px 12px;font-size:.78rem;color:#475467;
+	list-style:none;display:flex;align-items:center;gap:6px}
+.kpc-cell-page .cell-at > summary::-webkit-details-marker{display:none}
+.kpc-cell-page .cell-at > summary::before{content:'';width:6px;height:6px;flex:0 0 auto;
+	border-right:1.5px solid #98a2b3;border-bottom:1.5px solid #98a2b3;
+	transform:rotate(-45deg);transition:transform .18s ease;margin-right:2px}
+.kpc-cell-page .cell-at[open] > summary::before{transform:rotate(45deg)}
+.kpc-cell-page .cell-at pre{margin:0;padding:10px 12px;border-top:1px solid #eef1f4;background:#fff;
+	font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.74rem;line-height:1.7;color:#344054;
+	white-space:pre-wrap;word-break:break-all}
+
+/* 步骤条 */
+.kpc-cell-page .cell-steps{display:none;align-items:center;flex-wrap:wrap;gap:6px;margin-top:12px;
+	padding:10px 12px;border-radius:9px;background:#fbfcfd;border:1px solid #eef1f4;font-size:.78rem}
+.kpc-cell-page .cell-steps.show{display:flex}
+.kpc-cell-page .cell-steps b{display:inline-flex;align-items:center;gap:5px;font-weight:500;color:#98a2b3}
+.kpc-cell-page .cell-steps b.ok{color:#1d8a5b}
+.kpc-cell-page .cell-steps b.run{color:#2f6e74}
+.kpc-cell-page .cell-steps b.err{color:#d9480f}
+.kpc-cell-page .cell-steps b i{font-size:10px}
+.kpc-cell-page .cell-steps .arw{color:#d6dbe1;font-size:10px}
+
+/* 体验评分 */
+.kpc-cell-page .cell-score{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.kpc-cell-page .cell-score .v{display:flex;align-items:baseline;gap:4px}
+.kpc-cell-page .cell-score .v b{font-size:30px;font-weight:700;line-height:1;color:#123c3f;font-variant-numeric:tabular-nums}
+.kpc-cell-page .cell-score .v span{font-size:.74rem;color:#8a93a0}
+.kpc-cell-page .cell-score .t{flex:1;min-width:200px;max-width:620px}
+.kpc-cell-page .cell-score .t p{margin:0 0 6px;font-size:.8rem;color:#475467}
+.kpc-cell-page .cell-score .t p em{font-style:normal;color:#2f6e74;font-weight:600}
+.kpc-cell-page .cell-score .bar{height:6px;border-radius:3px;background:#eef1f4;overflow:hidden}
+.kpc-cell-page .cell-score .bar i{display:block;height:100%;border-radius:3px;
+	background:linear-gradient(90deg,#388087,#2bffc6)}
+
+.kpc-cell-page .cell-scroll{overflow-x:auto}
+.kpc-cell-page .cell-tip{margin:8px 0 0;font-size:.74rem;color:#98a2b3;line-height:1.6}
+/* 覆盖 cascade 的 fieldset.cbi-section p{padding:1em} 与 .cbi-section em 默认样式 */
+.kpc-cell-page .cbi-section p{padding:0!important;text-shadow:none}
+.kpc-cell-page .cbi-section em{font-size:inherit;font-weight:inherit;color:inherit;
+	text-shadow:none;text-align:left}
+.kpc-cell-page .cell-sec table{width:100%;border-collapse:collapse}
+.kpc-cell-page .cell-sec table th{white-space:nowrap;text-align:left;padding:8px 10px}
+.kpc-cell-page .cell-sec table td{white-space:nowrap;text-align:left;padding:9px 10px}
+.kpc-cell-page .cell-sec table td.cell-wrap{white-space:normal}
+
+@media (max-width:900px){
+	.kpc-cell-page .cell-hero{padding:15px 16px;border-radius:14px}
+	.kpc-cell-page .cell-id{flex:1 1 100%}
+	.kpc-cell-page .cell-sig{order:3;flex:1 1 100%}
+	.kpc-cell-page .cell-mx{order:2;grid-template-columns:repeat(2,minmax(0,1fr))}
+	.kpc-cell-page .cell-op-name{font-size:18px}
+	.kpc-cell-page .cell-ring{width:78px;height:78px}
+	.kpc-cell-page .cell-ring .ct b{font-size:19px}
+}
+@media (max-width:560px){
+	.kpc-cell-page .cell-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+	.kpc-cell-page .cell-sec{padding:12px}
+	.kpc-cell-page .cell-op-sub{font-size:11px}
+}
+/* 表单补充：频点输入 / 选项列 / 表格标签列 */
+.kpc-cell-page .cell-formrow{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+.kpc-cell-page .cell-formrow label{display:inline-flex;align-items:center;gap:8px;font-size:.8rem;color:#475467}
+.kpc-cell-page .cell-formrow input[type=text]{width:130px;padding:6px 9px;font-size:.82rem;border:1px solid #d6dbe1;border-radius:.4rem;color:#1f2d3d;background:#fff}
+.kpc-cell-page .cell-formrow input[type=text]:focus{outline:none;border-color:#388087;box-shadow:0 0 0 3px rgba(56,128,135,.15)}
+.kpc-cell-page .cell-optrow{display:flex;flex-direction:column;gap:10px}
+.kpc-cell-page .cell-optrow .checkbox > span{font-size:.8rem;color:#475467}
+.kpc-cell-page .cell-sec table td.k{color:#667085;width:170px}
+.kpc-cell-page .cell-sec table{width:100%;border-collapse:collapse}
+.kpc-cell-page #kpc-result{margin-top:10px}
+.kpc-cell-page #kpc-result:empty{display:none}
+.kpc-cell-page .cell-tabpanel[hidden]{display:none!important}
+.kpc-cell-page .cell-at pre{max-height:220px;overflow:auto}
+/* 提示条：cascade / mwrt 全局规则都带 !important，这里必须同级覆盖 */
+.kpc-cell-page .alert-message{padding:11px 14px!important;border-radius:8px!important;
+  box-shadow:none!important;font-size:.8rem!important;line-height:1.6!important;
+  color:#344054!important;background:#fbfcfd!important;border:1px solid #e7eaee!important}
+.kpc-cell-page .alert-message.warning{background:#fff8e6!important;border:1px solid #f6d9a0!important;
+  border-left:3px solid #f0a020!important;color:#8a5a00!important}
+.kpc-cell-page .alert-message.error{background:#fef0ec!important;border:1px solid #f7c3b3!important;
+  border-left:3px solid #d9480f!important;color:#a33a0c!important}
+.kpc-cell-page .alert-message.success{background:#eefaf3!important;border:1px solid #bfe8d2!important;
+  border-left:3px solid #2f9e44!important;color:#1d6b3a!important}
+.kpc-cell-page .alert-message .cell-tip{color:inherit!important;opacity:.85}
+
+/* 趋势页：曲线 / 告警 / 事件 */
+.kpc-cell-page .kpc-chart{width:100%;height:118px;display:block;background:#fbfcfd;
+	border:1px solid #eef1f4;border-radius:9px}
+.kpc-cell-page .kpc-chart .gl{stroke:#eef1f4;stroke-width:1;vector-effect:non-scaling-stroke}
+.kpc-cell-page .kpc-chart .ln{fill:none;stroke-width:1.8;vector-effect:non-scaling-stroke;
+	stroke-linejoin:round;stroke-linecap:round}
+.kpc-cell-page .kpc-chart .ln.rsrp,.kpc-cell-page .kpc-chart .ln.dl{stroke:#388087}
+.kpc-cell-page .kpc-chart .ln.sinr{stroke:#7c5cfc}
+.kpc-cell-page .kpc-chart .ln.ul{stroke:#f0a020}
+.kpc-cell-page .kpc-legend{display:flex;gap:14px;margin-top:8px;font-size:.72rem;color:#8a93a0}
+.kpc-cell-page .kpc-legend i{display:inline-block;width:10px;height:3px;border-radius:2px;
+	margin-right:5px;vertical-align:middle}
+.kpc-cell-page .lg-rsrp i,.kpc-cell-page .lg-dl i{background:#388087}
+.kpc-cell-page .lg-sinr i{background:#7c5cfc}
+.kpc-cell-page .lg-ul i{background:#f0a020}
+.kpc-cell-page .kpc-alert{display:flex;gap:8px;align-items:flex-start;padding:7px 0;font-size:.8rem;
+	border-top:1px dashed #eef1f4}
+.kpc-cell-page .kpc-alert:first-child{border-top:0}
+.kpc-cell-page .kpc-alert b{flex:0 0 auto;padding:1px 8px;border-radius:999px;font-size:.72rem;
+	background:#f2f4f7;color:#667085}
+.kpc-cell-page .kpc-alert span{color:#475467;min-width:0}
+.kpc-cell-page .kpc-alert.err b{background:rgba(214,69,69,.12);color:#c23b22}
+.kpc-cell-page .kpc-alert.warn b{background:rgba(240,160,32,.13);color:#b26a00}
+.kpc-cell-page .kpc-alert.ok b{background:rgba(52,211,153,.13);color:#1d8a5b}
+.kpc-cell-page .kpc-events{max-height:260px;overflow:auto}
+.kpc-cell-page .kpc-ev{display:flex;gap:8px;align-items:center;padding:5px 0;font-size:.78rem;
+	border-top:1px dashed #f2f4f7}
+.kpc-cell-page .kpc-ev:first-child{border-top:0}
+.kpc-cell-page .kpc-ev span{flex:0 0 auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+	font-size:.72rem;color:#98a2b3}
+.kpc-cell-page .kpc-ev i{width:6px;height:6px;border-radius:50%;background:#cbd5e1;flex:0 0 auto}
+.kpc-cell-page .kpc-ev.err i{background:#d64545}
+.kpc-cell-page .kpc-ev.warn i{background:#f0a020}
+.kpc-cell-page .kpc-ev.ok i{background:#34d399}
+.kpc-cell-page .kpc-ev em{font-style:normal;color:#344054;min-width:0}
+.kpc-cell-page .kpc-ev.err em{color:#a33a0c}
+
+/* 质量分布直方图（RSRP / SINR 分档） */
+.kpc-cell-page .kpc-hist{margin-bottom:14px}
+.kpc-cell-page .kpc-hist:last-of-type{margin-bottom:0}
+.kpc-cell-page .kpc-hist-h{display:flex;align-items:baseline;gap:8px;margin-bottom:7px;font-size:.78rem;color:#475467;flex-wrap:wrap}
+.kpc-cell-page .kpc-hist-h b{font-weight:600;color:#1f2d3d;font-size:.82rem}
+.kpc-cell-page .kpc-hist-h span{color:#98a2b3;font-size:.72rem}
+.kpc-cell-page .kpc-hist-h em{margin-left:auto;font-style:normal;font-size:.72rem;color:#8a93a0;
+	font-variant-numeric:tabular-nums}
+.kpc-cell-page .kpc-hist-row{display:flex;align-items:center;gap:9px;margin-bottom:5px;font-size:.73rem}
+.kpc-cell-page .kpc-hist-k{flex:0 0 96px;color:#667085;white-space:nowrap}
+.kpc-cell-page .kpc-hist-bar{flex:1;height:12px;border-radius:3px;background:#f2f4f7;overflow:hidden}
+.kpc-cell-page .kpc-hist-bar > i{display:block;height:100%;border-radius:3px;transition:width .5s ease;min-width:2px}
+.kpc-cell-page .kpc-hist-v{flex:0 0 86px;text-align:right;color:#8a93a0;font-variant-numeric:tabular-nums}
+.kpc-cell-page .kpc-hist-v b{font-weight:600;color:#1f2d3d}
+
+/* 邻区表：ΔRSRP 着色 / 服务小区参考行 */
+.kpc-cell-page .cell-table td.d-up{color:#1d8a5b;font-weight:600}
+.kpc-cell-page .cell-table td.d-dn{color:#c23b22}
+.kpc-cell-page .cell-table tr.is-serving td{background:#f2f8f7;font-weight:600}
+.kpc-cell-page .cell-table td .nb-sub{color:#98a2b3;font-size:.68rem}
+
+/* 网页终端卡片（与面板深色终端主题一致） */
+.kpc-cell-page .kpc-term-bar{display:flex;align-items:center;gap:8px;background:#0f1720;border-radius:8px;
+	padding:9px 12px;font-family:"JetBrains Mono",Menlo,Consolas,monospace}
+.kpc-cell-page .kpc-term-led{width:8px;height:8px;border-radius:50%;background:#64748b;flex:0 0 8px;
+	box-shadow:0 0 0 3px rgba(100,116,139,.18);transition:background .3s}
+.kpc-cell-page .kpc-term-led.on{background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.2)}
+.kpc-cell-page .kpc-term-url{flex:1;color:#e6edf3;font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpc-cell-page .kpc-term-copy{background:rgba(255,255,255,.08);border:0;color:#cbd5e1;font-size:.7rem;
+	padding:3px 9px;border-radius:5px;cursor:pointer;flex:0 0 auto}
+.kpc-cell-page .kpc-term-copy:hover{background:rgba(255,255,255,.18);color:#fff}
+.kpc-cell-page .kpc-term-badge{display:inline-block;font-size:.68rem;padding:2px 9px;border-radius:999px;
+	background:rgba(100,116,139,.15);color:#64748b;margin-left:8px;vertical-align:middle;font-weight:600}
+.kpc-cell-page .kpc-term-badge.on{background:rgba(52,211,153,.15);color:#1d8a5b}
+.kpc-cell-page .kpc-term-open{min-width:150px}
+.kpc-cell-page .kpc-term-open:disabled{opacity:.45;cursor:not-allowed}
+
+/* AT 调试台输出 */
+.kpc-cell-page .kpc-at-pre{margin:10px 0 0;padding:10px 12px;border-radius:9px;background:#0f1720;
+	color:#d7e3ea;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.74rem;
+	line-height:1.55;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+
+/* 限速页 */
+.kpc-cell-page .kpc-num{width:94px;padding:3px 6px;border:1px solid #e4e7ec;border-radius:6px;
+	font-size:.76rem;background:#fff}
+.kpc-cell-page .kpc-sel{width:82px;padding:3px 6px;border:1px solid #e4e7ec;border-radius:6px;
+	font-size:.76rem;background:#fff}
+.kpc-cell-page .kpc-dev{display:block;font-size:.8rem;color:#1f2a37}
+.kpc-cell-page .kpc-mac{display:block;font-size:.68rem;color:#98a2b3;
+	font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.kpc-cell-page .cell-table input[type="number"]{width:100%}
+
+</style>
+
+<div class="kpc-cell-page">
+
+<h2 name="content">蜂窝网络</h2>
+<div class="cbi-map-descr">实时状态 · 每 10 秒自动刷新<% if cell.model ~= "" then %> · <%=pcdata(cell.model)%><% end %></div>
+
+<% if flash ~= "" then %>
+<div class="alert-message <%= (flash:sub(1, 1) == "!") and "error" or "success" %>"><%=pcdata(flash:gsub("^!", ""))%></div>
+<% end %>
+
+<% if not cell.available then %>
+<div class="alert-message warning">未读到模块数据。可能刚开机或未插卡，10 秒后自动重试。</div>
+<% end %>
+
+<!-- ==================== 信号舱 ==================== -->
+<div class="cell-hero">
+	<div class="cell-id">
+		<div class="cell-brand"><i class="fas fa-broadcast-tower"></i></div>
+		<div class="cell-id-t">
+			<div class="cell-op">
+				<span class="cell-op-name"><%=pcdata((cell.carrier ~= "-" and (cell.carrier:gsub("（.-）", "")) or "无服务"))%></span>
+				<b class="cell-badge"><%= is_5g and "5G" or (is_lte and "4G" or "—") %></b>
+			</div>
+			<div class="cell-op-sub">
+				<span class="cell-dot"></span><%= cell.available and "已注册" or "未注册" %>
+				<span class="cell-sep">·</span><%=pcdata(cell.mode ~= "" and cell.mode or "无服务")%>
+				<span class="cell-sep">·</span><%=pcdata(cell.band ~= "" and (band_pre .. cell.band) or "—")%>
+				<span class="cell-sep">·</span><%=pcdata(cell.sim_name ~= "" and cell.sim_name or ("卡槽 " .. (cell.simno ~= "" and cell.simno or "-")))%>
+			</div>
+		</div>
+	</div>
+
+	<div class="cell-mx">
+		<div class="cell-m <%= (n_rsrp >= -95 and n_rsrp ~= 0) and "lv-good" or ((n_rsrp >= -105 and n_rsrp ~= 0) and "lv-fair" or "lv-poor") %>">
+			<span>RSRP</span>
+			<strong><%=pcdata(cell.rsrp ~= "" and cell.rsrp or "--")%><small>dBm</small></strong>
+			<span class="cell-bar"><i style="width:<%=sig_pct(cell.rsrp)%>%"></i></span>
+		</div>
+		<div class="cell-m <%= (n_sinr >= 13) and "lv-good" or ((n_sinr >= 0) and "lv-fair" or "lv-poor") %>">
+			<span>SINR</span>
+			<strong><%=pcdata(cell.sinr ~= "" and cell.sinr or "--")%><small>dB</small></strong>
+			<span class="cell-bar"><i style="width:<%= math.max(4, math.min(100, math.floor((n_sinr + 10) * 100 / 40))) %>%"></i></span>
+		</div>
+		<div class="cell-m lv-good">
+			<span>频段</span>
+			<strong><%=pcdata(cell.band ~= "" and (band_pre .. cell.band) or "--")%></strong>
+			<span class="cell-msub"><%=pcdata(cell.earfcn ~= "" and ("频点 " .. cell.earfcn) or "频点 —")%></span>
+		</div>
+		<div class="cell-m <%= (cell.simno ~= "" and cell.simno ~= "0") and "lv-fair" or "lv-poor" %>">
+			<span>卡槽</span>
+			<strong><%=pcdata((cell.simno ~= "" and cell.simno or "-") .. " / " .. (cell.simcount ~= "" and cell.simcount or "-"))%></strong>
+			<span class="cell-msub"><%=pcdata(cell.carrier ~= "-" and cell.carrier or "无服务")%></span>
+		</div>
+	</div>
+
+	<div class="cell-sig">
+		<div class="cell-ring">
+			<svg viewBox="0 0 100 100" aria-hidden="true">
+				<circle class="rk-tk" cx="50" cy="50" r="46"></circle>
+				<circle class="rk-bg" cx="50" cy="50" r="38"></circle>
+				<circle class="rk-fg" cx="50" cy="50" r="38" stroke-dasharray="238.8"
+					stroke-dashoffset="<%=string.format('%.1f', 238.8 * (1 - sig_pct(cell.rsrp) / 100))%>"
+					stroke="<%=kp_sig_color(cell.rsrp)%>"></circle>
+			</svg>
+			<div class="ct"><b><%=pcdata(cell.rsrp ~= "" and cell.rsrp or "--")%></b><i>dBm</i></div>
+		</div>
+		<div class="cell-sig-n">
+			<div class="cell-sig-k">RSRP · 信号强度</div>
+			<div class="cell-sig-lv" style="color:<%=kp_sig_color(cell.rsrp)%>"><%=kp_sig_word(cell.rsrp)%></div>
+			<div class="cell-bars">
+				<% local bars = kp_sig_bars(cell.rsrp) %>
+				<% for i = 1, 5 do %><span class="<%= (i <= bars) and "on" or "" %>" style="height:<%=8 + i * 4%>px"></span><% end %>
+			</div>
+		</div>
+	</div>
+</div>
+
+<div class="cell-foot">
+	<span class="cell-chip">载波聚合 <b><%= #ca > 0 and (#ca .. "CC") or "未聚合" %></b></span>
+	<% if #ca > 0 then %><span class="cell-chip"><%=pcdata(table.concat(car_nr, " + "))%></span><% end %>
+	<span class="cell-chip">体验评分 <b><%=score%></b> · <%=pcdata(score_word)%></span>
+	<span class="cell-chip">模块温度 <b><%=pcdata(cell.model_temp ~= "" and (cell.model_temp .. " °C") or "--")%></b></span>
+	<span class="sp"></span>
+	<span class="cell-live" id="kpc-live">已更新 <%=os.date("%H:%M:%S")%> · 每 10 秒自动刷新</span>
+</div>
+
+<div class="cell-toolbar">
+	<button class="cbi-button cbi-button-neutral" type="button" id="kpc-refresh"><i class="fas fa-sync-alt"></i> 刷新</button>
+	<button class="cbi-button cbi-button-neutral" type="button" id="kpc-copy"><i class="fas fa-file-alt"></i> 复制诊断</button>
+	<button class="cbi-button cbi-button-neutral" type="button" id="kpc-diag"><i class="fas fa-download"></i> 导出诊断</button>
+	<span class="sp"></span>
+	<span class="cell-tip" style="margin:0">锁频变更后需 10–30 秒重新注册</span>
+</div>
+
+<!-- ==================== Tabs ==================== -->
+<ul class="tabs" id="kpc-tabs">
+	<li class="active" data-tab="overview"><a href="#overview">概览</a></li>
+	<li data-tab="trend"><a href="#trend">趋势</a></li>
+	<li data-tab="qos"><a href="#qos">限速</a></li>
+	<li data-tab="lock"><a href="#lock">锁频</a></li>
+	<li data-tab="optimize"><a href="#optimize">网优</a></li>
+	<li data-tab="neighbor"><a href="#neighbor">邻区</a></li>
+	<li data-tab="tool"><a href="#tool">工具</a></li>
+	<li data-tab="detail"><a href="#detail">明细</a></li>
+</ul>
+
+<!-- ==================== 概览 ==================== -->
+<div class="cell-tabpanel" data-panel="overview">
+	<fieldset class="cbi-section">
+		<h3>无线指标</h3>
+		<div class="cell-sec">
+			<div class="cell-grid">
+				<div class="cell-kv is-key"><span>信号强度 RSRP</span><strong><%=pcdata(cell.rsrp ~= "" and cell.rsrp or "-")%><small>dBm</small></strong></div>
+				<div class="cell-kv is-key"><span>信号质量 RSRQ</span><strong><%=pcdata(cell.rsrq ~= "" and cell.rsrq or "-")%><small>dB</small></strong></div>
+				<div class="cell-kv is-key"><span>信噪比 SINR</span><strong><%=pcdata(cell.sinr ~= "" and cell.sinr or "-")%><small>dB</small></strong></div>
+				<div class="cell-kv is-key"><span>信道质量 CQI</span><strong><%=pcdata(cell.cqi ~= "" and cell.cqi or "-")%></strong></div>
+				<div class="cell-kv"><span>频段 Band</span><strong><%=pcdata(cell.band ~= "" and (band_pre .. cell.band) or "-")%></strong></div>
+				<div class="cell-kv"><span>频点 ARFCN</span><strong><%=pcdata(cell.earfcn ~= "" and cell.earfcn or "-")%></strong></div>
+				<div class="cell-kv"><span>PCI 物理小区号</span><strong><%=pcdata(cell.pci ~= "" and cell.pci or "-")%></strong></div>
+				<div class="cell-kv"><span>跟踪区 TAC</span><strong><%=pcdata(cell.tac ~= "" and cell.tac or "-")%></strong></div>
+				<div class="cell-kv"><span>小区标识 Cell</span><strong><%=pcdata(cell.cell ~= "" and cell.cell or "-")%></strong></div>
+				<div class="cell-kv"><span>下行带宽</span><strong><% if cell.dlbw ~= "" then %><%=string.format("%.0f", (tonumber(cell.dlbw) or 0) / 1000)%><small>MHz</small><% else %>-<% end %></strong></div>
+				<div class="cell-kv"><span>上行带宽</span><strong><% if cell.ulbw ~= "" then %><%=string.format("%.0f", (tonumber(cell.ulbw) or 0) / 1000)%><small>MHz</small><% else %>-<% end %></strong></div>
+				<div class="cell-kv"><span>签约带宽 下行 / 上行</span><strong><% if cell.ambr_dl ~= "" then %><%=string.format("%.0f", (tonumber(cell.ambr_dl) or 0) / 1000)%> / <%=string.format("%.0f", (tonumber(cell.ambr_ul) or 0) / 1000)%><small>Mbps</small><% else %>-<% end %></strong></div>
+				<div class="cell-kv is-key"><span>小区标识 NCI</span><strong id="kc-nci">-</strong></div>
+				<div class="cell-kv is-key"><span>时间提前量 TA</span><strong id="kc-ta">-</strong><span id="kc-ta-d">-</span></div>
+				<div class="cell-kv"><span>服务域</span><strong id="kc-domain">-</strong></div>
+				<div class="cell-kv"><span>网络 PLMN</span><strong id="kc-plmn">-</strong></div>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>流量</h3>
+		<div class="cell-sec">
+			<div class="cell-grid">
+				<div class="cell-kv is-key"><span>本月流量</span><strong><%=pcdata(fmt(cell.mon_flow))%></strong></div>
+				<div class="cell-kv is-key"><span>累计流量</span><strong><%=pcdata(fmt(cell.total_flow))%></strong></div>
+				<div class="cell-kv"><span>本次下行</span><strong><%=pcdata(fmt(cell.flow_dl))%></strong></div>
+				<div class="cell-kv"><span>本次上行</span><strong><%=pcdata(fmt(cell.flow_ul))%></strong></div>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>载波聚合</h3>
+		<div class="cell-sec">
+			<% if #ca > 0 then %>
+			<div class="cell-scroll">
+				<table class="cell-table">
+					<thead><tr><th>载波</th><th>明细</th></tr></thead>
+					<tbody>
+						<% for i, c in ipairs(ca) do %>
+						<tr><td><%= (i == 1) and "SCC 1" or ("SCC " .. i) %></td><td class="cell-mono"><%=pcdata(c)%></td></tr>
+						<% end %>
+					</tbody>
+				</table>
+			</div>
+			<p class="cell-tip">共 <%=#ca%> 个辅载波。锁频时若只保留单频段，聚合可能失效。</p>
+			<% else %>
+			<p class="cell-tip">当前未载波聚合。多频段覆盖区域内，扩大频段白名单可能触发聚合。</p>
+			<% end %>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ==================== 趋势 ==================== -->
+<div class="cell-tabpanel" data-panel="trend" hidden>
+	<fieldset class="cbi-section">
+		<h3>实时指标<span class="cell-live" id="kpc-now-note">打开本页后开始采样</span></h3>
+		<div class="cell-sec">
+			<div class="cell-grid">
+				<div class="cell-kv is-key"><span>RSRP</span><strong id="kp-rsrp"><%=pcdata(cell.rsrp ~= "" and cell.rsrp or "-")%><small>dBm</small></strong></div>
+				<div class="cell-kv is-key"><span>SINR</span><strong id="kp-sinr"><%=pcdata(cell.sinr ~= "" and cell.sinr or "-")%><small>dB</small></strong></div>
+				<div class="cell-kv"><span>CQI</span><strong id="kp-cqi"><%=pcdata(cell.cqi ~= "" and cell.cqi or "-")%></strong></div>
+				<div class="cell-kv"><span>模块温度</span><strong id="kp-temp"><%=pcdata(cell.model_temp ~= "" and cell.model_temp or "-")%><small>°C</small></strong></div>
+				<div class="cell-kv"><span>下行速率</span><strong id="kp-dlr">-</strong></div>
+				<div class="cell-kv"><span>上行速率</span><strong id="kp-ulr">-</strong></div>
+			</div>
+			<p class="cell-tip">每 10 秒采样一次，最多保留 30 分钟（180 点）。采样只在打开本页期间进行，关闭页面即停止。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>信号趋势<span class="cell-live" id="kpc-sig-note">—</span></h3>
+		<div class="cell-sec">
+			<svg class="kpc-chart" id="kpc-chart-sig" viewBox="0 0 600 118" preserveAspectRatio="none" role="img" aria-label="RSRP 与 SINR 趋势"></svg>
+			<div class="kpc-legend">
+				<span class="lg-rsrp"><i></i>RSRP dBm</span>
+				<span class="lg-sinr"><i></i>SINR dB</span>
+				<span class="cell-tip" style="margin:0">纵轴按各自量程归一化</span>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>吞吐趋势<span class="cell-live" id="kpc-rate-note">—</span></h3>
+		<div class="cell-sec">
+			<svg class="kpc-chart" id="kpc-chart-rate" viewBox="0 0 600 118" preserveAspectRatio="none" role="img" aria-label="上下行速率趋势"></svg>
+			<div class="kpc-legend">
+				<span class="lg-dl"><i></i>下行</span>
+				<span class="lg-ul"><i></i>上行</span>
+				<span class="cell-tip" style="margin:0">按 flow 计数器差值计算，峰值自适应</span>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>质量分布<span class="cell-live" id="kpc-dist-note">打开本页后开始统计</span></h3>
+		<div class="cell-sec">
+			<div class="kpc-hist">
+				<div class="kpc-hist-h"><b>RSRP 分档</b><span>dBm</span><em id="kpc-rsrp-sum">—</em></div>
+				<div id="kpc-hist-rsrp"><p class="cell-tip" style="margin:0">等待采样…</p></div>
+			</div>
+			<div class="kpc-hist">
+				<div class="kpc-hist-h"><b>SINR 分档</b><span>dB</span><em id="kpc-sinr-sum">—</em></div>
+				<div id="kpc-hist-sinr"><p class="cell-tip" style="margin:0">等待采样…</p></div>
+			</div>
+			<p class="cell-tip">统计窗口为最近 30 分钟采样（≤180 点），重启清零。RSRP 分档 ≥-85 / -85~-95 / -95~-105 / -105~-115 / &lt;-115；SINR 分档 ≥20 / 13~20 / 5~13 / 0~5 / &lt;0。右侧 P10/P90 表示 90% 的采样落在两者之间。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>告警<span class="cell-live" id="kpc-alert-note">—</span></h3>
+		<div class="cell-sec">
+			<div id="kpc-alerts"><p class="cell-tip" style="margin:0">等待采样…</p></div>
+			<p class="cell-tip">阈值：RSRP &lt; -110 dBm、SINR &lt; 0 dB、CQI &lt; 9、模块温度 ≥ 70 °C、无服务。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>事件时间线<span class="cell-live" id="kpc-ev-note">—</span></h3>
+		<div class="cell-sec">
+			<div class="kpc-events" id="kpc-events">
+				<p class="cell-tip" style="margin:0">暂无事件。切换小区、脱网/恢复、信号骤降、模块高温会记录在这里。</p>
+			</div>
+			<p class="cell-tip">事件保留最近 40 条；采样文件位于 /tmp，重启后清空。</p>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ==================== 锁频 ==================== -->
+<div class="cell-tabpanel" data-panel="lock" hidden>
+	<fieldset class="cbi-section">
+		<h3>当前锁定状态</h3>
+		<div class="cell-sec">
+			<div class="cell-lockrow">
+				<b>5G NR</b>
+				<span class="cell-pill <%= (l5_state == "on") and "on" or ((l5_state == "err") and "warn" or "") %>"><%=pcdata(l5_text)%></span>
+				<span class="txt"><%=pcdata(l5_body)%></span>
+			</div>
+			<div class="cell-lockrow">
+				<b>4G LTE</b>
+				<span class="cell-pill <%= (l4_state == "on") and "on" or ((l4_state == "err") and "warn" or "") %>"><%=pcdata(l4_text)%></span>
+				<span class="txt"><%=pcdata(l4_body)%></span>
+			</div>
+			<p class="cell-tip">回读自模块当前配置。若与设备其他页面不一致，以本页回读为准。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>设置锁频</h3>
+
+		<div class="cell-sec">
+			<div class="cell-sec-h"><span class="cell-num">1</span>选择锁定方式<span class="cell-note">执行后会重新注册网络</span></div>
+			<div class="cell-seg" id="kpc-mode">
+				<label><input type="radio" name="kpc_mode" value="band" checked><span>频段白名单</span></label>
+				<label><input type="radio" name="kpc_mode" value="cell"><span>频点 ARFCN</span></label>
+				<label><input type="radio" name="kpc_mode" value="current"><span>当前小区</span></label>
+			</div>
+		</div>
+
+		<div class="cell-sec" data-mode="band">
+			<div class="cell-sec-h"><span class="cell-num">2</span>选择频段<span class="cell-note">勾选即限制，全不勾为不限制</span></div>
+			<div class="cell-bandrow">
+				<div class="cell-bands" data-group="nr">
+					<% for _, b in ipairs(band5_support) do %>
+					<label><input type="checkbox" name="band5" value="<%=b%>"<% if lock5 and lock5.type == "3" then for _, x in ipairs(lock5.bands) do if tostring(x) == tostring(b) then %> checked<% end end end %>><span>n<%=b%></span></label>
+					<% end %>
+				</div>
+				<p class="cell-bandnote">5G NR</p>
+			</div>
+			<div class="cell-bandrow">
+				<div class="cell-bands" data-group="lte">
+					<% for _, b in ipairs(band4_support) do %>
+					<label><input type="checkbox" name="band4" value="<%=b%>"<% if lock4 and lock4.type == "3" then for _, x in ipairs(lock4.bands) do if tostring(x) == tostring(b) then %> checked<% end end end %>><span>B<%=b%></span></label>
+					<% end %>
+				</div>
+				<p class="cell-bandnote">4G LTE</p>
+			</div>
+		</div>
+
+		<div class="cell-sec" data-mode="cell" hidden>
+			<div class="cell-sec-h"><span class="cell-num">2</span>填写频点<span class="cell-note">只锁频点，不锁物理小区</span></div>
+			<div class="cell-formrow">
+				<label>5G ARFCN <input type="text" name="earfcn5" id="kpc-earfcn5" value="<%= (is_5g and cell.earfcn ~= "") and cell.earfcn or "" %>" placeholder="如 627264"></label>
+				<label>4G ARFCN <input type="text" name="earfcn4" id="kpc-earfcn4" value="<%= (not is_5g and cell.earfcn ~= "") and cell.earfcn or "" %>" placeholder="如 1650"></label>
+			</div>
+			<p class="cell-bandnote">5G 频点范围 0–875000；4G 频点范围 0–875000。留空表示该制式不锁定。</p>
+		</div>
+
+		<div class="cell-sec" data-mode="current" hidden>
+			<div class="cell-sec-h"><span class="cell-num">2</span>锁定当前服务小区<span class="cell-note">按频点锁定</span></div>
+			<div class="cell-grid">
+				<div class="cell-kv is-key"><span>当前频段</span><strong><%=pcdata(cell.band ~= "" and (band_pre .. cell.band) or "-")%></strong></div>
+				<div class="cell-kv is-key"><span>当前频点</span><strong><%=pcdata(cell.earfcn ~= "" and cell.earfcn or "-")%></strong></div>
+				<div class="cell-kv"><span>PCI（不参与下发）</span><strong><%=pcdata(cell.pci ~= "" and cell.pci or "-")%></strong></div>
+			</div>
+			<p class="cell-bandnote">将把当前 <%= is_5g and "5G" or "4G" %> 频点写入锁定，另一制式不锁定。</p>
+		</div>
+
+		<div class="cell-sec">
+			<div class="cell-sec-h"><span class="cell-num">3</span>执行选项</div>
+			<div class="cell-optrow">
+				<div class="checkbox">
+					<input class="cbi-input-checkbox" type="checkbox" id="kpc-mob" name="lock_mobility" value="1"<%= ((lock5 and lock5.mobility == "1") or not lock5) and " checked" or "" %>>
+					<label class="switch" for="kpc-mob"></label>
+					<span>允许在锁定频段内切换小区</span>
+				</div>
+			</div>
+			<p class="cell-tip">锁错频段可能导致设备失联。远程操作前，请确认仍有有线或串口可管理设备。</p>
+		</div>
+
+		<div class="cell-sec">
+			<div class="cell-sec-h"><span class="cell-num">4</span>指令预览<span class="cell-note">执行前请确认</span></div>
+			<details class="cell-at">
+				<summary id="kpc-at-sum">将下发 4 条指令，点击展开</summary>
+				<pre id="kpc-at"></pre>
+			</details>
+			<div class="alert-message warning" style="margin-top:10px">
+				设备将断开重连 10–30 秒，此期间管理页无法访问。请不要刷新或关闭页面。
+			</div>
+
+			<div class="cell-steps" id="kpc-steps">
+				<b data-s="1"><i class="fas fa-circle-notch"></i>关闭射频</b><span class="arw">→</span>
+				<b data-s="2"><i class="fas fa-circle-notch"></i>下发锁频</b><span class="arw">→</span>
+				<b data-s="3"><i class="fas fa-circle-notch"></i>开启射频</b><span class="arw">→</span>
+				<b data-s="4"><i class="fas fa-circle-notch"></i>回读校验</b>
+			</div>
+
+			<div id="kpc-result"></div>
+
+			<div class="cell-actions">
+				<button class="cbi-button cbi-button-apply" type="button" id="kpc-apply">应用锁频</button>
+				<button class="cbi-button cbi-button-reset" type="button" id="kpc-clear">解除锁定</button>
+				<span class="sp"></span>
+				<span class="cell-tip" style="margin:0" id="kpc-hint">回读不一致时会提示回滚</span>
+			</div>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ==================== 网优 ==================== -->
+<div class="cell-tabpanel" data-panel="optimize" hidden>
+	<fieldset class="cbi-section">
+		<h3>体验评分</h3>
+		<div class="cell-sec">
+			<div class="cell-score">
+				<div class="v"><b><%=score%></b><span>分 · <%=pcdata(score_word)%></span></div>
+				<div class="t">
+					<p><%=pcdata(advice[1] or "暂无数据")%></p>
+					<div class="bar"><i style="width:<%=score%>%"></i></div>
+				</div>
+				<span class="cell-pill <%=score_tone%>"><%= (score >= 70) and "指标健康" or "有优化空间" %></span>
+			</div>
+			<p class="cell-tip">评分构成：RSRP 35 + SINR 30 + RSRQ 15 + CQI 10 + 载波聚合 10。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>距离估算<span class="cell-live" id="kpc-dist-verdict">—</span></h3>
+		<div class="cell-sec">
+			<div class="cell-grid">
+				<div class="cell-kv is-key"><span>TA 估算</span><strong id="kc-dist-ta">-</strong></div>
+				<div class="cell-kv is-key"><span>路损估算</span><strong id="kc-dist-pl">-</strong></div>
+				<div class="cell-kv"><span>一致性</span><strong id="kc-dist-ok">-</strong></div>
+				<div class="cell-kv"><span>计算参数</span><strong id="kc-dist-cfg" style="font-size:.8rem">-</strong></div>
+			</div>
+			<p class="cell-tip">TA 由往返时延量化得到（步长 39~78 m 级），NLOS 只会偏大；路损按<strong>每 RE 功率</strong>与路损指数反推，受天线倾角、遮挡、实际发射功率影响很大。两路相差 3 倍以上时标为「不可信」——此时不要采信任何一个数字。参数可用 uci 调整：<code>kpnet.rf.eirp_re</code>（默认 20 dBm）、<code>kpnet.rf.n</code>（默认 3.3）、<code>kpnet.ta.step</code>（标定后的米/单位）。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>优化建议</h3>
+		<div class="cell-sec">
+			<% for i, a in ipairs(advice) do %>
+			<div class="cell-lockrow">
+				<b>建议 <%=i%></b>
+				<span class="txt"><%=pcdata(a)%></span>
+				<button class="cbi-button cbi-button-neutral" type="button" data-goto="lock" style="margin-left:auto">去锁频</button>
+			</div>
+			<% end %>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>快捷操作</h3>
+		<div class="cell-sec">
+			<div class="cell-actions" style="margin-top:0">
+				<button class="cbi-button cbi-button-neutral" type="button" data-goto="neighbor"><i class="fas fa-search"></i> 扫描邻区对比</button>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-lock-cur"><i class="fas fa-lock"></i> 锁定当前频点</button>
+			</div>
+			<p class="cell-tip">锁定当前频点适合现场定点测试；移动场景建议保留多频段白名单。</p>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ==================== 邻区 ==================== -->
+<div class="cell-tabpanel" data-panel="neighbor" hidden>
+	<fieldset class="cbi-section">
+		<h3>邻区扫描</h3>
+		<div class="cell-sec">
+			<div class="cell-actions" style="margin-top:0;flex-wrap:wrap;gap:10px">
+				<button class="cbi-button cbi-button-action" type="button" id="kpc-scan">扫描邻区</button>
+				<label class="cell-tip" style="margin:0;display:inline-flex;align-items:center;gap:6px">
+					<input type="checkbox" id="kpc-nb-auto" checked> 停留本页签时每 30 秒自动扫描
+				</label>
+				<span class="cell-tip" id="kpc-scan-note" style="margin:0">—</span>
+			</div>
+			<div id="kpc-nb" class="cell-scroll" style="margin-top:12px">
+				<p class="cell-tip" style="margin:0">点击「扫描邻区」获取当前可用的相邻小区。</p>
+			</div>
+			<p class="cell-tip">ΔRSRP 为邻区相对服务小区的差值，越接近 0 说明越可能被切换过去。「距离(估)」以服务小区距离为锚点、按 ΔRSRP 与路损指数反算，只保留相对关系，绝对项互相抵消；锚点不可信时整列都不准。TA 只属于服务小区，不能套到邻区上。「历史最优 / 出现」来自本机累计统计（/tmp，重启清零）。低于 -120 dBm 已丢弃；模块只上报同频邻区，判断异频优劣需锁频后重测。</p>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ==================== 限速 ==================== -->
+<div class="cell-tabpanel" data-panel="qos" hidden>
+	<fieldset class="cbi-section">
+		<h3>分设备限速<span class="cell-live" id="kpc-qos-note">未启用</span></h3>
+		<div class="cell-sec">
+			<div class="cell-actions" style="margin-top:0">
+				<label class="cell-tip" style="margin:0">上行带宽 kbps
+					<input type="number" class="kpc-num" id="kpc-qos-plan" min="1000" max="5000000" step="1000" value="1000000"></label>
+				<label class="cell-tip" style="margin:0">默认下行 kbps
+					<input type="number" class="kpc-num" id="kpc-qos-dd" min="0" step="100" value="0"></label>
+				<label class="cell-tip" style="margin:0">默认上行 kbps
+					<input type="number" class="kpc-num" id="kpc-qos-du" min="0" step="100" value="0"></label>
+				<label class="cell-tip" style="margin:0">默认优先级
+					<select id="kpc-qos-dp" class="kpc-sel">
+						<option value="high">高</option>
+						<option value="normal" selected>中</option>
+						<option value="low">低</option>
+					</select></label>
+				<button class="cbi-button cbi-button-action" type="button" id="kpc-qos-save">保存全部</button>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-qos-reset">恢复默认</button>
+			</div>
+			<p class="cell-tip">填 0 = 不限速。优先级决定带宽天花板：高 100% / 中 70% / 低 25%（按上行带宽计算），下行同理在 WAN 口按目的 IP 整形。</p>
+			<div class="cell-scroll" style="max-height:420px">
+				<table class="cell-table">
+					<thead><tr><th>设备</th><th>类型</th><th>实时 ↓ / ↑</th>
+						<th style="width:118px">下行 kbps</th><th style="width:118px">上行 kbps</th>
+						<th style="width:92px">优先级</th></tr></thead>
+					<tbody id="kpc-qos-body"></tbody>
+				</table>
+			</div>
+			<p class="cell-tip">实现：tc HTB + fq_codel（下行在 WAN 口按目的 IP，上行在 LAN 口按源 IP），未列名设备走「默认」策略。启用期间会暂停 MTK HNAT 硬件转发以保证整形生效，「恢复默认」后自动恢复 HNAT。配置写入 UCI <code>kpnet</code>，重启后由 <code>/etc/init.d/kpnet_qos</code> 自动恢复。</p>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ==================== 工具 ==================== -->
+<div class="cell-tabpanel" data-panel="tool" hidden>
+	<fieldset class="cbi-section">
+		<h3>身份信息<span class="cell-live">只读 · 一键复制</span></h3>
+		<div class="cell-sec">
+			<div class="cell-scroll">
+				<table class="cell-table">
+					<thead><tr><th>项目</th><th>值</th><th style="width:92px">操作</th></tr></thead>
+					<tbody>
+						<tr><td class="k">IMEI（串号）</td><td class="cell-mono" id="kp-id-imei"><%=pcdata(cell.imei ~= "" and cell.imei or "-")%></td>
+							<td><button class="cbi-button cbi-button-neutral" type="button" data-copy="kp-id-imei">复制</button></td></tr>
+						<tr><td class="k">IMSI</td><td class="cell-mono" id="kp-id-imsi"><%=pcdata(cell.imsi ~= "" and cell.imsi or "-")%></td>
+							<td><button class="cbi-button cbi-button-neutral" type="button" data-copy="kp-id-imsi">复制</button></td></tr>
+						<tr><td class="k">ICCID</td><td class="cell-mono" id="kp-id-iccid"><%=pcdata(cell.iccid ~= "" and cell.iccid or "-")%></td>
+							<td><button class="cbi-button cbi-button-neutral" type="button" data-copy="kp-id-iccid">复制</button></td></tr>
+						<tr><td class="k">模块型号</td><td class="cell-mono" id="kp-id-model"><%=pcdata(cell.model ~= "" and cell.model or "-")%></td>
+							<td><button class="cbi-button cbi-button-neutral" type="button" data-copy="kp-id-model">复制</button></td></tr>
+						<tr><td class="k">模块版本</td><td class="cell-mono" id="kp-id-rev"><%=pcdata(cell.revision ~= "" and cell.revision or "-")%></td>
+							<td><button class="cbi-button cbi-button-neutral" type="button" data-copy="kp-id-rev">复制</button></td></tr>
+					</tbody>
+				</table>
+			</div>
+			<div class="cell-actions" style="margin-top:12px">
+				<button class="cbi-button cbi-button-action" type="button" id="kpc-copy-all">复制全部</button>
+				<span class="cell-tip" id="kpc-copy-note" style="margin:0"></span>
+			</div>
+			<p class="cell-tip">本页只做读取与复制。改写、克隆 IMEI 属于违法行为，不提供该能力。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section" id="kpc-oc" hidden>
+		<h3>OpenClash<span class="cell-live">已解锁</span></h3>
+		<div class="cell-sec">
+			<div class="cell-actions" style="flex-wrap:wrap;gap:8px">
+				<a class="cbi-button cbi-button-action" id="kpc-oc-open" href="#" target="_blank" rel="noopener">打开 OpenClash</a>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-oc-lock">重新隐藏</button>
+				<span class="cell-tip" id="kpc-oc-state" style="margin:0"></span>
+			</div>
+			<p class="cell-tip">入口默认隐藏。在<strong>首页点击设备图片 5 下</strong>（1.5 秒内）解锁，解锁后会<strong>直接打开主 LuCI（80 端口）的 OpenClash 页面</strong>。解锁状态记在浏览器本地，换设备或清缓存后需重新解锁；这里保留卡片是为了之后能再次进入或重新隐藏。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section kpc-term">
+		<h3>网页终端<span class="kpc-term-badge" id="kpc-term-state">—</span></h3>
+		<div class="cell-sec">
+			<div class="kpc-term-bar">
+				<i class="kpc-term-led" id="kpc-term-led"></i>
+				<code class="kpc-term-url" id="kpc-term-url">—</code>
+				<button class="kpc-term-copy" type="button" id="kpc-term-copy" title="复制访问地址">复制</button>
+			</div>
+			<div class="cell-grid" style="margin-top:10px">
+				<div class="cell-kv is-key"><span>服务状态</span><strong id="kpc-term-run">-</strong></div>
+				<div class="cell-kv"><span>监听 / 鉴权</span><strong id="kpc-term-meta">-</strong></div>
+			</div>
+			<div class="cell-actions" style="margin-top:10px;flex-wrap:wrap;gap:8px">
+				<button class="cbi-button cbi-button-action kpc-term-open" type="button" id="kpc-term-open">在面板内打开</button>
+				<a class="cbi-button cbi-button-neutral" id="kpc-term-pop" href="#" target="_blank" rel="noopener">新窗口</a>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-term-start">启动</button>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-term-stop">停止</button>
+				<span class="cell-tip" id="kpc-term-msg" style="margin:0"></span>
+			</div>
+			<p class="cell-tip">终端由本机 <code>ttyd</code> 提供，跑在独立端口、独立会话。<strong>它给的是 root shell</strong>：任何能访问该端口的人都能完全控制设备，且当前<strong>没有设置用户名密码</strong>。请只在可信内网使用，用完点「停止」。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>硬件加速<span class="cell-live" id="kpc-hnat-note">—</span></h3>
+		<div class="cell-sec">
+			<div class="cell-grid">
+				<div class="cell-kv is-key"><span>HNAT 模块</span><strong id="kpc-hnat-mod">-</strong></div>
+				<div class="cell-kv"><span>加速条目</span><strong id="kpc-hnat-cnt">-</strong></div>
+				<div class="cell-kv"><span>软件 offload</span><strong id="kpc-hnat-sw">-</strong></div>
+				<div class="cell-kv"><span>驱动版本</span><strong id="kpc-hnat-ver" style="font-size:.76rem">-</strong></div>
+			</div>
+			<div class="cell-actions" style="margin-top:10px;flex-wrap:wrap;gap:8px">
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-hnat-on">开启软件 offload</button>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-hnat-off">关闭软件 offload</button>
+				<span class="cell-tip" id="kpc-hnat-msg" style="margin:0"></span>
+			</div>
+			<p class="cell-tip">HNAT 是 MTK 的硬件转发通道，由驱动接管，这里只读展示。软件 offload 对应 <code>firewall.flow_offloading</code>，切换会 reload 防火墙（连接瞬断）。<strong>与「限速」互斥</strong>：启用分设备限速时会挂起 HNAT，否则限速不生效。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>AT 高级命令<span class="cell-live">绕过白名单</span></h3>
+		<div class="cell-sec">
+			<div class="cell-formrow" style="flex-wrap:wrap;gap:8px">
+				<input id="kpc-atraw-cmd" class="kpc-num" style="flex:1;min-width:220px;width:auto" placeholder="例如 AT+CSQ / AT^HCSQ?">
+				<button class="cbi-button cbi-button-action" type="button" id="kpc-atraw-run">执行</button>
+				<button class="cbi-button cbi-button-negative" type="button" id="kpc-atraw-reset">重启模块</button>
+			</div>
+			<label class="cell-tip" style="display:flex;align-items:center;gap:6px;margin:8px 0 0">
+				<input type="checkbox" id="kpc-atraw-confirm"> 我确认这些命令会直接作用于模块（可能脱网或改动配置）
+			</label>
+			<pre class="kpc-at-pre" id="kpc-atraw-out">—</pre>
+			<p class="cell-tip">卡槽切换该模块不支持：<code>AT+QUIMSLOT?</code> 与 <code>AT^SIMSLOT?</code> 均返回 ERROR，故不提供。模块重启用 <code>AT+CFUN=1,1</code>，通常 20~60 秒恢复。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>一键备份<span class="cell-live" id="kpc-bak-note">—</span></h3>
+		<div class="cell-sec">
+			<div class="cell-actions" style="flex-wrap:wrap;gap:8px">
+				<button class="cbi-button cbi-button-action" type="button" id="kpc-bak-make">生成备份 (tar.gz)</button>
+				<button class="cbi-button cbi-button-apply" type="button" id="kpc-bak-ipk">生成恢复包 (ipk)</button>
+				<span class="cell-tip" id="kpc-bak-msg" style="margin:0"></span>
+			</div>
+			<div id="kpc-bak-list" style="margin-top:10px;font-size:.8rem"></div>
+			<p class="cell-tip">两种格式内容一致：<strong>全部插件配置</strong>（<code>sysupgrade -k -b</code>，含 <code>/etc/config</code> 与短信转发模板）、<strong>已装插件清单</strong>、<strong>面板 ipk</strong>、<strong>restore.sh</strong>。<br><code>.tar.gz</code> 适合手动解包恢复；<code>.ipk</code> 是恢复包，传到路由器后可直接用应用商店安装或 <code>opkg install</code>，<strong>安装即自动还原配置并重装面板</strong>。<br>文件存在 <code>/tmp</code>，重启后清空，请及时下载。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>在线恢复<span class="cell-live" id="kp-pr-note">—</span></h3>
+		<div class="cell-sec">
+			<div class="cell-actions" style="flex-wrap:wrap;gap:8px">
+				<button class="cbi-button cbi-button-action" type="button" id="kp-pr-start">开始恢复</button>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kp-pr-stop">停止</button>
+				<span class="cell-tip" id="kp-pr-msg" style="margin:0"></span>
+			</div>
+			<div style="margin-top:10px;height:6px;background:rgba(15,23,32,.08);border-radius:3px;overflow:hidden">
+				<i id="kp-pr-bar" style="display:block;height:100%;width:0;background:linear-gradient(90deg,#34d399,#22a06b);transition:width .4s ease"></i>
+			</div>
+			<div class="cell-tip" id="kp-pr-stat" style="margin-top:6px">—</div>
+			<pre id="kp-pr-log" style="margin-top:8px;font-size:11px;max-height:140px;overflow:auto;white-space:pre-wrap;background:rgba(15,23,32,.04);padding:8px;border-radius:6px">—</pre>
+			<p class="cell-tip">按 <code>/etc/kp-restore/packages.txt</code> 补装缺失的插件，需要联网。只装清单里缺的包，已装的不动；失败的条目会列在日志里。装完后部分服务需要重启才生效。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>系统维护<span class="cell-live" id="kpc-swap-note">—</span></h3>
+		<div class="cell-sec">
+			<div class="cell-grid">
+				<div class="cell-kv is-key"><span>Swap</span><strong id="kpc-swap-state">-</strong></div>
+				<div class="cell-kv"><span>已用 / 总量</span><strong id="kpc-swap-usage">-</strong></div>
+				<div class="cell-kv"><span>优先级 / zram</span><strong id="kpc-swap-prio">-</strong></div>
+				<div class="cell-kv"><span>Swap 文件</span><strong id="kpc-swap-file" style="font-size:.76rem">-</strong></div>
+				<div class="cell-kv"><span>卡锁（SIM 保护）</span><strong id="kpc-lock-state">-</strong></div>
+			</div>
+			<div class="cell-formrow" style="margin-top:8px;flex-wrap:wrap;gap:8px">
+				<label>大小
+					<input id="kpc-swap-size" class="kpc-num" type="number" min="128" max="1024" step="64" value="512"> <span class="cell-tip" style="margin:0">MB</span>
+				</label>
+				<button class="cbi-button cbi-button-action" type="button" id="kpc-swap-on">创建并启用</button>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-swap-off">关闭并移除</button>
+				<span class="cell-tip" id="kpc-swap-msg" style="margin:0"></span>
+			</div>
+			<p class="cell-tip">对齐固件 <code>mwrt-swapfile</code> 的做法：文件放在 <code>/overlay/swapfile</code>，<strong>64 MB 分块写入</strong>（每块 <code>sync</code>），先写 <code>.tmp</code> 再改名，掉电不会留下半截文件；<code>swapon -p 10</code> 用低优先级；首次生成在后台跑，不阻塞页面。生成结束后写入 <code>fstab</code>，重启自动启用。<br>固件是「zram（pri 100）主 + 文件（pri 10）兜底」双层，本机内核 <code>CONFIG_ZSMALLOC</code> 未开启、没有 zram 模块，<strong>只能做文件这一层</strong>。eMMC 上长期换页会加速磨损，建议 512 MB 以内、按需开启。<br>卡锁是厂商的 SIM 保护（防止换卡），密钥由板 ID 派生、只存在于厂商侧——这里<strong>只显示状态，不提供解锁</strong>。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>监听地址<span class="cell-live" id="kpc-listen-note">—</span></h3>
+		<div class="cell-sec">
+			<div class="cell-grid">
+				<div class="cell-kv is-key"><span>当前监听</span><strong id="kpc-listen-cur">-</strong></div>
+				<div class="cell-kv"><span>LAN 地址</span><strong id="kpc-listen-lan">-</strong></div>
+			</div>
+			<div class="cell-formrow" style="margin-top:8px;flex-wrap:wrap;gap:8px">
+				<label>模式
+					<select id="kpc-listen-mode" class="kpc-sel" style="width:auto;min-width:150px">
+						<option value="auto">自动跟随 LAN</option>
+						<option value="all">全部地址 0.0.0.0</option>
+						<option value="custom">自定义</option>
+					</select>
+				</label>
+				<label>地址
+					<select id="kpc-listen-ip" class="kpc-sel" style="width:auto;min-width:150px"></select>
+				</label>
+				<label>端口
+					<input id="kpc-listen-port" class="kpc-num" type="number" min="1" max="65535" value="8080">
+				</label>
+				<button class="cbi-button cbi-button-action" type="button" id="kpc-listen-apply">应用</button>
+				<span class="cell-tip" id="kpc-listen-msg" style="margin:0"></span>
+			</div>
+			<p class="cell-tip">「自动跟随 LAN」会在 LAN 改地址（例如改成 192.168.100.1）后自动跟上，不需要手动改。自定义只能选本机<strong>已有</strong>的地址，否则 uhttpd 绑定失败、8080 会整个失联；脚本带 2 秒自检，绑不上会自动回滚到旧地址。切到别的地址后当前页面会断开，请用新地址访问。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>AT 调试台<span class="cell-live">只读白名单</span></h3>
+		<div class="cell-sec">
+			<div class="cell-formrow">
+				<label>命令
+					<select id="kpc-at-cmd">
+						<option>ATI</option>
+						<option>AT+CGSN</option>
+						<option>AT+CIMI</option>
+						<option>AT+CPIN?</option>
+						<option>AT+CSQ</option>
+						<option>AT+COPS?</option>
+						<option>AT+CEREG?</option>
+						<option>AT+CGREG?</option>
+						<option>AT^SYSINFO?</option>
+						<option>AT^SYSINFOEX</option>
+						<option>AT^MONNC</option>
+						<option>AT^NRFREQLOCK?</option>
+						<option>AT^LTEFREQLOCK?</option>
+					</select>
+				</label>
+				<button class="cbi-button cbi-button-action" type="button" id="kpc-at-run">执行</button>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-at-clr">清空</button>
+			</div>
+			<pre class="cell-at-pre" id="kpc-at-out">（尚未执行）</pre>
+			<p class="cell-tip">命令经 <code>ubus atsdcpe at_cmd</code> 下发，约 1–3 秒返回；只放只读命令，写操作请用「锁频」页签。</p>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>数据导出</h3>
+		<div class="cell-sec">
+			<div class="cell-actions" style="margin-top:0">
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-csv">导出趋势 CSV</button>
+				<button class="cbi-button cbi-button-neutral" type="button" id="kpc-diag-tool">下载诊断报告</button>
+			</div>
+			<p class="cell-tip">CSV 含时间、RSRP/RSRQ/SINR/CQI、温度、上下行速率、PCI、频段；只包含本页打开期间的采样。</p>
+		</div>
+	</fieldset>
+</div>
+
+<!-- ==================== 明细 ==================== -->
+<div class="cell-tabpanel" data-panel="detail" hidden>
+	<fieldset class="cbi-section">
+		<h3>卡与设备</h3>
+		<div class="cell-sec">
+			<div class="cell-scroll">
+				<table class="cell-table">
+					<tbody>
+						<tr><td class="k">IMEI</td><td class="cell-mono"><%=pcdata(cell.imei ~= "" and cell.imei or "-")%></td></tr>
+						<tr><td class="k">IMSI</td><td class="cell-mono"><%=pcdata(cell.imsi ~= "" and cell.imsi or "-")%></td></tr>
+						<tr><td class="k">ICCID</td><td class="cell-mono"><%=pcdata(cell.iccid ~= "" and cell.iccid or "-")%></td></tr>
+						<tr><td class="k">SIM 卡槽 / 卡数</td><td><%=pcdata((cell.simno ~= "" and cell.simno or "-") .. " / " .. (cell.simcount ~= "" and cell.simcount or "-"))%></td></tr>
+						<tr><td class="k">模块型号</td><td><%=pcdata(cell.model ~= "" and cell.model or "-")%></td></tr>
+						<tr><td class="k">模块温度</td><td><%=pcdata(cell.model_temp ~= "" and (cell.model_temp .. " °C") or "-")%></td></tr>
+						<tr><td class="k">模块版本</td><td class="cell-mono"><%=pcdata(cell.revision ~= "" and cell.revision or "-")%></td></tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>网络地址</h3>
+		<div class="cell-sec">
+			<div class="cell-scroll">
+				<table class="cell-table">
+					<tbody>
+						<tr><td class="k">IPv4 地址</td><td class="cell-mono"><%=pcdata(#v4 > 0 and table.concat(v4, ", ") or "-")%></td></tr>
+						<tr><td class="k">IPv4 DNS</td><td class="cell-mono"><%=pcdata(#v4dns > 0 and table.concat(v4dns, ", ") or "-")%></td></tr>
+						<tr><td class="k">IPv6 地址</td><td class="cell-mono"><%=pcdata(#v6 > 0 and table.concat(v6, ", ") or "-")%></td></tr>
+						<tr><td class="k">IPv6 DNS</td><td class="cell-mono"><%=pcdata(#v6dns > 0 and table.concat(v6dns, ", ") or "-")%></td></tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset class="cbi-section">
+		<h3>指令回读</h3>
+		<div class="cell-sec">
+			<details class="cell-at">
+				<summary>最近一次锁频回读</summary>
+				<pre>5G  : <%=pcdata(l5_text .. " · " .. l5_body)%>
+4G  : <%=pcdata(l4_text .. " · " .. l4_body)%></pre>
+			</details>
+			<p class="cell-tip">回读不一致时，先点「解除锁定」恢复自动选网，再重新下发。</p>
+		</div>
+	</fieldset>
+</div>
+
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+(function () {
+	'use strict';
+
+	var URL_BASE = '<%=pcdata(dispatcher.build_url("admin", "status", "cellular"))%>';
+	var IS_5G = <%= is_5g and "true" or "false" %>;
+	var CUR_ARFCN = '<%=pcdata(cell.earfcn)%>';
+
+	/* ---- Tabs ---- */
+	var tabs = document.querySelectorAll('#kpc-tabs > li');
+	var panels = document.querySelectorAll('.cell-tabpanel');
+	var currentTab = 'overview';
+	function showTab(name) {
+		for (var i = 0; i < tabs.length; i++) {
+			tabs[i].className = (tabs[i].getAttribute('data-tab') === name) ? 'active' : '';
+		}
+		for (var j = 0; j < panels.length; j++) {
+			panels[j].hidden = (panels[j].getAttribute('data-panel') !== name);
+		}
+		currentTab = name;
+		// 切到趋势/邻区时立即取一次；延后到脚本执行完，确保 URL_BASE 已就绪
+		if (name === 'trend') window.setTimeout(function () { loadStats(); }, 0);
+		if (name === 'neighbor') window.setTimeout(function () { nbLoad(false); }, 0);
+	}
+	for (var i = 0; i < tabs.length; i++) {
+		tabs[i].addEventListener('click', function (ev) {
+			ev.preventDefault();
+			showTab(this.getAttribute('data-tab'));
+		});
+	}
+	// 支持 #lock / #neighbor 深链接（刷新后仍停在同一页签）
+	(function () {
+		var h = (location.hash || '').replace('#', '');
+		if (!h) return;
+		for (var i = 0; i < panels.length; i++) {
+			if (panels[i].getAttribute('data-panel') === h) { showTab(h); break; }
+		}
+	})();
+
+	var gotoBtns = document.querySelectorAll('[data-goto]');
+	for (var g = 0; g < gotoBtns.length; g++) {
+		gotoBtns[g].addEventListener('click', function () { showTab(this.getAttribute('data-goto')); });
+	}
+
+	/* ---- 锁定方式 ---- */
+	var modeRadios = document.querySelectorAll('#kpc-mode input');
+	var modeSecs = document.querySelectorAll('[data-mode]');
+	function curMode() {
+		return document.querySelector('#kpc-mode input:checked').value;
+	}
+	function syncMode() {
+		var v = curMode();
+		for (var i = 0; i < modeSecs.length; i++) {
+			modeSecs[i].hidden = (modeSecs[i].getAttribute('data-mode') !== v);
+		}
+		updatePreview();
+	}
+	for (var m = 0; m < modeRadios.length; m++) modeRadios[m].addEventListener('change', syncMode);
+
+	/* ---- 频段 ---- */
+	var bands = document.querySelectorAll('.cell-bands');
+	function picked(group) {
+		var out = [], ins = group.querySelectorAll('input:checked');
+		for (var i = 0; i < ins.length; i++) out.push(ins[i].value);
+		return out;
+	}
+	function syncBands() {
+		for (var i = 0; i < bands.length; i++) {
+			var note = bands[i].parentNode.querySelector('.cell-bandnote');
+			var isNr = bands[i].getAttribute('data-group') === 'nr';
+			var p = picked(bands[i]);
+			var label = isNr ? '5G NR' : '4G LTE';
+			var pre = isNr ? 'n' : 'B';
+			if (!note) continue;
+			if (p.length) {
+				for (var k = 0; k < p.length; k++) p[k] = pre + p[k];
+				note.textContent = label + ' · 已选 ' + p.length + ' 个频段：' + p.join(' / ');
+			} else {
+				note.textContent = label + ' · 未选择（不限制）';
+			}
+		}
+		updatePreview();
+	}
+	for (var b = 0; b < bands.length; b++) bands[b].addEventListener('change', syncBands);
+
+	/* ---- 指令预览（与服务端下发逻辑保持一致） ---- */
+	function updatePreview() {
+		var mode = curMode();
+		var mob = document.getElementById('kpc-mob').checked ? '1' : '0';
+		var nr = picked(bands[0]).sort(function (x, y) { return y - x; });
+		var lte = picked(bands[1]).sort(function (x, y) { return y - x; });
+		var a5 = (document.getElementById('kpc-earfcn5') || {}).value || '';
+		var a4 = (document.getElementById('kpc-earfcn4') || {}).value || '';
+		var cmds = ['AT+CFUN=0'];
+
+		if (mode === 'band') {
+			cmds.push(nr.length ? 'AT^NRFREQLOCK=3,' + mob + ',' + nr.length + ',"' + nr.join(',') + '"' : 'AT^NRFREQLOCK=0');
+			cmds.push(lte.length ? 'AT^LTEFREQLOCK=3,' + mob + ',' + lte.length + ',"' + lte.join(',') + '"' : 'AT^LTEFREQLOCK=0');
+		} else if (mode === 'cell') {
+			cmds.push(a5 ? 'AT^NRFREQLOCK=2,' + mob + ',1,"' + a5 + '"' : 'AT^NRFREQLOCK=0');
+			cmds.push(a4 ? 'AT^LTEFREQLOCK=2,' + mob + ',1,"' + a4 + '"' : 'AT^LTEFREQLOCK=0');
+		} else {
+			if (IS_5G) {
+				cmds.push(CUR_ARFCN ? 'AT^NRFREQLOCK=2,' + mob + ',1,"' + CUR_ARFCN + '"' : 'AT^NRFREQLOCK=0');
+				cmds.push('AT^LTEFREQLOCK=0');
+			} else {
+				cmds.push('AT^NRFREQLOCK=0');
+				cmds.push(CUR_ARFCN ? 'AT^LTEFREQLOCK=2,' + mob + ',1,"' + CUR_ARFCN + '"' : 'AT^LTEFREQLOCK=0');
+			}
+		}
+		cmds.push('AT+CFUN=1');
+
+		document.getElementById('kpc-at').textContent = cmds.map(function (c, i) {
+			return (i + 1) + '  ' + c;
+		}).join('\n');
+		document.getElementById('kpc-at-sum').textContent = '将下发 ' + cmds.length + ' 条指令，点击展开';
+		return cmds;
+	}
+
+	var e5 = document.getElementById('kpc-earfcn5');
+	var e4 = document.getElementById('kpc-earfcn4');
+	if (e5) e5.addEventListener('input', updatePreview);
+	if (e4) e4.addEventListener('input', updatePreview);
+	document.getElementById('kpc-mob').addEventListener('change', updatePreview);
+	syncMode();
+	syncBands();
+
+	/* ---- 提交 ---- */
+	function esc(s) {
+		return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+	}
+	function say(ok, text, detail) {
+		document.getElementById('kpc-result').innerHTML =
+			'<div class="alert-message ' + (ok ? 'success' : 'error') + '">' + esc(text) +
+			(detail ? '<div class="cell-tip" style="margin-top:6px;word-break:break-all">' + detail + '</div>' : '') +
+			'</div>';
+	}
+	function setSteps(state) {
+		var box = document.getElementById('kpc-steps');
+		box.className = 'cell-steps show';
+		var items = box.querySelectorAll('b');
+		for (var i = 0; i < items.length; i++) {
+			var ic = items[i].querySelector('i');
+			if (state === 'reset') { items[i].className = ''; ic.className = 'fas fa-circle-notch'; }
+			else if (state === 'run') { items[i].className = (i === 0) ? 'run' : ''; ic.className = 'fas fa-circle-notch'; }
+			else { items[i].className = (state === 'err' && i === 3) ? 'err' : 'ok'; ic.className = (state === 'err' && i === 3) ? 'fas fa-times' : 'fas fa-check'; }
+		}
+	}
+	function progress(done) {
+		var box = document.getElementById('kpc-steps');
+		box.className = 'cell-steps show';
+		var items = box.querySelectorAll('b');
+		for (var i = 0; i < items.length; i++) {
+			var ic = items[i].querySelector('i');
+			if (i < done) { items[i].className = 'ok'; ic.className = 'fas fa-check'; }
+			else if (i === done) { items[i].className = 'run'; ic.className = 'fas fa-circle-notch'; }
+			else { items[i].className = ''; ic.className = 'fas fa-circle-notch'; }
+		}
+	}
+
+	function submit(action) {
+		var mode = curMode();
+		var fd = new FormData();
+		fd.append('lock_mode', (mode === 'band') ? 'band' : 'cell');
+		if (document.getElementById('kpc-mob').checked) fd.append('lock_mobility', '1');
+		if (action === 'lock_apply' && mode === 'band') {
+			var nr = picked(bands[0]), lte = picked(bands[1]);
+			if (!nr.length && !lte.length) {
+				say(false, '没有勾选任何频段。', '如需解除锁定，请点「解除锁定」。');
+				return;
+			}
+			for (var i = 0; i < nr.length; i++) fd.append('band5', nr[i]);
+			for (var j = 0; j < lte.length; j++) fd.append('band4', lte[j]);
+		} else if (action === 'lock_apply' && mode === 'cell') {
+			var a5 = (e5.value || '').replace(/\D/g, '');
+			var a4 = (e4.value || '').replace(/\D/g, '');
+			if (!a5 && !a4) { say(false, '至少填写一个频点。', '5G 与 4G 频点不能同时为空。'); return; }
+			if (a5) fd.append('earfcn5', a5);
+			if (a4) fd.append('earfcn4', a4);
+		} else if (action === 'lock_apply') {
+			if (!CUR_ARFCN) { say(false, '当前没有可用频点。', '请改用频段白名单或手动填写 ARFCN。'); return; }
+			if (IS_5G) fd.append('earfcn5', CUR_ARFCN);
+			else fd.append('earfcn4', CUR_ARFCN);
+		}
+
+		var btns = document.querySelectorAll('#kpc-apply, #kpc-clear');
+		for (var k = 0; k < btns.length; k++) btns[k].disabled = true;
+		document.getElementById('kpc-result').innerHTML = '';
+		progress(0);
+
+		var timers = [600, 1600, 2600];
+		for (var t = 0; t < timers.length; t++) {
+			(function (idx) { setTimeout(function () { progress(idx + 1); }, timers[idx]); })(t);
+		}
+
+		fetch(URL_BASE + '?action=' + encodeURIComponent(action), {
+			method: 'POST',
+			credentials: 'same-origin',
+			body: fd
+		}).then(function (r) { return r.json(); }).then(function (d) {
+			for (var k = 0; k < btns.length; k++) btns[k].disabled = false;
+			var ok = d && d.code === 0;
+			if (!ok) {
+				setSteps('err');
+				say(false, (d && d.msg) || '下发失败', '');
+				return;
+			}
+			document.getElementById('kpc-steps').className = 'cell-steps show';
+			var items = document.querySelectorAll('#kpc-steps b');
+			for (var i = 0; i < items.length; i++) {
+				items[i].className = 'ok';
+				items[i].querySelector('i').className = 'fas fa-check';
+			}
+			say(true, (action === 'lock_clear') ? '已解除锁定，设备将自动选网。' : ((d.msg || '锁频已下发') + '，设备正在重新注册。'),
+				'请等待 10–30 秒后刷新页面查看回读结果。');
+		}).catch(function (e) {
+			for (var k = 0; k < btns.length; k++) btns[k].disabled = false;
+			setSteps('err');
+			say(false, '请求失败，可能与设备断开重连有关。', esc(e));
+		});
+	}
+
+	document.getElementById('kpc-apply').addEventListener('click', function () { submit('lock_apply'); });
+	document.getElementById('kpc-clear').addEventListener('click', function () {
+		if (!confirm('解除 5G 与 4G 的全部锁定？设备将重新注册网络。')) return;
+		submit('lock_clear');
+	});
+	document.getElementById('kpc-lock-cur').addEventListener('click', function () {
+		var r = document.querySelector('#kpc-mode input[value="current"]');
+		r.checked = true; syncMode(); showTab('lock');
+	});
+
+	/* ---- 刷新 ---- */
+	document.getElementById('kpc-refresh').addEventListener('click', function () {
+		this.disabled = true;
+		location.reload();
+	});
+
+	/* ---- 复制诊断 ---- */
+	document.getElementById('kpc-copy').addEventListener('click', function () {
+		var txt = document.querySelector('#maincontent, #main').innerText.replace(/\n{2,}/g, '\n');
+		var btn = this;
+		function done() { btn.innerHTML = '<i class="fas fa-check"></i> 已复制'; setTimeout(function () {
+			btn.innerHTML = '<i class="fas fa-file-alt"></i> 复制诊断'; }, 1600); }
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(txt).then(done).catch(done);
+		} else {
+			var ta = document.createElement('textarea');
+			ta.value = txt; document.body.appendChild(ta); ta.select();
+			try { document.execCommand('copy'); } catch (e) {}
+			document.body.removeChild(ta); done();
+		}
+	});
+
+	/* ---- 趋势 / 告警 / 事件（每 10 秒采样） ---- */
+	var TREND = { skew: 0, ready: false, last: [] };
+
+	function nv(v) { var n = Number(v); return isFinite(n) ? n : 0; }
+	function fmtB(n) {
+		n = nv(n);
+		if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GiB/s';
+		if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MiB/s';
+		if (n >= 1024) return Math.round(n / 1024) + ' KiB/s';
+		return n.toFixed(0) + ' B/s';
+	}
+	function hhmmss(t) {
+		var d = new Date((nv(t) + TREND.skew) * 1000);
+		function p(x) { return (x < 10 ? '0' : '') + x; }
+		return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+	}
+	function setKv(id, v, unit) {
+		var el = document.getElementById(id);
+		if (!el) return;
+		var has = !(v === '' || v === null || v === undefined || v === '-');
+		el.innerHTML = (has ? esc(v) : '-') + (has && unit ? '<small>' + unit + '</small>' : '');
+	}
+
+	function poly(vals, min, max, cls) {
+		var n = vals.length, W = 600, H = 118, span = (max - min) || 1, seg = [], out = '';
+		for (var i = 0; i < n; i++) {
+			var v = vals[i];
+			var x = (n === 1) ? W / 2 : i * W / (n - 1);
+			if (v === null) {
+				if (seg.length > 1) out += '<polyline class="ln ' + cls + '" points="' + seg.join(' ') + '"/>';
+				seg = [];
+				continue;
+			}
+			var y = H - (v - min) / span * H;
+			if (y < 1) y = 1;
+			if (y > H - 1) y = H - 1;
+			seg.push(x.toFixed(1) + ',' + y.toFixed(1));
+		}
+		if (seg.length > 1) out += '<polyline class="ln ' + cls + '" points="' + seg.join(' ') + '"/>';
+		return out;
+	}
+
+	function drawTrend(hist) {
+		var rsrp = [], sinr = [], dl = [], ul = [], peak = 0;
+		for (var i = 0; i < hist.length; i++) {
+			var p = hist[i], r = nv(p.rsrp), a = nv(p.dlr), b = nv(p.ulr);
+			rsrp.push(r < 0 ? r : null);
+			sinr.push(p.sinr === undefined || p.sinr === null ? null : nv(p.sinr));
+			dl.push(a); ul.push(b);
+			if (a > peak) peak = a;
+			if (b > peak) peak = b;
+		}
+		var grid = '<line class="gl" x1="0" y1="29.5" x2="600" y2="29.5"/>'
+			+ '<line class="gl" x1="0" y1="59" x2="600" y2="59"/>'
+			+ '<line class="gl" x1="0" y1="88.5" x2="600" y2="88.5"/>';
+		var scale = peak > 10240 ? peak * 1.1 : 10240;
+		var sig = document.getElementById('kpc-chart-sig');
+		var rate = document.getElementById('kpc-chart-rate');
+		if (sig) sig.innerHTML = grid + poly(rsrp, -140, -40, 'rsrp') + poly(sinr, -10, 30, 'sinr');
+		if (rate) rate.innerHTML = grid + poly(dl, 0, scale, 'dl') + poly(ul, 0, scale, 'ul');
+		var note = document.getElementById('kpc-sig-note');
+		if (note) note.textContent = hist.length + ' 点';
+		var rn = document.getElementById('kpc-rate-note');
+		if (rn) rn.textContent = '峰值 ' + fmtB(peak);
+	}
+
+	function renderAlerts(c) {
+		var box = document.getElementById('kpc-alerts');
+		if (!box) return;
+		var r = nv(c.rsrp), s = nv(c.sinr), q = nv(c.cqi), t = nv(c.temp);
+		var out = [];
+		if (!c.mode) out.push(['err', '未注册', '模块没有服务小区，检查 SIM、天线与锁频设置。']);
+		if (r < 0 && r < -110) out.push(['err', '弱覆盖', 'RSRP ' + r + ' dBm（低于 -110），优先调整天线或锁定更强频段。']);
+		else if (r < 0 && r < -100) out.push(['warn', '信号偏弱', 'RSRP ' + r + ' dBm，可结合邻区扫描对比后决定是否锁频。']);
+		if (r < 0 && s < 0) out.push(['warn', '干扰偏大', 'SINR ' + s + ' dB 为负，建议锁定其他频点做对比。']);
+		if (q > 0 && q < 9) out.push(['warn', '信道质量差', 'CQI ' + q + '，可能存在小区拥塞或签约限速。']);
+		if (t >= 70) out.push(['warn', '模块高温', '当前 ' + t + ' °C，注意散热与通风。']);
+		if (!out.length) out.push(['ok', '指标正常', '当前没有触发阈值。']);
+		var h = '';
+		for (var i = 0; i < out.length; i++) {
+			h += '<div class="kpc-alert ' + out[i][0] + '"><b>' + esc(out[i][1]) + '</b><span>'
+				+ esc(out[i][2]) + '</span></div>';
+		}
+		box.innerHTML = h;
+		var note = document.getElementById('kpc-alert-note');
+		if (note) note.textContent = out.length + ' 条';
+	}
+
+	function renderEvents(list) {
+		var box = document.getElementById('kpc-events');
+		if (!box) return;
+		var ho = 0, down = 0;
+		for (var k = 0; k < (list || []).length; k++) {
+			var m = String((list[k] || {}).msg || '');
+			if (m.indexOf('小区切换') >= 0 || m.indexOf('服务小区变更') >= 0) ho++;
+			if (m.indexOf('脱网') >= 0) down++;
+		}
+		var en = document.getElementById('kpc-ev-note');
+		if (en) en.textContent = '切换 ' + ho + ' 次 · 脱网 ' + down + ' 次';
+		if (!list || !list.length) {
+			box.innerHTML = '<p class="cell-tip" style="margin:0">暂无事件。切换小区、脱网/恢复、信号骤降、模块高温会记录在这里。</p>';
+			return;
+		}
+		var h = '';
+		for (var i = list.length - 1; i >= 0 && i >= list.length - 30; i--) {
+			var e = list[i];
+			h += '<div class="kpc-ev ' + esc(e.lv || '') + '"><span>' + hhmmss(e.t) + '</span><i></i><em>'
+				+ esc(e.msg || '') + '</em></div>';
+		}
+		box.innerHTML = h;
+	}
+
+	function pollTrend() {
+		if (document.hidden) return;
+		fetch(URL_BASE + '?action=poll&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				var note = document.getElementById('kpc-now-note');
+				if (!d || d.code !== 0) {
+					if (note) note.textContent = (d && d.msg) || '采样失败';
+					return;
+				}
+				if (!TREND.ready) { TREND.skew = nv(d.ts) - Math.round(Date.now() / 1000); TREND.ready = true; }
+				var c = d.cell || {}, ok = !!c.mode;
+				setKv('kp-rsrp', ok ? nv(c.rsrp) : '-', 'dBm');
+				setKv('kp-sinr', ok ? nv(c.sinr) : '-', 'dB');
+				setKv('kp-cqi', ok && nv(c.cqi) > 0 ? nv(c.cqi) : '-', '');
+				setKv('kp-temp', nv(c.temp) > 0 ? nv(c.temp) : '-', '°C');
+				setKv('kp-dlr', fmtB(nv(c.dlr)), '');
+				setKv('kp-ulr', fmtB(nv(c.ulr)), '');
+				if (note) note.textContent = '已更新 ' + hhmmss(d.ts) + ' · 每 10 秒采样';
+				TREND.last = d.hist || [];
+				drawTrend(TREND.last);
+				renderAlerts(c);
+				renderEvents(d.events || []);
+				var live = document.getElementById('kpc-live');
+				if (live) live.textContent = '已更新 ' + hhmmss(d.ts) + ' · 每 10 秒自动刷新';
+				if (currentTab === 'trend') loadStats();
+			}).catch(function () {
+				var note = document.getElementById('kpc-now-note');
+				if (note) note.textContent = '采样失败（连接中断）';
+			});
+	}
+	setInterval(pollTrend, 10000);
+	pollTrend();
+
+	/* ---- 网页终端 ---- */
+	var TERM_URL = '';
+
+	function termLoad() {
+		fetch(URL_BASE + '?action=terminal&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (!d || d.code !== 0) return;
+				TERM_URL = d.url || '';
+				var run = document.getElementById('kpc-term-run');
+				var url = document.getElementById('kpc-term-url');
+				var st = document.getElementById('kpc-term-state');
+				var openBtn = document.getElementById('kpc-term-open');
+				var led = document.getElementById('kpc-term-led');
+				var meta = document.getElementById('kpc-term-meta');
+				if (run) run.textContent = d.running ? ('运行中' + (d.pid ? ' · PID ' + d.pid : '')) : '已停止';
+				if (url) url.textContent = d.url || '—';
+				if (st) {
+					st.textContent = d.running ? '已就绪' : '未启动';
+					st.className = 'kpc-term-badge' + (d.running ? ' on' : '');
+				}
+				if (led) led.className = 'kpc-term-led' + (d.running ? ' on' : '');
+				if (meta) {
+					meta.textContent = ':' + (d.port || 7681) + ' · ' + (d.credential ? '有密码' : '无密码');
+				}
+				if (openBtn) openBtn.disabled = !d.running;
+			})
+			.catch(function () {});
+	}
+
+	function termOp(op) {
+		var msg = document.getElementById('kpc-term-msg');
+		var fd = new FormData();
+		fd.append('op', op);
+		fetch(URL_BASE + '?action=terminal', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (msg) msg.textContent = (d && d.code === 0) ? ('已' + (op === 'start' ? '启动' : '停止')) : ('失败：' + (d && d.msg));
+				setTimeout(termLoad, 900);
+			})
+			.catch(function (e) { if (msg) msg.textContent = '失败：' + e; });
+	}
+
+	var TERM_PAGE = '<%=luci.dispatcher.build_url("admin", "status", "terminal")%>';
+	var _tOpen = document.getElementById('kpc-term-open');
+	if (_tOpen) {
+		_tOpen.addEventListener('click', function () {
+			/* 内嵌页：整页加载，不用 iframe 嵌套面板自身 */
+			location.href = TERM_PAGE;
+		});
+	}
+	var _tPop = document.getElementById('kpc-term-pop');
+	if (_tPop) _tPop.href = TERM_URL || '#';
+	
+
+	var _tCopy = document.getElementById('kpc-term-copy');
+	if (_tCopy) {
+		_tCopy.addEventListener('click', function () {
+			if (!TERM_URL) return;
+			var restore = function () {
+				_tCopy.textContent = '已复制';
+				setTimeout(function () { _tCopy.textContent = '复制'; }, 1500);
+			};
+			if (navigator.clipboard && navigator.clipboard.writeText) {
+				navigator.clipboard.writeText(TERM_URL).then(restore).catch(restore);
+				return;
+			}
+			var ta = document.createElement('textarea');
+			ta.value = TERM_URL;
+			ta.style.position = 'fixed';
+			ta.style.opacity = '0';
+			document.body.appendChild(ta);
+			ta.select();
+			try { document.execCommand('copy'); } catch (e) { }
+			document.body.removeChild(ta);
+			restore();
+		});
+	}
+	var _tStart = document.getElementById('kpc-term-start');
+	if (_tStart) _tStart.addEventListener('click', function () { termOp('start'); });
+	var _tStop = document.getElementById('kpc-term-stop');
+	if (_tStop) _tStop.addEventListener('click', function () { termOp('stop'); });
+
+	/* ---- 硬件加速 ---- */
+	function hnatLoad() {
+		fetch(URL_BASE + '?action=hnat&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (!d || d.code !== 0) return;
+				var mod = document.getElementById('kpc-hnat-mod');
+				var cnt = document.getElementById('kpc-hnat-cnt');
+				var sw = document.getElementById('kpc-hnat-sw');
+				var ver = document.getElementById('kpc-hnat-ver');
+				var note = document.getElementById('kpc-hnat-note');
+				if (mod) mod.textContent = d.module_loaded ? '已加载' : '未加载';
+				if (cnt) cnt.textContent = (d.entries || 0) + ' 条';
+				if (sw) sw.textContent = d.soft_offload ? '开启' : '关闭';
+				if (ver) ver.textContent = d.version || '模块内置';
+				if (note) note.textContent = d.module_loaded ? '硬件通道在线' : '仅软件转发';
+			})
+			.catch(function () {});
+	}
+
+	function hnatSet(op) {
+		var msg = document.getElementById('kpc-hnat-msg');
+		if (!confirm('切换会 reload 防火墙，现有连接会瞬断。继续？')) return;
+		var fd = new FormData();
+		fd.append('op', op);
+		fd.append('confirm', '1');
+		fetch(URL_BASE + '?action=hnat', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (msg) msg.textContent = (d && d.code === 0) ? '已切换' : ('失败：' + (d && d.msg));
+				setTimeout(hnatLoad, 1500);
+			})
+			.catch(function (e) { if (msg) msg.textContent = '失败：' + e; });
+	}
+
+	var _hOn = document.getElementById('kpc-hnat-on');
+	if (_hOn) _hOn.addEventListener('click', function () { hnatSet('on'); });
+	var _hOff = document.getElementById('kpc-hnat-off');
+	if (_hOff) _hOff.addEventListener('click', function () { hnatSet('off'); });
+
+	/* ---- AT 高级命令 ---- */
+	function atRawOut(text) {
+		var pre = document.getElementById('kpc-atraw-out');
+		if (pre) pre.textContent = text;
+	}
+
+	function atRawConfirm() {
+		var cb = document.getElementById('kpc-atraw-confirm');
+		if (!cb || !cb.checked) {
+			atRawOut('请先勾选「我确认…」再执行。');
+			return false;
+		}
+		return true;
+	}
+
+	var _aRun = document.getElementById('kpc-atraw-run');
+	if (_aRun) _aRun.addEventListener('click', function () {
+		if (!atRawConfirm()) return;
+		var cmd = (document.getElementById('kpc-atraw-cmd') || {}).value || '';
+		if (!cmd) { atRawOut('请输入命令。'); return; }
+		var fd = new FormData();
+		fd.append('cmd', cmd);
+		fd.append('confirm', '1');
+		atRawOut('执行中…');
+		fetch(URL_BASE + '?action=at_raw', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (!d) { atRawOut('无响应'); return; }
+				atRawOut('$ ' + (d.cmd || cmd) + '\n' + (d.resp || d.msg || ''));
+			})
+			.catch(function (e) { atRawOut('请求失败：' + e); });
+	});
+
+	var _aReset = document.getElementById('kpc-atraw-reset');
+	if (_aReset) _aReset.addEventListener('click', function () {
+		if (!atRawConfirm()) return;
+		if (!confirm('将下发 AT+CFUN=1,1 重启模块，网络会中断约 20~60 秒。确定？')) return;
+		var fd = new FormData();
+		fd.append('confirm', '1');
+		atRawOut('正在重启模块…');
+		fetch(URL_BASE + '?action=modem_reboot', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) { atRawOut((d && (d.msg + '\n' + (d.resp || ''))) || '无响应'); })
+			.catch(function (e) { atRawOut('失败：' + e); });
+	});
+
+	/* ---- 隐藏入口：连点 5 下解锁 OpenClash ---- */
+	var OC_KEY = 'kp_oc_unlock';
+	var ocClicks = 0;
+	var ocTimer = null;
+
+	function ocShow(on) {
+		var box = document.getElementById('kpc-oc');
+		if (!box) return;
+		box.hidden = !on;
+		if (on) {
+			var a = document.getElementById('kpc-oc-open');
+			if (a) a.href = location.protocol + '//' + location.hostname
+				+ '/cgi-bin/luci/admin/services/openclash';
+		}
+	}
+
+	function ocToggle() {
+		var on = localStorage.getItem(OC_KEY) !== '1';
+		try { localStorage.setItem(OC_KEY, on ? '1' : '0'); } catch (e) {}
+		ocShow(on);
+		var st = document.getElementById('kpc-oc-state');
+		if (st) st.textContent = on ? '已解锁' : '已隐藏';
+		// 解锁后直接跳到「工具」页，否则用户点完看不到变化
+		if (on && typeof showTab === 'function') showTab('tools');
+	}
+
+	// 触发点已移到首页的设备图片（#dv-img）；这里只按本地状态决定是否显示
+	try {
+		if (localStorage.getItem(OC_KEY) === '1') {
+			ocShow(true);
+			if (localStorage.getItem('kp_oc_jump') === '1') {
+				localStorage.removeItem('kp_oc_jump');
+				window.setTimeout(function () {
+					if (typeof showTab === 'function') showTab('tools');
+				}, 0);
+			}
+		}
+	} catch (e) {}
+
+	var _ocLock = document.getElementById('kpc-oc-lock');
+	if (_ocLock) {
+		_ocLock.addEventListener('click', function () {
+			try { localStorage.setItem(OC_KEY, '0'); } catch (e) {}
+			ocShow(false);
+		});
+	}
+
+	/* ---- 一键备份 ---- */
+	function fmtMB(n) {
+		n = Number(n) || 0;
+		return n >= 1073741824 ? (n / 1073741824).toFixed(2) + ' GB' : (n / 1048576).toFixed(1) + ' MB';
+	}
+
+	function bakLoad() {
+		fetch(URL_BASE + '?action=backup_list&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				var box = document.getElementById('kpc-bak-list');
+				var note = document.getElementById('kpc-bak-note');
+				if (!box || !d || d.code !== 0) return;
+				var items = d.items || [];
+				if (note) note.textContent = items.length ? (items.length + ' 份') : '暂无';
+				if (!items.length) {
+					box.innerHTML = '<span class="cell-tip">还没有备份文件，点「生成备份」创建。</span>';
+					return;
+				}
+				box.innerHTML = items.map(function (it) {
+					return '<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid rgba(0,0,0,.06)">'
+						+ '<a href="' + URL_BASE + '?action=backup_get&name=' + encodeURIComponent(it.name) + '">' + it.name + '</a>'
+						+ '<span style="opacity:.6">' + fmtMB(it.size) + '</span>'
+						+ '<a href="#" data-bakdel="' + it.name + '" style="margin-left:auto;color:#c23b22">删除</a>'
+						+ '</div>';
+				}).join('');
+				Array.prototype.slice.call(box.querySelectorAll('[data-bakdel]')).forEach(function (a) {
+					a.addEventListener('click', function (ev) {
+						ev.preventDefault();
+						var name = a.getAttribute('data-bakdel');
+						if (!confirm('删除 ' + name + '？')) return;
+						var fd = new FormData();
+						fd.append('name', name);
+						fetch(URL_BASE + '?action=backup_del', { method: 'POST', credentials: 'same-origin', body: fd })
+							.then(function () { bakLoad(); });
+					});
+				});
+			})
+			.catch(function () {});
+	}
+
+	function bakMake(action, btn, label) {
+		var msg = document.getElementById('kpc-bak-msg');
+		var all = ['kpc-bak-make', 'kpc-bak-ipk'];
+		all.forEach(function (id) { var b = document.getElementById(id); if (b) b.disabled = true; });
+		if (msg) msg.textContent = '正在打包 ' + label + '（配置 + 插件清单 + 面板）…';
+		fetch(URL_BASE + '?action=' + action, { method: 'POST', credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				all.forEach(function (id) { var b = document.getElementById(id); if (b) b.disabled = false; });
+				if (!d || d.code !== 0) {
+					if (msg) msg.textContent = '失败：' + (d && d.msg);
+					return;
+				}
+				if (msg) msg.textContent = '完成 ' + fmtMB(d.size) + (d.ipk ? '' : '（未找到面板 ipk）');
+				bakLoad();
+				window.location.href = URL_BASE + '?action=backup_get&name=' + encodeURIComponent(d.name);
+			})
+			.catch(function (e) {
+				all.forEach(function (id) { var b = document.getElementById(id); if (b) b.disabled = false; });
+				if (msg) msg.textContent = '失败：' + e;
+			});
+	}
+
+	var _bakMake = document.getElementById('kpc-bak-make');
+	if (_bakMake) _bakMake.addEventListener('click', function () {
+		bakMake('backup_full', _bakMake, 'tar.gz');
+	});
+	var _bakIpk = document.getElementById('kpc-bak-ipk');
+	if (_bakIpk) _bakIpk.addEventListener('click', function () {
+		bakMake('backup_ipk', _bakIpk, 'ipk');
+	});
+
+	/* ---- 在线恢复 ---- */
+	var prTimer = null;
+
+	function prRender(d) {
+		if (!d) return;
+		var bar = document.getElementById('kp-pr-bar');
+		var stat = document.getElementById('kp-pr-stat');
+		var log = document.getElementById('kp-pr-log');
+		var note = document.getElementById('kp-pr-note');
+		var total = Number(d.total) || 0, i = Number(d.i) || 0;
+		var pct = total > 0 ? Math.min(100, Math.round(i * 100 / total)) : (d.stage === 'done' ? 100 : 0);
+		if (bar) bar.style.width = pct + '%';
+		if (note) {
+			note.textContent = d.running ? '运行中' : (d.stage === 'done' ? '已完成' : (d.has_list ? '就绪' : '缺清单'));
+		}
+		if (stat) {
+			stat.textContent = '进度 ' + i + '/' + total +
+				' · 成功 ' + (Number(d.ok) || 0) + ' · 失败 ' + (Number(d.fail) || 0) +
+				(d.cur ? (' · 当前 ' + d.cur) : '') + (d.stage ? (' · ' + d.stage) : '');
+		}
+		if (log) log.textContent = d.log || '—';
+	}
+
+	function prLoad() {
+		fetch(URL_BASE + '?action=pkg_restore&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				prRender(d);
+				if (d && d.running) prPoll();
+				else if (prTimer) { clearInterval(prTimer); prTimer = null; }
+			})
+			.catch(function () {});
+	}
+
+	function prPoll() {
+		if (prTimer) return;
+		prTimer = setInterval(prLoad, 2000);
+	}
+
+	function prOp(op) {
+		var msg = document.getElementById('kp-pr-msg');
+		var fd = new FormData();
+		fd.append('op', op);
+		if (msg) msg.textContent = op === 'start' ? '正在启动…' : '正在停止…';
+		fetch(URL_BASE + '?action=pkg_restore', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (msg) msg.textContent = (d && d.msg) || '';
+				prLoad();
+			})
+			.catch(function (e) { if (msg) msg.textContent = '失败：' + e; });
+	}
+
+	var _prStart = document.getElementById('kp-pr-start');
+	if (_prStart) _prStart.addEventListener('click', function () {
+		if (!confirm('将按清单补装缺失插件，需要联网，可能耗时数分钟。继续？')) return;
+		prOp('start');
+	});
+	var _prStop = document.getElementById('kp-pr-stop');
+	if (_prStop) _prStop.addEventListener('click', function () { prOp('stop'); });
+
+	/* ---- 系统维护：swap / 卡锁 ---- */
+	function fmtKB(kb) {
+		kb = Number(kb) || 0;
+		return kb >= 1048576 ? (kb / 1048576).toFixed(1) + ' GB' : Math.round(kb / 1024) + ' MB';
+	}
+
+	function loadSwap() {
+		fetch(URL_BASE + '?action=swap&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (!d || d.code !== 0) return;
+				var st = document.getElementById('kpc-swap-state');
+				var us = document.getElementById('kpc-swap-usage');
+				var fl = document.getElementById('kpc-swap-file');
+				var note = document.getElementById('kpc-swap-note');
+				var pr = document.getElementById('kpc-swap-prio');
+				var msg = document.getElementById('kpc-swap-msg');
+
+				if (st) st.textContent = d.on ? '已启用' : (d.building ? '生成中' : '未启用');
+				if (us) us.textContent = d.on ? (fmtKB(d.used_kb) + ' / ' + fmtKB(d.total_kb)) : '—';
+				if (pr) {
+					pr.textContent = (d.on && d.priority !== null && d.priority !== undefined)
+						? ('pri ' + d.priority + ' · ' + (d.zram ? 'zram 可用' : '无 zram'))
+						: (d.zram ? '无 swap · zram 可用' : '无 zram');
+				}
+				if (fl) {
+					fl.textContent = d.file_mb
+						? (d.path + ' · ' + d.file_mb + ' MB' + (d.persist ? ' · 开机启用' : ''))
+						: '未创建';
+				}
+				if (note) note.textContent = d.building ? '生成中' : (d.on ? 'swap 在线' : '无 swap');
+				if (d.building && msg) msg.textContent = '正在生成：' + (d.progress_mb || 0) + ' MB';
+			})
+			.catch(function () {});
+	}
+
+	var swapPoll = null;
+	function swapPollStart() {
+		if (swapPoll) return;
+		var n = 0;
+		swapPoll = setInterval(function () {
+			n++;
+			loadSwap();
+			if (n >= 40) { clearInterval(swapPoll); swapPoll = null; }
+		}, 5000);
+	}
+
+	function swapOp(op) {
+		var msg = document.getElementById('kpc-swap-msg');
+		var size = (document.getElementById('kpc-swap-size') || {}).value || 512;
+		var tip = op === 'on'
+			? ('将在 /overlay 上创建 ' + size + ' MB swap 文件（分块写入，约需 30~60 秒），继续？')
+			: '将关闭 swap 并删除 swap 文件，继续？';
+		if (!confirm(tip)) return;
+		var fd = new FormData();
+		fd.append('op', op);
+		fd.append('confirm', '1');
+		fd.append('size', size);
+		if (msg) msg.textContent = '处理中…';
+		fetch(URL_BASE + '?action=swap', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (msg) msg.textContent = (d && d.code === 0) ? (d.msg || '完成') : ('失败：' + (d && d.msg));
+				loadSwap();
+				if (d && d.building) swapPollStart();
+			})
+			.catch(function (e) { if (msg) msg.textContent = '失败：' + e; });
+	}
+
+	function loadLock() {
+		fetch(URL_BASE + '?action=simlock&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				var el = document.getElementById('kpc-lock-state');
+				if (!el || !d) return;
+				el.textContent = !d.supported ? '不支持查询'
+					: (d.protect ? '已启用（厂商锁）' : '未启用');
+			})
+			.catch(function () {});
+	}
+
+	var _swOn = document.getElementById('kpc-swap-on');
+	if (_swOn) _swOn.addEventListener('click', function () { swapOp('on'); });
+	var _swOff = document.getElementById('kpc-swap-off');
+	if (_swOff) _swOff.addEventListener('click', function () { swapOp('off'); });
+
+	/* ---- 监听地址 ---- */
+	function listenSync() {
+		var mode = document.getElementById('kpc-listen-mode');
+		var ipSel = document.getElementById('kpc-listen-ip');
+		if (mode && ipSel) ipSel.disabled = (mode.value !== 'custom');
+	}
+
+	function loadListen() {
+		fetch(URL_BASE + '?action=web_listen&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (!d || d.code !== 0) return;
+				var cur = document.getElementById('kpc-listen-cur');
+				if (cur) cur.textContent = d.current || '-';
+				var lan = document.getElementById('kpc-listen-lan');
+				if (lan) lan.textContent = d.lan || '-';
+				var sel = document.getElementById('kpc-listen-ip');
+				if (sel) {
+					sel.innerHTML = '';
+					(d.candidates || []).forEach(function (c) {
+						var o = document.createElement('option');
+						o.value = c.ip;
+						o.textContent = c.ip + (c.label ? ' (' + c.label + ')' : '');
+						sel.appendChild(o);
+					});
+				}
+				var m = document.getElementById('kpc-listen-mode');
+				if (m) m.value = (d.mode === 'all' || d.mode === 'custom') ? d.mode : 'auto';
+				var p = document.getElementById('kpc-listen-port');
+				if (p) p.value = d.port || 8080;
+				var note = document.getElementById('kpc-listen-note');
+				if (note) {
+					note.textContent = d.mode === 'auto' ? '自动跟随 LAN'
+						: (d.mode === 'all' ? '全部地址' : '自定义');
+				}
+				listenSync();
+			})
+			.catch(function () {});
+	}
+
+	var _lMode = document.getElementById('kpc-listen-mode');
+	if (_lMode) _lMode.addEventListener('change', listenSync);
+	var _lApply = document.getElementById('kpc-listen-apply');
+	if (_lApply) {
+		_lApply.addEventListener('click', function () {
+			var mode = document.getElementById('kpc-listen-mode').value;
+			var ip = document.getElementById('kpc-listen-ip').value;
+			var port = document.getElementById('kpc-listen-port').value;
+			var msg = document.getElementById('kpc-listen-msg');
+			if (!confirm('切换后当前地址的页面会断开，需要用新地址访问。继续？')) return;
+			var fd = new FormData();
+			fd.append('mode', mode);
+			fd.append('ip', ip);
+			fd.append('port', port);
+			_lApply.disabled = true;
+			fetch(URL_BASE + '?action=web_listen_apply', { method: 'POST', credentials: 'same-origin', body: fd })
+				.then(function (r) { return r.json(); })
+				.then(function (d) {
+					_lApply.disabled = false;
+					if (msg) msg.textContent = (d && d.msg) || '';
+					if (d && d.code === 0) setTimeout(loadListen, 6000);
+				})
+				.catch(function (e) {
+					_lApply.disabled = false;
+					if (msg) msg.textContent = '请求失败：' + e;
+				});
+		});
+	}
+
+	/* ---- 服务小区全量：NCI / TA（距离估算）/ 服务域 / PLMN ---- */
+	function loadCellDetail() {
+		fetch(URL_BASE + '?action=cell&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (!d || d.code !== 0) return;
+				var nci = d.nci ? String(d.nci).replace(/^0+/, '') : '';
+				setKv('kc-nci', nci || '-', '');
+				setKv('kc-domain', d.domain || '-', '');
+				setKv('kc-plmn', (d.mcc && d.mnc) ? (d.mcc + '-' + d.mnc) : '-', '');
+				var tv = document.getElementById('kc-ta');
+				var td = document.getElementById('kc-ta-d');
+				var plText = d.pl ? fmtDist(d.pl.meters) : '—';
+				var check = d.ta && d.ta.check;
+				if (d.ta) {
+					if (tv) tv.textContent = String(d.ta.raw);
+					if (td) {
+						td.textContent = d.ta.text + ' · 路损 ' + plText
+							+ (check ? (' · ' + check.text) : '');
+					}
+				} else {
+					if (tv) tv.textContent = '-';
+					if (td) td.textContent = '模块未上报 TA · 路损 ' + plText;
+				}
+
+				// 「网优」页签的距离估算卡片
+				var e1 = document.getElementById('kc-dist-ta');
+				var e2 = document.getElementById('kc-dist-pl');
+				var e3 = document.getElementById('kc-dist-ok');
+				var e4 = document.getElementById('kc-dist-cfg');
+				if (e1) e1.textContent = d.ta ? d.ta.text : '无 TA';
+				if (e2) e2.textContent = d.pl ? ('≈ ' + fmtDist(d.pl.meters)) : '无法计算';
+				if (e3) {
+					e3.textContent = check ? check.text : '无法校验';
+					e3.style.color = (check && !check.consistent) ? '#c23b22' : '';
+				}
+				if (e4) {
+					e4.textContent = d.pl
+						? (d.pl.freq + ' MHz · EIRP ' + d.pl.eirp + ' dBm · n=' + d.pl.n + ' · PL ' + d.pl.pl + ' dB')
+						: '—';
+				}
+				var vd = document.getElementById('kpc-dist-verdict');
+				if (vd) {
+					vd.textContent = (check && !check.consistent) ? '不可信' : (check ? '可参考' : '—');
+					vd.style.color = (check && !check.consistent) ? '#c23b22' : '';
+				}
+			})
+			.catch(function () {});
+	}
+	loadCellDetail();
+	setInterval(function () { if (!document.hidden) loadCellDetail(); }, 30000);
+	loadListen();
+	termLoad();
+	hnatLoad();
+	loadSwap();
+	loadLock();
+	bakLoad();
+	prLoad();
+
+	document.getElementById('kpc-diag').addEventListener('click', function () {
+		window.location.href = URL_BASE + '?action=diag&t=' + Date.now();
+	});
+
+	/* ---- 工具：串号复制 / AT 调试台 / CSV ---- */
+	function kpCopy(text) {
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			return navigator.clipboard.writeText(text);
+		}
+		return new Promise(function (resolve, reject) {
+			var ta = document.createElement('textarea');
+			ta.value = text;
+			document.body.appendChild(ta);
+			ta.select();
+			try { document.execCommand('copy'); resolve(); }
+			catch (e) { reject(e); }
+			document.body.removeChild(ta);
+		});
+	}
+	function copyNote(msg) {
+		var el = document.getElementById('kpc-copy-note');
+		if (!el) return;
+		el.textContent = msg;
+		setTimeout(function () { el.textContent = ''; }, 1800);
+	}
+	var copyBtns = document.querySelectorAll('[data-copy]');
+	for (var ci = 0; ci < copyBtns.length; ci++) {
+		copyBtns[ci].addEventListener('click', function () {
+			var el = document.getElementById(this.getAttribute('data-copy'));
+			var v = el ? el.textContent.trim() : '';
+			if (!v || v === '-') { copyNote('没有可复制的值'); return; }
+			kpCopy(v).then(function () { copyNote('已复制'); }, function () { copyNote('复制失败'); });
+		});
+	}
+	document.getElementById('kpc-copy-all').addEventListener('click', function () {
+		var rows = [
+			['IMEI', 'kp-id-imei'], ['IMSI', 'kp-id-imsi'], ['ICCID', 'kp-id-iccid'],
+			['模块型号', 'kp-id-model'], ['模块版本', 'kp-id-rev']
+		];
+		var out = [];
+		for (var i = 0; i < rows.length; i++) {
+			var el = document.getElementById(rows[i][1]);
+			out.push(rows[i][0] + ': ' + (el ? el.textContent.trim() : '-'));
+		}
+		kpCopy(out.join('\n')).then(function () { copyNote('已复制全部'); }, function () { copyNote('复制失败'); });
+	});
+
+	var atOut = document.getElementById('kpc-at-out');
+	document.getElementById('kpc-at-run').addEventListener('click', function () {
+		var btn = this;
+		var cmd = document.getElementById('kpc-at-cmd').value;
+		btn.disabled = true;
+		atOut.textContent = '> ' + cmd + '\n（执行中…）';
+		var fd = new FormData();
+		fd.append('cmd', cmd);
+		fetch(URL_BASE + '?action=at', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				btn.disabled = false;
+				if (!d || d.code !== 0) {
+					atOut.textContent = '> ' + cmd + '\n' + ((d && d.msg) || '执行失败');
+					return;
+				}
+				atOut.textContent = '> ' + d.cmd + '\n' + (d.resp || '(无响应)');
+			}).catch(function (e) {
+				btn.disabled = false;
+				atOut.textContent = '> ' + cmd + '\n请求失败：' + e;
+			});
+	});
+	document.getElementById('kpc-at-clr').addEventListener('click', function () {
+		atOut.textContent = '（尚未执行）';
+	});
+
+	document.getElementById('kpc-csv').addEventListener('click', function () {
+		var h = TREND.last || [];
+		if (!h.length) { copyNote('还没有采样数据'); return; }
+		var lines = ['time,rsrp_dbm,rsrq_db,sinr_db,cqi,temp_c,dl_bytes_per_s,ul_bytes_per_s,pci,band'];
+		for (var i = 0; i < h.length; i++) {
+			var p = h[i] || {};
+			lines.push([hhmmss(p.t), nv(p.rsrp), nv(p.rsrq), nv(p.sinr), nv(p.cqi), nv(p.temp),
+				nv(p.dlr), nv(p.ulr), '"' + String(p.pci || '') + '"', '"' + String(p.band || '') + '"'].join(','));
+		}
+		var blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+		var a = document.createElement('a');
+		a.href = URL.createObjectURL(blob);
+		a.download = 'kpc-cell-trend.csv';
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+	});
+	document.getElementById('kpc-diag-tool').addEventListener('click', function () {
+		window.location.href = URL_BASE + '?action=diag&t=' + Date.now();
+	});
+
+	/* ---- 网优：分设备限速 / 优先级 ---- */
+	function fmtRate(n) {
+		n = nv(n);
+		if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MiB/s';
+		if (n >= 1024) return Math.round(n / 1024) + ' KiB/s';
+		return Math.round(n) + ' B/s';
+	}
+	function qosRender(d) {
+		var q = d.qos || {};
+		var note = document.getElementById('kpc-qos-note');
+		if (note) {
+			note.textContent = q.applied
+				? ('已启用 · ' + (q.hnat_suspended ? 'HNAT 已挂起' : 'HNAT 运行中'))
+				: '未启用';
+		}
+		var f = document.getElementById('kpc-qos-plan');
+		if (f && nv(q.plan) > 0) f.value = nv(q.plan);
+		var dd = document.getElementById('kpc-qos-dd');
+		if (dd) dd.value = nv(q.default_down);
+		var du = document.getElementById('kpc-qos-du');
+		if (du) du.value = nv(q.default_up);
+		var dp = document.getElementById('kpc-qos-dp');
+		if (dp && q.default_prio) dp.value = q.default_prio;
+
+		var h = '';
+		(d.devices || []).forEach(function (x) {
+			var type = (x.kind === 'wifi') ? (esc(x.band || 'Wi-Fi')) : 'LAN';
+			h += '<tr><td><span class="kpc-dev">' + esc(x.host || x.mac) + '</span>'
+				+ '<span class="kpc-mac">' + esc(x.ip || '-') + ' · ' + esc(x.mac) + '</span></td>'
+				+ '<td>' + type + (x.sig ? ' · ' + esc(x.sig) + ' dBm' : '')
+				+ (x.online ? '' : ' · 离线') + '</td>'
+				+ '<td class="mono">' + fmtRate(x.rx) + ' / ' + fmtRate(x.tx) + '</td>'
+				+ '<td><input type="number" class="kpc-num" min="0" step="100" value="' + nv(x.down)
+				+ '" data-mac="' + esc(x.mac) + '" data-field="down"></td>'
+				+ '<td><input type="number" class="kpc-num" min="0" step="100" value="' + nv(x.up)
+				+ '" data-mac="' + esc(x.mac) + '" data-field="up"></td>'
+				+ '<td><select class="kpc-sel" data-mac="' + esc(x.mac) + '" data-field="prio">'
+				+ '<option value="high"' + (x.prio === 'high' ? ' selected' : '') + '>高</option>'
+				+ '<option value="normal"' + (x.prio === 'normal' ? ' selected' : '') + '>中</option>'
+				+ '<option value="low"' + (x.prio === 'low' ? ' selected' : '') + '>低</option>'
+				+ '</select></td></tr>';
+		});
+		var body = document.getElementById('kpc-qos-body');
+		if (body) {
+			body.innerHTML = h || '<tr><td colspan="6" class="cell-tip">未发现在线设备</td></tr>';
+		}
+	}
+	function qosLoad() {
+		fetch(URL_BASE + '?action=devices&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) { if (d && d.code === 0) qosRender(d); })
+			.catch(function () {});
+	}
+	function qosCollect() {
+		var nodes = document.querySelectorAll(
+			'#kpc-qos-body input[data-mac], #kpc-qos-body select[data-mac]');
+		var map = {};
+		for (var i = 0; i < nodes.length; i++) {
+			var el = nodes[i];
+			var mac = el.getAttribute('data-mac');
+			if (!map[mac]) map[mac] = { mac: mac, down: 0, up: 0, prio: 'normal' };
+			map[mac][el.getAttribute('data-field')] = el.value;
+		}
+		var list = [];
+		for (var k in map) { if (map.hasOwnProperty(k)) list.push(map[k]); }
+		return list;
+	}
+	document.getElementById('kpc-qos-save').addEventListener('click', function () {
+		var list = qosCollect();
+		if (!list.length) { alert('没有可保存的设备'); return; }
+		var fd = new FormData();
+		fd.append('plan', document.getElementById('kpc-qos-plan').value);
+		fd.append('default_down', document.getElementById('kpc-qos-dd').value);
+		fd.append('default_up', document.getElementById('kpc-qos-du').value);
+		fd.append('default_prio', document.getElementById('kpc-qos-dp').value);
+		fd.append('devices', JSON.stringify(list));
+		var btn = this;
+		btn.disabled = true;
+		fetch(URL_BASE + '?action=qos_apply', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				btn.disabled = false;
+				alert(d && d.code === 0 ? (d.msg || '已保存') : ('保存失败：' + (d && d.msg)));
+				qosLoad();
+			})
+			.catch(function (e) { btn.disabled = false; alert('保存失败：' + e); });
+	});
+	document.getElementById('kpc-qos-reset').addEventListener('click', function () {
+		if (!confirm('恢复默认会清除所有设备的限速与优先级，并恢复 HNAT 硬件转发。确定？')) return;
+		var fd = new FormData();
+		fetch(URL_BASE + '?action=qos_reset', { method: 'POST', credentials: 'same-origin', body: fd })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				alert(d && d.code === 0 ? (d.msg || '已恢复默认') : ('操作失败：' + (d && d.msg)));
+				qosLoad();
+			})
+			.catch(function (e) { alert('操作失败：' + e); });
+	});
+	qosLoad();
+	setInterval(function () {
+		if (document.hidden) return;
+		if (KP.state.ui.view === 'qos') qosLoad();
+	}, 5000);
+
+	/* ---- 邻区扫描（表格升级 + 30 秒自动扫描） ---- */
+	function nbBindLock(box) {
+		var btns = box.querySelectorAll('[data-arfcn]');
+		for (var k = 0; k < btns.length; k++) {
+			btns[k].addEventListener('click', function () {
+				var arfcn = this.getAttribute('data-arfcn');
+				var md = (this.getAttribute('data-mode') || '').toUpperCase();
+				document.querySelector('#kpc-mode input[value="cell"]').checked = true;
+				syncMode();
+				if (md.indexOf('NR') >= 0 || md.indexOf('5G') >= 0) {
+					e5.value = arfcn; e4.value = '';
+				} else {
+					e4.value = arfcn; e5.value = '';
+				}
+				updatePreview();
+				showTab('lock');
+			});
+		}
+	}
+
+	function fmtDist(m) {
+		var n = Number(m);
+		if (!n || !isFinite(n) || n <= 0) return '—';
+		if (n < 1000) return Math.round(n) + ' m';
+		return (n / 1000).toFixed(n < 10000 ? 1 : 0) + ' km';
+	}
+
+	function renderNeighbors(d) {
+		var note = document.getElementById('kpc-scan-note');
+		var box = document.getElementById('kpc-nb');
+		if (!box) return;
+		var sv = d.serving || {};
+		var list = d.cells || [];
+		if (note) {
+			note.textContent = '已更新 ' + (d.time || '') + ' · ' + list.length + ' 个邻区'
+				+ (sv.pci ? ' · 服务小区 PCI ' + sv.pci : '');
+		}
+		var h = '<table class="cell-table"><thead><tr>'
+			+ '<th>#</th><th>PCI</th><th>频点</th><th>同频</th>'
+			+ '<th>RSRP</th><th>RSRQ</th><th>SINR</th><th>ΔRSRP</th><th>距离(估)</th>'
+			+ '<th>信号</th><th>历史最优 / 次数</th><th>操作</th></tr></thead><tbody>';
+		if (sv.pci) {
+			var sp = Number(sv.rsrp) || 0;
+			h += '<tr class="is-serving"><td>—</td><td class="mono">' + esc(sv.pci)
+				+ ' <span class="nb-sub">服务</span></td>'
+				+ '<td class="mono">' + esc(sv.earfcn || '-') + '</td>'
+				+ '<td><span class="cell-pill on">当前</span></td>'
+				+ '<td>' + esc(sv.rsrp) + ' dBm</td><td>—</td><td>' + esc(sv.sinr) + ' dB</td><td>0</td>'
+				+ '<td>—</td>'
+				+ '<td><div class="cell-bar" style="width:80px"><i style="width:'
+				+ Math.max(5, Math.min(100, Math.floor((sp + 140) * 100 / 60)))
+				+ '%;background:#34d399"></i></div></td><td>—</td><td>—</td></tr>';
+		}
+		if (!list.length) {
+			h += '<tr><td colspan="12"><span class="cell-tip">未发现可用邻区。可能信号过弱，或附近没有同频小区。</span></td></tr>';
+		}
+		for (var i = 0; i < list.length; i++) {
+			var c = list[i];
+			var r = Number(c.rsrp) || -140;
+			var dl = (c.delta === null || c.delta === undefined) ? null : Number(c.delta);
+			var dcls = dl === null ? '' : (dl >= 0 ? 'd-up' : 'd-dn');
+			var dtxt = dl === null ? '—' : ((dl > 0 ? '+' : '') + dl);
+			var bar = r >= -95 ? '#34d399' : (r >= -105 ? '#fbbf24' : '#f87171');
+			h += '<tr><td>' + (i + 1) + '</td>'
+				+ '<td class="mono">' + esc(c.pci) + ' <span class="nb-sub">' + esc(c.pci_hex || '') + '</span></td>'
+				+ '<td class="mono">' + esc(c.earfcn) + '</td>'
+				+ '<td>' + (c.same_freq ? '<span class="cell-pill on">同频</span>' : '<span class="cell-pill">异频</span>') + '</td>'
+				+ '<td>' + esc(c.rsrp) + ' dBm</td><td>' + esc(c.rsrq) + ' dB</td><td>' + esc(c.sinr) + ' dB</td>'
+				+ '<td class="' + dcls + '">' + esc(dtxt) + '</td>'
+				+ '<td>' + fmtDist(c.dist) + '</td>'
+				+ '<td><div class="cell-bar" style="width:80px"><i style="width:' + esc(c.pct)
+				+ '%;background:' + bar + '"></i></div></td>'
+				+ '<td>' + esc(c.best === undefined ? '-' : c.best) + ' / ' + esc(c.seen || 1) + '</td>'
+				+ '<td><button class="cbi-button cbi-button-neutral" type="button" data-arfcn="' + esc(c.earfcn)
+				+ '" data-mode="' + esc(c.mode) + '">锁定此频点</button></td></tr>';
+		}
+		h += '</tbody></table>';
+		box.innerHTML = h;
+		nbBindLock(box);
+	}
+
+	function nbLoad(busy) {
+		var btn = document.getElementById('kpc-scan');
+		var note = document.getElementById('kpc-scan-note');
+		var box = document.getElementById('kpc-nb');
+		if (!box) return;
+		if (busy) {
+			if (btn) btn.disabled = true;
+			if (note) note.textContent = '正在扫描邻区…';
+			box.innerHTML = '<p class="cell-tip" style="margin:0">正在读取模块邻区信息，请稍候…</p>';
+		}
+		fetch(URL_BASE + '?action=neighbor&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (btn) btn.disabled = false;
+				if (!d || d.code !== 0) {
+					if (note) note.textContent = '';
+					box.innerHTML = '<div class="alert-message error">' + esc((d && d.msg) || '扫描失败') + '</div>';
+					return;
+				}
+				renderNeighbors(d);
+			})
+			.catch(function (e) {
+				if (btn) btn.disabled = false;
+				if (note) note.textContent = '';
+				box.innerHTML = '<div class="alert-message error">扫描请求失败：' + esc(e) + '</div>';
+			});
+	}
+
+	var scanBtn = document.getElementById('kpc-scan');
+	if (scanBtn) scanBtn.addEventListener('click', function () { nbLoad(true); });
+
+	setInterval(function () {
+		if (document.hidden || currentTab !== 'neighbor') return;
+		var cb = document.getElementById('kpc-nb-auto');
+		if (cb && !cb.checked) return;
+		nbLoad(false);
+	}, 30000);
+
+	/* ---- 质量分布直方图 ---- */
+	var HIST_COLORS = ['#34d399', '#7bd88f', '#fbbf24', '#fb923c', '#f87171'];
+	var HIST_LABELS = {
+		dBm: ['优秀 ≥-85', '良好 -85~-95', '一般 -95~-105', '较差 -105~-115', '极差 <-115'],
+		dB: ['优秀 ≥20', '良好 13~20', '一般 5~13', '较差 0~5', '极差 <0']
+	};
+
+	function renderHist(boxId, d, unit) {
+		var box = document.getElementById(boxId);
+		if (!box) return;
+		if (!d || !d.total) {
+			box.innerHTML = '<p class="cell-tip" style="margin:0">暂无采样（打开本页后每 10 秒采一点）</p>';
+			return;
+		}
+		var labels = HIST_LABELS[unit] || HIST_LABELS.dB;
+		var h = '';
+		for (var i = 0; i < 5; i++) {
+			var p = d.pct[i] || 0;
+			h += '<div class="kpc-hist-row"><span class="kpc-hist-k">' + labels[i] + '</span>'
+				+ '<span class="kpc-hist-bar"><i style="width:' + p + '%;background:' + HIST_COLORS[i] + '"></i></span>'
+				+ '<span class="kpc-hist-v"><b>' + p + '%</b> · ' + (d.bins[i] || 0) + '</span></div>';
+		}
+		box.innerHTML = h;
+	}
+
+	function loadStats() {
+		fetch(URL_BASE + '?action=stats&t=' + Date.now(), { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (!d || d.code !== 0) return;
+				renderHist('kpc-hist-rsrp', d.rsrp, 'dBm');
+				renderHist('kpc-hist-sinr', d.sinr, 'dB');
+				var rs = document.getElementById('kpc-rsrp-sum');
+				var ss = document.getElementById('kpc-sinr-sum');
+				if (rs && d.rsrp && d.rsrp.s) {
+					rs.textContent = '均值 ' + d.rsrp.s.avg + ' · P10 ' + d.rsrp.s.p10
+						+ ' · P90 ' + d.rsrp.s.p90 + ' · n=' + d.rsrp.s.n;
+				}
+				if (ss && d.sinr && d.sinr.s) {
+					ss.textContent = '均值 ' + d.sinr.s.avg + ' · P10 ' + d.sinr.s.p10
+						+ ' · P90 ' + d.sinr.s.p90 + ' · n=' + d.sinr.s.n;
+				}
+				var note = document.getElementById('kpc-dist-note');
+				if (note) note.textContent = '采样 ' + (d.points || 0) + ' 点 · 已更新 ' + hhmmss(d.ts);
+			})
+			.catch(function () {});
+	}
+})();
+//]]>
+</script>
+
+<%+footer%>

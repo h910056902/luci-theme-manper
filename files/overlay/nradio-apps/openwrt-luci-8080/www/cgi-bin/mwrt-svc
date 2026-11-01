@@ -1,0 +1,226 @@
+#!/usr/bin/lua
+-- ============================================================
+-- 8080 插件/服务管理接口（白名单）
+--   GET  /cgi-bin/mwrt-svc?action=list&token=<sysauth>
+--   POST /cgi-bin/mwrt-svc  action=stop|start&id=<plugin>&token=<sysauth>
+-- 只允许 root 会话；只执行白名单内的 /etc/init.d/<svc> stop|start。
+-- 不接收任意命令、不接收任意路径。
+-- ============================================================
+local jsonc = require "luci.jsonc"
+local sys = require "luci.sys"
+
+local PLUGINS = {
+	{ id = "openclash", svc = "openclash", name = "OpenClash 代理", desc = "全网代理出口", warn = "停止后所有终端将无法通过代理上网" },
+	{ id = "panel", svc = "1paneld", name = "1Panel 面板", desc = "服务器管理面板", warn = "停止后 1Panel 面板无法访问" },
+	{ id = "openlist", svc = "openlist", name = "OpenList 文件服务", desc = "文件列表 / 网盘", warn = "停止后文件服务不可用" },
+	{ id = "docker", svc = "dockerd", name = "Docker 引擎", desc = "容器运行环境", warn = "停止后 1Panel 的容器会一起停止" },
+	{ id = "homebox", svc = "homebox", name = "Homebox", desc = "内网测速与网络工具" },
+	{ id = "natpierce", svc = "natpierce", name = "皎月连 NAT 穿透", desc = "内网穿透" },
+	{ id = "qiyou", svc = "qiyougamebooster", name = "奇游联机宝加速器", desc = "游戏加速" },
+	{ id = "unblock", svc = "unblockneteasemusic", name = "网易云音乐解锁", desc = "音乐解锁" },
+	{ id = "frpc", svc = "frpc", name = "frpc 内网穿透", desc = "内网穿透" },
+	{ id = "ttyd", svc = "ttyd", name = "Web SSH 终端", desc = "网页终端", warn = "停止后 Terminal 入口不可用" },
+	{ id = "istoreenhance", svc = "istoreenhance", name = "iStore 增强", desc = "应用商店增强" },
+}
+
+local function respond(status, obj)
+	local phrase = "Bad Request"
+	if status == 200 then phrase = "OK"
+	elseif status == 401 then phrase = "Unauthorized"
+	elseif status == 403 then phrase = "Forbidden"
+	elseif status == 404 then phrase = "Not Found" end
+	io.write("Status: " .. tostring(status) .. " " .. phrase .. "\r\n")
+	io.write("Content-Type: application/json; charset=utf-8\r\n")
+	io.write("Cache-Control: no-store\r\n\r\n")
+	io.write(jsonc.stringify(obj) or "{}")
+	io.flush()
+	os.exit(0)
+end
+
+local function fail(status, msg)
+	respond(status or 400, { ok = false, error = msg or "参数错误" })
+end
+
+local function split_json_objs(s)
+	local out, depth, start = {}, 0, nil
+	for i = 1, #s do
+		local c = s:sub(i, i)
+		if c == "{" then
+			if depth == 0 then start = i end
+			depth = depth + 1
+		elseif c == "}" then
+			depth = depth - 1
+			if depth == 0 and start then
+				out[#out + 1] = s:sub(start, i)
+				start = nil
+			end
+		end
+	end
+	return out
+end
+
+local function check_auth(tok)
+	if not tok or not tok:match("^[0-9a-fA-F]+$") or #tok < 16 then return false end
+	local raw = sys.exec("ubus call session list 2>/dev/null") or ""
+	if raw == "" then return false end
+	for _, chunk in ipairs(split_json_objs(raw)) do
+		local ok, obj = pcall(jsonc.parse, chunk)
+		if ok and type(obj) == "table" and tostring(obj.ubus_rpc_session or "") == tok then
+			local data = obj.data or {}
+			local user = tostring(data.user or data.username or "")
+			if user == "root" then return true end
+		end
+	end
+	return false
+end
+
+local function urldecode(s)
+	s = tostring(s or ""):gsub("+", " ")
+	return (s:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
+end
+
+local function parse_params()
+	local p = {}
+	local method = (os.getenv("REQUEST_METHOD") or "GET"):upper()
+	local raw = ""
+	if method == "POST" then
+		local len = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
+		if len > 0 then raw = io.read(len) or "" end
+	else
+		raw = os.getenv("QUERY_STRING") or ""
+	end
+	for k, v in tostring(raw):gmatch("([^&=]+)=([^&]*)") do
+		p[urldecode(k)] = urldecode(v)
+	end
+	return p, method
+end
+
+local function installed(svc)
+	local f = io.open("/etc/init.d/" .. svc, "r")
+	if f then f:close() return true end
+	return false
+end
+
+local function pids_of_service(svc)
+	local pids = {}
+	local args = '{"name":"' .. svc .. '"}'
+	local raw = sys.exec("ubus call service list '" .. args .. "' 2>/dev/null") or ""
+	if raw ~= "" then
+		local ok, obj = pcall(jsonc.parse, raw)
+		if ok and type(obj) == "table" and type(obj[svc]) == "table" then
+			local inst = obj[svc].instances or {}
+			for _, it in pairs(inst) do
+				if type(it) == "table" and it.running and it.pid then
+					pids[#pids + 1] = tonumber(it.pid)
+				end
+			end
+		end
+	end
+	return pids
+end
+
+local function pidof(name)
+	local out = sys.exec("pidof " .. name .. " 2>/dev/null") or ""
+	local pids = {}
+	for v in out:gmatch("%d+") do pids[#pids + 1] = tonumber(v) end
+	return pids
+end
+
+local function rss_mib(pids)
+	local total = 0
+	for _, pid in ipairs(pids) do
+		local f = io.open("/proc/" .. tostring(pid) .. "/status", "r")
+		if f then
+			local txt = f:read("*a") or ""
+			f:close()
+			local kb = tonumber(txt:match("VmRSS:%s*(%d+)"))
+			if kb then total = total + kb end
+		end
+	end
+	return total / 1024
+end
+
+local function meminfo()
+	local total, avail = 0, 0
+	local f = io.open("/proc/meminfo", "r")
+	if f then
+		local txt = f:read("*a") or ""
+		f:close()
+		total = tonumber(txt:match("MemTotal:%s*(%d+)")) or 0
+		avail = tonumber(txt:match("MemAvailable:%s*(%d+)")) or 0
+	end
+	return { total = total, available = avail }
+end
+
+local function state_of(p)
+	local pids = pids_of_service(p.svc)
+	if #pids == 0 and installed(p.svc) then
+		pids = pidof(p.svc)
+	end
+	if p.id == "docker" then
+		local extra = pidof("containerd")
+		for _, v in ipairs(extra) do pids[#pids + 1] = v end
+	end
+	return pids
+end
+
+local function log_action(msg)
+	local f = io.open("/tmp/mwrt-svc.log", "a")
+	if f then
+		f:write(os.date("%Y-%m-%d %H:%M:%S") .. " " .. msg .. "\n")
+		f:close()
+	end
+end
+
+local p, method = parse_params()
+local tok = tostring(p.token or "")
+if tok == "" then
+	local cookie = os.getenv("HTTP_COOKIE") or ""
+	tok = cookie:match("sysauth=([0-9a-fA-F]+)") or ""
+end
+if not check_auth(tok) then
+	fail(401, "未登录或登录已过期，请刷新页面重新登录")
+end
+
+local action = tostring(p.action or "list")
+if method == "GET" or action == "list" then
+	local plugins = {}
+	for _, pl in ipairs(PLUGINS) do
+		if installed(pl.svc) then
+			local pids = state_of(pl)
+			plugins[#plugins + 1] = {
+				id = pl.id, svc = pl.svc, name = pl.name, desc = pl.desc,
+				warn = pl.warn or "",
+				installed = true, running = #pids > 0, mem = rss_mib(pids),
+			}
+		end
+	end
+	table.sort(plugins, function(a, b)
+		if a.running ~= b.running then return a.running end
+		return (a.mem or 0) > (b.mem or 0)
+	end)
+	respond(200, { ok = true, mem = meminfo(), plugins = plugins })
+end
+
+if method ~= "POST" then fail(405, "仅支持 POST") end
+local id = tostring(p.id or "")
+local target = nil
+for _, pl in ipairs(PLUGINS) do
+	if pl.id == id then target = pl break end
+end
+if not target then fail(404, "未知的插件") end
+if action ~= "stop" and action ~= "start" then fail(400, "action 只能是 stop 或 start") end
+if not installed(target.svc) then fail(404, "该插件未安装") end
+
+local svc = target.svc
+local cmd
+if action == "stop" then
+	cmd = "/etc/init.d/" .. svc .. " stop >/tmp/mwrt-svc-last.log 2>&1"
+else
+	cmd = "nohup /etc/init.d/" .. svc .. " start >/tmp/mwrt-svc-last.log 2>&1 &"
+end
+log_action("action=" .. action .. " id=" .. id .. " svc=" .. svc)
+sys.exec(cmd)
+if action == "stop" then os.execute("sleep 1") end
+local pids = state_of(target)
+respond(200, { ok = true, id = id, action = action, running = #pids > 0, mem = rss_mib(pids) })

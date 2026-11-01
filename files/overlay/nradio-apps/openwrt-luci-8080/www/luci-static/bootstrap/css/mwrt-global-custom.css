@@ -1,0 +1,696 @@
+html{font-size:15px!important}body{font-size:0.85rem!important;line-height:1.55;background-color:#FFF!important}h2{letter-spacing:0.01em!important;margin-bottom:0.85rem!important;background:#FFF!important;border:1px solid #e7eaee!important;border-left:3px solid #388087!important;border-radius:0.5rem!important;box-shadow:none!important;color:#16202c!important;font-size:1.15rem!important;font-weight:600;padding:0.8rem 1.1rem!important}h3{position:relative;background:#fbfcfd!important;color:#1f2d3d!important;border-bottom:1px solid #eef1f4!important;border-radius:0.5rem 0.5rem 0 0!important;font-size:1rem!important;font-weight:600;padding:0.7rem 1.1rem!important}h4{font-size:0.92rem!important;font-weight:600;color:#344054!important}.cbi-section,.cbi-map > .cbi-section,[data-tab-title]{border-radius:0.5rem!important;box-shadow:0 1px 2px rgba(16,24,40,0.04),0 1px 3px rgba(16,24,40,0.05)!important;border:1px solid rgba(16,24,40,0.05)!important}.cbi-map-descr,.cbi-section-descr{color:#667085!important;font-size:0.8rem!important;background:#fbfcfd!important;border-bottom:1px solid #f2f4f7!important;padding:0.6rem 1.1rem!important}input[type=text],input[type=password],input[type=search],input[type=number],input[type=email],input[type=url],.cbi-input-text,.cbi-input-password,textarea,select{border:1px solid #d6dbe1!important;border-radius:0.4rem!important;color:#1f2d3d!important;background-color:#fff!important;transition:border-color .18s ease,box-shadow .18s ease!important}input[type=text]:focus,input[type=password]:focus,input[type=search]:focus,input[type=number]:focus,.cbi-input-text:focus,textarea:focus,select:focus{box-shadow:0 0 0 3px rgba(56,128,135,0.15)!important;outline:none!important;border-color:#388087!important}.cbi-value{padding:0.35rem 0!important}.cbi-value-title{color:#475467!important;font-weight:500;font-size:0.84rem!important}.cbi-button,.btn{font-size:0.82rem!important;box-shadow:none!important;transition:all .18s ease!important;border:1px solid transparent!important;border-radius:0.4rem!important;font-weight:500;letter-spacing:0.01em!important;min-height:1.9rem!important;line-height:1.1!important;padding:0.45rem 0.85rem!important}.cbi-button:hover,.btn:hover{transform:translateY(-1px)!important;box-shadow:0 2px 8px -2px rgba(16,24,40,0.25)!important}.cbi-button-apply,.cbi-button-save,.cbi-button-add,.cbi-button-positive,.cbi-page-actions .cbi-button-apply,.btn.primary{background-color:#388087!important;background:linear-gradient(180deg,#3d8c93 0%,#388087 100%)!important;color:#fff!important;border-color:#2f6e74!important}.cbi-button-apply:hover,.cbi-button-save:hover,.cbi-button-add:hover{background-color:#2f6e74!important}.cbi-button-edit,.cbi-button-reload,.cbi-button-neutral,.cbi-button-link{background-color:#eef1f4!important;color:#344054!important;border-color:#d6dbe1!important}.cbi-button-remove,.cbi-button-reset,.cbi-button-negative{background-color:#fef0ec!important;color:#d9480f!important;border-color:#f7c3b3!important}.cbi-button-remove:hover,.cbi-button-reset:hover{background-color:#d9480f!important;color:#fff!important}table,.table{font-size:0.82rem!important}.table .table-titles th,table > thead > tr > th,.tr.table-titles > .th,.tr.cbi-section-table-titles > .th{background-color:#f2f4f7!important;color:#475467!important;font-weight:600;letter-spacing:0.01em!important;border-bottom:1px solid #e4e7ec!important}table > tbody > tr:hover,.table .tr:hover{background-color:#f7fafa!important}table > tbody > tr > td,.table .td{border-top:1px solid #f0f1f3!important}.cbi-tabmenu,.tabs{border-bottom:1px solid #e7eaee!important;background:transparent!important;box-shadow:none!important}.cbi-tabmenu > li,.tabs > li{background:transparent!important;border:0!important;border-bottom:2px solid transparent!important;font-size:0.82rem!important;transition:color .18s,border-color .18s!important}.cbi-tabmenu > li[class~="cbi-tab"],.tabs > li[class~="active"],.cbi-tabmenu > li:hover,.tabs > li:hover{color:#388087!important;border-bottom:2px solid #388087!important;background:transparent!important}.alert-message,.alert{font-size:0.85rem!important;border-radius:0.5rem!important;border:1px solid #e7eaee!important;box-shadow:none!important;background:#fbfcfd!important}.cbi-dropdown{border-radius:0.4rem!important;border:1px solid #d6dbe1!important}.cbi-dropdown[open] > ul.dropdown{border:1px solid #e7eaee!important;border-radius:0.4rem!important;box-shadow:0 8px 24px -6px rgba(16,24,40,0.18)!important}.cbi-dropdown[open] > ul.dropdown > li[selected],.cbi-dropdown[open] > ul.dropdown > li.focus{background-color:#388087!important;background:#388087!important;color:#fff!important}footer.mobile-hide,footer{font-size:0.72rem!important;color:#98a2b3!important;text-align:right!important;letter-spacing:0.01em!important;padding:0.85rem 1.25rem!important}footer > div{text-align:right!important}footer a,footer > a{color:#98a2b3!important;text-decoration:none!important;transition:color .18s ease!important}#osv-switch-link a{color:#8a93a0!important;font-weight:500;margin-right:10px!important}footer #modemenu:empty{display:none!important}.main-right > #maincontent > .container{margin-top:0.9rem!important}.main-right header{margin-bottom:0!important}#maincontent > .cbi-map:first-child,#maincontent > .cbi-section:first-child,#maincontent h2:first-child{margin-top:0.2rem!important}.cbi-section > h3:first-child,[data-tab-title] > h3:first-child{background:linear-gradient(180deg,#fafbfc 0%,#FFF 100%)!important;border-bottom:1px solid #eef1f4!important;border-radius:0.5rem 0.5rem 0 0!important}.cbi-button:active,.btn:active{transform:translateY(0)!important;box-shadow:inset 0 1px 3px rgba(0,0,0,0.18)!important}.cbi-button:focus-visible,.btn:focus-visible{outline:2px solid rgba(56,128,135,0.4)!important;outline-offset:1px!important}.cbi-button-apply:hover,.cbi-button-save:hover,.cbi-button-add:hover,.cbi-button-positive:hover,.btn.primary:hover{background:linear-gradient(180deg,#45989f 0%,#3d8c93 100%)!important}.cbi-page-actions{border-radius:0 0 0.5rem 0.5rem!important;padding:0.75rem 1.15rem!important}.cbi-section,.cbi-map > .cbi-section,[data-tab-title],.cbi-section-node{background:#FFF!important;border:1px solid #e7eaee!important;border-radius:0.5rem!important;box-shadow:0 1px 2px rgba(16,24,40,0.03)!important;margin-bottom:0.9rem!important}.cbi-section .cbi-section,.cbi-section-node .cbi-section-node{border:0!important;box-shadow:none!important}table,.table,.cbi-section-table{background:transparent!important;border:0!important;border-radius:0.5rem!important;overflow:hidden!important}.table .table-titles th,table > thead > tr > th,.tr.table-titles > .th,.tr.cbi-section-table-titles > .th,.cbi-section-table-titles .th{background:#f7f9fb!important;color:#475467!important;font-weight:600;font-size:0.76rem!important;text-transform:none!important;letter-spacing:0.02em!important;border:0!important;border-bottom:1px solid #e7eaee!important;padding:0.6rem 0.8rem!important}table > tbody > tr > td,.table .td,.cbi-section-table .td,.tr > .td{border:0!important;border-bottom:1px solid #f2f4f7!important;color:#344054!important;vertical-align:middle!important;padding:0.6rem 0.8rem!important}.table .tr:nth-of-type(2n),table > tbody > tr:nth-of-type(2n),.cbi-rowstyle-2{background:#fbfcfd!important}.table .tr:hover,table > tbody > tr:hover,.cbi-section-table-row:hover{background:#f0f7f7!important}.table .tr:last-child > .td,table > tbody > tr:last-child > td{border-bottom:0!important}.cbi-progressbar{background:#eef1f4!important;border:0!important;border-radius:999px!important;height:1.1rem!important;overflow:hidden!important}.cbi-progressbar > div{background:linear-gradient(90deg,#388087 0%,#41a39a 100%)!important;border-radius:999px!important}.ifacebox{border:1px solid #e7eaee!important;border-radius:0.45rem!important;overflow:hidden!important;box-shadow:none!important}.ifacebox-head{background:#388087!important;color:#FFF!important;font-weight:600;font-size:0.78rem!important;letter-spacing:0.02em!important}.ifacebox-head,.ifacebox-head *{color:#FFF!important}.ifacebox-head.active{background:linear-gradient(90deg,#388087 0%,#41a39a 100%)!important}.ifacebox-body{background:#fff!important}.zonebadge{border-radius:0.4rem!important;padding:0.2rem 0.5rem!important}.ifacebadge{border-radius:0.4rem!important}.network-status-table .ifacebox-body .ifacebadge{border:1px solid #e7eaee!important}input[type=text],input[type=password],input[type=search],input[type=number],input[type=email],input[type=url],.cbi-input-text,.cbi-input-password,textarea,select,.cbi-dropdown{border:1px solid #dde1e6!important;border-radius:0.4rem!important;background:#fff!important;color:#1f2d3d!important}input:focus,textarea:focus,select:focus,.cbi-dropdown:focus,.cbi-dropdown[open]{box-shadow:0 0 0 3px rgba(56,128,135,0.13)!important;outline:none!important;border-color:#388087!important}.alert-message.warning,.alert.warning{border-left:3px solid #f0a020!important}.alert-message.error,.alert.error{border-left:3px solid #d9480f!important}.alert-message.success{border-left:3px solid #2f9e44!important}pre,code,#syslog,#diag-rc-output > pre,.cbi-input-textarea{background:#f7f9fb!important;border:1px solid #e7eaee!important;border-radius:0.4rem!important;color:#1f2d3d!important}fieldset,legend{border-color:#e7eaee!important}hr{border-color:#eef1f4!important}.cbi-tabmenu > li[class~="cbi-tab"] a,.tabs > li[class~="active"] a,.cbi-tabmenu > li[class~="cbi-tab"] a,.tabs > li[class~="active"] a,.cbi-tabmenu > li:hover a,.tabs > li:hover a{color:#388087!important;font-weight:600}footer a:hover,#osv-switch-link a:hover{color:#388087!important}.main-right,.main-right > #maincontent{background-color:#FFF!important}
+/* ===== 小修补（主题包附加）: 侧栏品牌单行显示，长主机名不再换行 ===== */
+.main .main-left .sidenav-header{padding:1.15rem .85rem .95rem!important}
+.main .main-left .sidenav-header .brand{display:block!important;font-size:1rem!important;line-height:1.35!important;letter-spacing:.01em!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;max-width:100%!important;margin:0 0 0 .2rem!important}
+.cbi-value-field .cbi-progressbar{width:100%!important;min-width:12rem!important}
+.cbi-value-field .cbi-progressbar>div{height:100%!important}
+
+
+/* ===== 8080 实例：主色统一为青绿，协调 NRadio 页面元素 ===== */
+:root{--primary:#388087!important;--dark-primary:#2f6e74!important;--bar-bg:#388087!important;--default:#1f2d3d!important}
+.nradio-overview fieldset.cbi-section{border:1px solid #e7eaee!important;background:#fff!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important;border-radius:.5rem!important}
+.nradio-overview fieldset.cbi-section>legend{color:#388087!important}
+.nradio-summary-item{background:linear-gradient(180deg,#fbfdfe,#f5f9f9)!important;border-color:#e7eaee!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important}
+.nradio-summary-item::before{background:#388087!important}
+.nradio-summary-item strong{color:#123c3f!important}
+.nradio-cell-card{border:1px solid #e7eaee!important;background:#fff!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important}
+.nradio-details td{border-top-color:#f0f1f3!important}
+.nradio-details td:first-child{color:#667085!important}
+.nradio-links a{border-color:#d6e4e4!important;color:#2f6e74!important}
+.nradio-links a:hover{background:#eef7f7!important}
+.kp-service-card{border:1px solid #e7eaee!important;background:linear-gradient(135deg,#f4faf9,#fff)!important}
+.kp-service-card strong{color:#2f6e74!important}
+.main .main-left .sidenav-header .brand{font-size:1.05rem!important}
+
+
+/* ===== 首页（设备总览）优化 ===== */
+body[data-page="admin-status-details"] .nradio-overview > h2{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+body[data-page="admin-status-details"] .nradio-overview > h2::after{content:"实时状态 · 每 10 秒自动刷新";display:inline-flex;align-items:center;margin-left:auto;font-size:.7rem;font-weight:500;letter-spacing:.06em;color:#5f7a7c;background:#f2f8f8;border:1px solid #dcebea;border-radius:999px;padding:3px 12px}
+.nradio-overview .nradio-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;background:#fff;border:1px solid #e7eaee;border-radius:.5rem;padding:.6rem 1rem;margin-bottom:.9rem;box-shadow:0 1px 2px rgba(16,24,40,.03)}
+.nradio-toolbar #nradio-refresh{min-height:2rem}
+.nradio-toolbar .nradio-note{color:#667085!important;font-size:.8rem!important;margin:0!important}
+.nradio-summary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:12px!important;margin:0 0 1rem!important}
+.nradio-summary-item{position:relative!important;overflow:hidden;background:linear-gradient(180deg,#fbfdfe 0%,#f4f9f8 100%)!important;border:1px solid #e7eaee!important;border-left:3px solid #388087!important;border-radius:.5rem!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important;padding:.85rem 2.6rem .9rem 1.05rem!important;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease!important;min-width:0!important}
+.nradio-summary-item:hover{transform:translateY(-2px);border-color:#cfe3e1!important;border-left-color:#2bffc6!important;box-shadow:0 14px 28px -20px rgba(56,128,135,.65)!important}
+.nradio-summary-item span{display:block;font-size:.72rem!important;color:#667085!important;letter-spacing:.05em!important;line-height:1.5!important;margin:0 0 2px!important}
+.nradio-summary-item strong{display:block;font-size:1.45rem!important;line-height:1.25!important;color:#123c3f!important;font-weight:700!important;letter-spacing:-.01em!important;font-variant-numeric:tabular-nums;word-break:break-all}
+.nradio-summary-item::after{font-family:argon!important;position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:1.35rem;opacity:.28;color:#388087;line-height:1}
+.nradio-summary-item:nth-child(1)::after{content:"\e90a"}
+.nradio-summary-item:nth-child(2)::after{content:"\e90c"}
+.nradio-summary-item:nth-child(3)::after{content:"\e914"}
+.nradio-summary-item:nth-child(4)::after{content:"\e913"}
+.nradio-overview fieldset.cbi-section{padding:0 0 .65rem!important;margin-bottom:1rem!important;border:1px solid #e7eaee!important;border-radius:.5rem!important;background:#fff!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important}
+.nradio-overview fieldset.cbi-section > legend{display:none!important}
+.nradio-overview fieldset.cbi-section > .panel-title{display:block!important;width:auto!important;box-sizing:border-box;margin:0 0 .55rem!important;padding:.7rem 1.1rem!important;font-size:1rem!important;font-weight:600!important;color:#16202c!important;border-bottom:1px solid #eef1f4!important;border-radius:.5rem .5rem 0 0!important;background:linear-gradient(180deg,#fafbfc 0%,#ffffff 100%)}
+.nradio-overview fieldset.cbi-section > .panel-title::before{content:"";display:inline-block;width:3px;height:14px;border-radius:2px;background:linear-gradient(180deg,#388087,#2bffc6);margin-right:9px;vertical-align:-2px}
+.nradio-overview fieldset.cbi-section > *:not(legend):not(.panel-title){margin-left:1.1rem!important;margin-right:1.1rem!important}
+.nradio-overview .nradio-note{color:#7b8794!important;font-size:.8rem!important}
+.nradio-overview .nradio-cell-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:12px!important}
+.nradio-overview .nradio-cell-card{border:1px solid #e7eaee!important;border-radius:.5rem!important;background:#fff!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important;padding:.9rem 1rem!important}
+.nradio-overview .nradio-cell-card h4{display:flex!important;justify-content:space-between;align-items:center;gap:8px;margin:0 0 .6rem!important;color:#16202c!important;font-size:.92rem!important;font-weight:600!important}
+.nradio-overview .nradio-cell-card dt{color:#667085!important}
+.nradio-overview .nradio-cell-card dd{color:#1f2d3d!important}
+.nradio-overview .nradio-state-ok{color:#2f9e44!important}
+.nradio-overview .nradio-state-bad{color:#d9480f!important}
+.nradio-overview .nradio-state-muted{color:#98a2b3!important}
+.nradio-overview .nradio-details{width:100%;border-collapse:collapse;background:transparent!important}
+.nradio-overview .nradio-details td{padding:.55rem .8rem!important;border-top:1px solid #f2f4f7!important}
+.nradio-overview .nradio-details tr:first-child td{border-top:0!important}
+.nradio-overview .nradio-details tr:nth-child(even) td{background:#fbfcfd!important}
+.nradio-overview .nradio-details td:first-child{color:#667085!important;width:31%!important}
+.nradio-overview .nradio-links a{display:inline-block;padding:.4rem .75rem!important;border:1px solid #d8e9e7!important;border-radius:.45rem!important;background:#f8fbfb!important;color:#2f6e74!important;font-size:.82rem!important;margin:.2rem .25rem .2rem 0!important;transition:all .18s ease!important}
+.nradio-overview .nradio-links a:hover{background:#eef7f6!important;border-color:#388087!important;color:#1f5f66!important;text-decoration:none!important}
+.nradio-overview .kp-service-card{border:1px solid #e7eaee!important;border-radius:.5rem!important;background:linear-gradient(135deg,#f5faf9,#ffffff 60%)!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important;padding:.9rem 1rem!important}
+.nradio-overview .kp-service-card strong{color:#2f6e74!important}
+.nradio-overview .nradio-routes{color:#475467!important}
+@media (max-width:1100px){.nradio-summary{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media (max-width:640px){
+  .nradio-summary{grid-template-columns:1fr!important}
+  .nradio-overview .nradio-cell-grid{grid-template-columns:1fr!important}
+  body[data-page="admin-status-details"] .nradio-overview > h2::after{display:none}
+}
+
+
+/* ===== NRadio 定制页面（蜂窝状态/设备状态/短信）对齐 ===== */
+.kpc-cell{background:transparent!important;padding:0!important;margin:0!important}
+.kpc-cell .kpc-hd{display:flex!important;align-items:center;flex-wrap:wrap;gap:10px;margin:0 0 .4rem!important}
+.kpc-cell .kpc-hd h2{flex:1 1 auto;min-width:220px}
+.kpc-cell .kpc-grid{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important;gap:10px!important;margin:.5rem 0 .9rem!important}
+.kpc-item{background:linear-gradient(180deg,#fbfdfe 0%,#f5f9f8 100%)!important;border:1px solid #e7eaee!important;border-left:3px solid #388087!important;border-radius:.5rem!important;padding:.6rem .8rem .65rem!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important;min-width:0!important}
+.kpc-item .kpc-item-label,.kpc-item>span:first-child{color:#667085!important;font-size:.72rem!important;letter-spacing:.03em}
+.kpc-item .kpc-item-value,.kpc-item strong{color:#123c3f!important;font-weight:700!important;font-size:1rem!important;word-break:break-word}
+.kpc-pill{display:inline-flex!important;align-items:center;gap:4px;padding:.18rem .6rem!important;border-radius:999px!important;font-size:.74rem!important;font-weight:600!important;line-height:1.4!important;background:#eef2f6!important;border:1px solid #dfe6ea!important;color:#667085!important}
+.kpc-pill.kpc-on{background:#e7f5f0!important;border-color:#bde3d5!important;color:#1f7a55!important}
+.kpc-pill.kpc-off{background:#fdf0ee!important;border-color:#f5c9c0!important;color:#c5452f!important}
+.kpc-sig-wrap{display:inline-flex!important;align-items:center;gap:8px}
+.kpc-sig-bar{position:relative!important;width:120px!important;height:8px!important;background:#eef1f4!important;border-radius:999px!important;overflow:hidden!important}
+.kpc-sig-bar>i,.kpc-sig-bar>span{display:block!important;height:100%!important;border-radius:999px!important;background:linear-gradient(90deg,#388087 0%,#41a39a 60%,#2bffc6 100%)!important}
+.kpc-sig-1,.kpc-sig-2,.kpc-sig-3{background:linear-gradient(90deg,#388087 0%,#41a39a 60%,#2bffc6 100%)!important}
+.kpc-table{width:100%!important;background:#fff!important;border:1px solid #e7eaee!important;border-radius:.5rem!important;overflow:hidden!important;border-collapse:separate!important;border-spacing:0!important}
+.kpc-table th{background:#f7f9fb!important;color:#475467!important;font-weight:600!important;font-size:.78rem!important;padding:.55rem .8rem!important;border-bottom:1px solid #e7eaee!important;text-align:left}
+.kpc-table td{padding:.5rem .8rem!important;border-top:1px solid #f2f4f7!important;color:#344054!important;font-size:.82rem!important}
+.kpc-table tr:first-child td{border-top:0!important}
+.kpc-table tr:nth-child(even) td{background:#fbfcfd!important}
+.kpc-grid>.kpc-item:only-child{grid-column:1/-1}
+.kpc-hint{color:#8b97a8!important;font-size:.8rem!important;line-height:1.7!important}
+.kpc-msg{background:#f4f8f8!important;border:1px solid #e2ecec!important;border-radius:.5rem!important;color:#2f6e74!important;padding:.6rem .9rem!important}
+.kpc-sms-input textarea,.kpc-form-row textarea{max-width:720px!important;min-height:110px!important}
+.kpc-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.kpc-actions .cbi-button-apply,.kpc-form-row .cbi-button-apply{background:linear-gradient(180deg,#3d8c93 0%,#388087 100%)!important;border-color:#2f6e74!important;color:#fff!important}
+body[data-page="admin-status-cellular"] fieldset.cbi-section h3,
+body[data-page="admin-status-device"] fieldset.cbi-section h3,
+body[data-page="admin-status-sms"] fieldset.cbi-section h3{color:#16202c!important}
+
+
+/* ===== 标准内部页面细节统一 ===== */
+#maincontent .cbi-section>h3,#maincontent fieldset.cbi-section>legend{font-weight:600!important;color:#16202c!important}
+#maincontent fieldset.cbi-section>legend{padding:.55rem .2rem!important;font-size:1rem!important}
+#maincontent .cbi-section-descr,#maincontent .cbi-map-descr{color:#7b8794!important}
+#maincontent .cbi-value > .cbi-value-description{color:#98a2b3!important}
+#maincontent .cbi-page-actions{border-top:0!important;background:transparent!important;padding:.8rem 0!important;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+#maincontent .tabs,#maincontent .cbi-tabmenu{background:#fff!important;border:1px solid #e7eaee!important;border-radius:.5rem!important;padding:0 .5rem!important;margin-bottom:.9rem!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important}
+#maincontent .tabs li a,#maincontent .cbi-tabmenu li a{color:#475467!important}
+#maincontent .tabs li[class~="active"] a,#maincontent .cbi-tabmenu li[class~="cbi-tab"] a{color:#388087!important;font-weight:600!important}
+#maincontent .alert-message{border-radius:.5rem!important;border:1px solid #e7eaee!important;background:#fbfcfd!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important}
+#maincontent .alert-message.error,#maincontent .alert-message.warning{background:#fffaf2!important;border-color:#f3dfc0!important}
+#maincontent .modal{background:#fff!important;border-radius:.6rem!important;border:1px solid #e7eaee!important;box-shadow:0 24px 60px -30px rgba(16,24,40,.45)!important}
+#maincontent .modal h4{background:#f7f9fb!important;color:#16202c!important;padding:.7rem 1rem!important;border-radius:.6rem .6rem 0 0!important;margin:0!important}
+#maincontent select,#maincontent .cbi-input-select,#maincontent .cbi-input-text,#maincontent .cbi-input-password,#maincontent textarea{border:1px solid #d6dbe1!important;border-radius:.4rem!important;background:#fff!important;color:#1f2d3d!important}
+#maincontent select:focus,#maincontent .cbi-input-select:focus,#maincontent .cbi-input-text:focus,#maincontent textarea:focus{border-color:#388087!important;box-shadow:0 0 0 3px rgba(56,128,135,.13)!important;outline:none!important}
+#maincontent pre,#maincontent .cbi-input-textarea,#maincontent #syslog{border:1px solid #e7eaee!important;border-radius:.4rem!important;background:#f8fafc!important;color:#334155!important}
+#maincontent .cbi-dropdown{border:1px solid #d6dbe1!important;border-radius:.4rem!important}
+#maincontent .label{font-weight:600!important;letter-spacing:.02em}
+#maincontent .label.success{background:#2f9e44!important}
+#maincontent .label.notice{background:#388087!important}
+#maincontent .label.warning{background:#f0a020!important}
+#maincontent .label.danger{background:#d9480f!important}
+#maincontent .cbi-progressbar{background:#eef1f4!important;border-radius:999px!important;height:1rem!important}
+#maincontent .cbi-progressbar>div{background:linear-gradient(90deg,#388087 0%,#41a39a 100%)!important;border-radius:999px!important}
+#maincontent .ifacebox{border:1px solid #e7eaee!important;border-radius:.45rem!important;overflow:hidden!important}
+#maincontent .ifacebox-head{background:#388087!important;color:#fff!important;font-weight:600!important}
+#maincontent .ifacebox-head.active{background:linear-gradient(90deg,#388087,#41a39a)!important}
+#maincontent .ifacebox-body{background:#fff!important}
+#maincontent .table .table-titles th,#maincontent table>thead>tr>th{background:#f7f9fb!important;color:#475467!important;border-bottom:1px solid #e7eaee!important}
+#maincontent .table .tr:nth-of-type(2n),#maincontent table>tbody>tr:nth-of-type(2n){background:#fbfcfd!important}
+#maincontent .table .tr:hover,#maincontent table>tbody>tr:hover{background:#f3f9f8!important}
+#maincontent .cbi-button,#maincontent .btn{border-radius:.4rem!important}
+#maincontent .cbi-button-apply,#maincontent .cbi-button-save,#maincontent .cbi-button-add,#maincontent .cbi-button-positive{background:linear-gradient(180deg,#3d8c93 0%,#388087 100%)!important;border-color:#2f6e74!important;color:#fff!important}
+#maincontent .cbi-button-remove,#maincontent .cbi-button-reset,#maincontent .cbi-button-negative{background:#fdf0ee!important;border-color:#f5c9c0!important;color:#c5452f!important}
+#maincontent .cbi-button-neutral,#maincontent .cbi-button-edit,#maincontent .cbi-button-reload{background:#eef1f4!important;border-color:#dbe1e6!important;color:#344054!important}
+#maincontent footer,#maincontent .ftc{color:#98a2b3!important}
+/* 系统便利工具（Vue 表单） */
+#maincontent .vue-form-render .cbi-section{border:1px solid #e7eaee!important;border-radius:.5rem!important;background:#fff!important;padding:1rem!important}
+#maincontent .vue-form-render .cbi-value{border-bottom:1px dashed #f0f1f3!important;padding:.55rem 0!important}
+#maincontent .vue-form-render .cbi-value:last-child{border-bottom:0!important}
+/* OpenClash 等自带蓝色主题的插件：局部换成青绿 */
+body[data-page^="admin-services-openclash"] .cbi-button-apply,
+body[data-page^="admin-services-openclash"] .cbi-button-save,
+body[data-page^="admin-services-openclash"] .cbi-button-positive,
+body[data-page^="admin-services-openclash"] .btn-primary,
+body[data-page^="admin-services-openclash"] .config-upload-btn-large,
+body[data-page^="admin-services-openclash"] .dashboard-btn,
+body[data-page^="admin-services-openclash"] .btn.upload-btn,
+body[data-page^="admin-services-openclash"] .footer-btn,
+body[data-page^="admin-services-openclash"] .mode-tab.active,
+body[data-page^="admin-services-openclash"] .add-row-btn{background:linear-gradient(180deg,#3d8c93 0%,#388087 100%)!important;border-color:#2f6e74!important;color:#fff!important}
+body[data-page^="admin-services-openclash"] .mode-tab:not(.active){background:#eef1f4!important;color:#475467!important;border-color:#dbe1e6!important}
+body[data-page^="admin-services-openclash"] .tabs li[class~="active"],
+body[data-page^="admin-services-openclash"] .cbi-tabmenu li[class~="cbi-tab"]{border-color:#388087!important;color:#388087!important}
+body[data-page^="admin-services-openclash"] a{color:#2f6e74}
+body[data-page^="admin-services-openclash"] a:hover{color:#388087}
+/* 顶部 XHR 自动刷新状态，融入深色顶栏 */
+.main-right header #xhr_poll_status .label,#xhr_poll_status .label{background:rgba(31,111,79,.92)!important;color:#d8ffe8!important;border:1px solid rgba(43,255,198,.35)!important;border-radius:6px!important;box-shadow:none!important}
+.main-right header #xhr_poll_status .label:not([id]),#xhr_poll_status_on{background:#1f6f4f!important}
+#xhr_poll_status{opacity:.95!important}
+
+/* ==== 阶段十五：状态 → 总览页面（对齐固件仪表盘风格） ==== */
+body.mwrt-overview-page #maincontent{background:#f3f6fb!important}
+body.mwrt-overview-page #maincontent > .container{max-width:none!important}
+/* 顶部设备总览 Hero */
+body.mwrt-overview-page .mwrt-ov-hero{
+  display:flex;align-items:center;justify-content:space-between;gap:24px;position:relative;overflow:hidden;
+  background:linear-gradient(120deg,#10182b 0%,#1a2740 55%,#173f3d 100%);
+  border-radius:16px;padding:18px 24px;color:#eef2f8;
+  box-shadow:0 18px 36px -28px rgba(13,20,35,.85);
+  margin:14px 0 16px
+}
+body.mwrt-overview-page .mwrt-ov-hero::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(60% 120% at 0% 0%,rgba(124,92,252,.28),transparent 55%),radial-gradient(50% 110% at 100% 100%,rgba(43,255,198,.18),transparent 60%)
+}
+body.mwrt-overview-page .mwrt-ov-hero > *{position:relative;z-index:1}
+body.mwrt-overview-page .oh-k{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#7de3cf;font-weight:600}
+body.mwrt-overview-page .oh-name{font-size:22px;font-weight:700;margin:2px 0 10px;letter-spacing:.01em;line-height:1.2}
+body.mwrt-overview-page .oh-chips{display:flex;flex-wrap:wrap;gap:8px}
+body.mwrt-overview-page .oh-chip{
+  display:inline-flex;align-items:center;gap:6px;max-width:100%;
+  background:rgba(255,255,255,.075);border:1px solid rgba(255,255,255,.10);
+  border-radius:8px;padding:4px 9px;font-size:11.5px;color:#c9d6e6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+body.mwrt-overview-page .oh-chip b{color:#fff;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+body.mwrt-overview-page .oh-dot{width:5px;height:5px;border-radius:50%;background:#2bffc6;box-shadow:0 0 6px rgba(43,255,198,.7);flex:0 0 auto}
+body.mwrt-overview-page .oh-img{height:118px;width:auto;filter:drop-shadow(0 16px 18px rgba(0,0,0,.45));flex-shrink:0}
+/* 卡片网格 */
+@media (min-width:1200px){
+  body.mwrt-overview-page #maincontent > .container{
+    display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;
+    gap:16px!important;align-items:start!important
+  }
+  body.mwrt-overview-page .mwrt-ov-hero{grid-column:1/-1;margin-bottom:0}
+  body.mwrt-overview-page #maincontent > .container > h2{display:none!important}
+  body.mwrt-overview-page .mwrt-ov-wide{grid-column:1/-1}
+}
+body.mwrt-overview-page fieldset.cbi-section{
+  background:#fff!important;border:1px solid #e9eef5!important;border-radius:14px!important;
+  padding:0 16px 14px!important;margin:0 0 14px!important;overflow:hidden;
+  box-shadow:0 10px 24px -20px rgba(30,41,59,.28)
+}
+body.mwrt-overview-page fieldset.cbi-section legend{display:none!important}
+body.mwrt-overview-page fieldset.cbi-section > .panel-title{
+  display:flex!important;align-items:center;gap:8px!important;position:static!important;
+  width:calc(100% + 32px)!important;margin:0 -16px 6px!important;padding:13px 16px 11px!important;
+  border-bottom:1px solid #f0f3f8!important;font-size:13.5px!important;font-weight:600!important;color:#2b3445!important;
+  background:#fff!important;line-height:1.3!important;border-radius:0!important
+}
+@media (min-width:1200px){
+  body.mwrt-overview-page fieldset.cbi-section{margin:0!important}
+}
+body.mwrt-overview-page .mwrt-ov-lic{
+  display:inline-block;width:16px;height:16px;border-radius:5px;flex:0 0 auto;
+  background:linear-gradient(135deg,#5e72e4,#2dce89)
+}
+body.mwrt-overview-page fieldset table[width="100%"]{border-collapse:collapse!important;width:100%!important}
+body.mwrt-overview-page fieldset table[width="100%"] td{
+  padding:8px 0!important;border-bottom:1px dashed #f1f4f8!important;
+  font-size:12.5px!important;color:#4b5563!important;vertical-align:top!important
+}
+body.mwrt-overview-page fieldset table[width="100%"] tr:last-child td{border-bottom:0!important}
+body.mwrt-overview-page fieldset table[width="100%"] td:first-child{
+  width:34%!important;color:#8b98ab!important;font-weight:500!important;white-space:nowrap
+}
+body.mwrt-overview-page fieldset table[width="100%"] td[width="33%"]{width:34%!important}
+/* 进度条 */
+body.mwrt-overview-page .mwrt-ov-bar{
+  height:8px;width:100%;max-width:420px;border-radius:6px;background:#eef2f8;overflow:hidden;margin-top:5px
+}
+body.mwrt-overview-page .mwrt-ov-bar i{
+  display:block;height:100%;border-radius:6px;
+  background:linear-gradient(90deg,#5e72e4 0%,#2dce89 100%);
+  transition:width .6s cubic-bezier(.4,0,.2,1)
+}
+body.mwrt-overview-page .mwrt-ov-bar-t{display:inline-block;margin-top:5px;font-size:11.5px;color:#6b7a90}
+/* 网络 WAN 块 */
+body.mwrt-overview-page #wan4_i,body.mwrt-overview-page #wan6_i,body.mwrt-overview-page #dsl_i{
+  width:52px!important;text-align:center!important;padding:2px 8px 2px 0!important
+}
+body.mwrt-overview-page #wan4_i img,body.mwrt-overview-page #wan6_i img,body.mwrt-overview-page #dsl_i img{display:none!important}
+body.mwrt-overview-page #wan4_i::before,body.mwrt-overview-page #wan6_i::before,body.mwrt-overview-page #dsl_i::before{
+  content:"\e908";font-family:argon!important;display:inline-block;width:26px;height:26px;line-height:26px;text-align:center;font-size:15px;color:#5e72e4;border-radius:8px;
+  background:linear-gradient(135deg,#eef1ff,#e6fbf4);border:1px solid #e3e9f6
+}
+body.mwrt-overview-page #wan4_i::after,body.mwrt-overview-page #wan6_i::after,body.mwrt-overview-page #dsl_i::after{
+  display:block;font-size:9px;color:#8b98ab;letter-spacing:.06em;margin-top:3px
+}
+body.mwrt-overview-page #wan4_i::after{content:"WAN"}
+body.mwrt-overview-page #wan6_i::after{content:"WAN6"}
+body.mwrt-overview-page #dsl_i::after{content:"DSL"}
+body.mwrt-overview-page #wan4_i small,body.mwrt-overview-page #wan6_i small{font-size:10px!important;color:#8b98ab!important}
+body.mwrt-overview-page #wan4_s small,body.mwrt-overview-page #wan6_s small{display:block!important;line-height:1.7!important;color:#4b5563!important}
+body.mwrt-overview-page #wan4_s strong,body.mwrt-overview-page #wan6_s strong{color:#8b98ab!important;font-weight:600!important}
+body.mwrt-overview-page #wan4_s em,body.mwrt-overview-page #wan6_s em{
+  display:inline-block;font-style:normal!important;color:#b45309!important;background:#fff7e6!important;
+  border:1px solid #fde7bf!important;border-radius:6px;padding:2px 8px;font-size:12px
+}
+/* 表格卡（DHCP 租约 / 关联终端） */
+body.mwrt-overview-page .cbi-section-table{border-collapse:collapse!important;width:100%!important}
+body.mwrt-overview-page .cbi-section-table th{
+  background:#f8fafc!important;color:#8b98ab!important;font-size:11px!important;font-weight:600!important;
+  padding:8px 10px!important;text-align:left!important;border-bottom:1px solid #eef2f7!important
+}
+body.mwrt-overview-page .cbi-section-table td{
+  padding:8px 10px!important;border-bottom:1px solid #f2f5f9!important;font-size:12px!important;color:#4b5563!important
+}
+body.mwrt-overview-page .cbi-section-table tr:last-child td{border-bottom:0!important}
+body.mwrt-overview-page .ifacebadge{
+  display:inline-flex!important;align-items:center;gap:4px;background:#eef2f8!important;border-radius:6px!important;
+  padding:3px 7px!important;font-size:11px!important;color:#4b5563!important
+}
+body.mwrt-overview-page .ifacebadge img{display:none!important}
+/* 无线列表里的旧信号图片缺失：隐藏破图，保留百分比文本 */
+body.mwrt-overview-page #wifi_status_table img,
+body.mwrt-overview-page #wifi_assoc_table img{display:none!important}
+body.mwrt-overview-page #wifi_status_table td:first-child{color:#2b3445!important}
+/* 移动端 */
+@media (max-width:820px){
+  body.mwrt-overview-page .mwrt-ov-hero{padding:14px 16px;gap:12px;border-radius:14px}
+  body.mwrt-overview-page .oh-name{font-size:18px}
+  body.mwrt-overview-page .oh-img{display:none}
+  body.mwrt-overview-page .oh-chips{max-width:100%}
+  body.mwrt-overview-page .oh-chip{font-size:10.5px;padding:3px 7px;white-space:normal;word-break:break-word;max-width:100%}
+}
+
+/* ==== 阶段十七：内部页面统一重构（对齐固件样式） ==== */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent{background:#fff!important}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container{margin-top:16px!important}
+/* 页面标题：紧凑 Hero */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type{
+  display:flex!important;align-items:center;gap:12px!important;min-height:52px!important;
+  margin:0 0 10px!important;padding:12px 18px!important;
+  background:linear-gradient(120deg,#fff 0%,#f7fbfb 100%)!important;
+  border:1px solid #e7eaee!important;border-left:0!important;border-radius:12px!important;
+  box-shadow:0 8px 28px -26px rgba(16,24,40,.55)!important;
+  color:#12232b!important;font-size:1.05rem!important;font-weight:600!important;letter-spacing:.01em!important;
+  line-height:1.3!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before{
+  content:"\e915";font-family:argon!important;font-style:normal!important;font-weight:400!important;
+  width:32px;height:32px;border-radius:9px;flex:0 0 auto;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:15px;color:#fff;
+  background:linear-gradient(135deg,#388087 0%,#2bffc6 130%);
+  box-shadow:0 6px 14px -8px rgba(56,128,135,.8)
+}
+body[class*="node-system"]:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before{content:"\e90a"}
+body[class*="node-network"]:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before{content:"\e908"}
+body[class*="node-status"]:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before{content:"\e90d"}
+body[class*="node-services"]:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before{content:"\e909"}
+body[class*="node-nas"]:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before{content:"\e90c"}
+body[class*="node-istorerouter"]:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before,
+body[class*="node-store"]:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before{content:"\e915"}
+/* 页面副标题 / 说明 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-map-descr,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-section-descr{
+  margin:-4px 0 10px!important;padding:2px 18px 4px!important;
+  background:transparent!important;border:0!important;color:#7b8794!important;font-size:.78rem!important
+}
+/* 卡片 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-map,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-section,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent [data-tab-title]{
+  background:#fff!important;border:1px solid #e7eaee!important;border-radius:12px!important;
+  box-shadow:0 8px 24px -24px rgba(16,24,40,.4)!important;margin-bottom:14px!important;overflow:hidden
+}
+/* 卡片标题 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-section > h3:first-child,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-section > .panel-title,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent [data-tab-title] > h3:first-child{
+  display:flex!important;align-items:center;gap:9px!important;
+  margin:0!important;padding:11px 16px!important;
+  background:#fbfcfd!important;border-bottom:1px solid #eef1f4!important;border-radius:12px 12px 0 0!important;
+  font-size:.92rem!important;font-weight:600!important;color:#22333f!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-section > h3:first-child::before,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-section > .panel-title::before,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent [data-tab-title] > h3:first-child::before{
+  content:"";width:3px;height:14px;border-radius:2px;flex:0 0 auto;
+  background:linear-gradient(180deg,#388087,#2bffc6)
+}
+/* Tab 改为胶囊 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .tabs,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-tabmenu{
+  display:flex!important;align-items:center;gap:4px!important;
+  background:#fff!important;border:1px solid #e7eaee!important;border-radius:10px!important;
+  padding:5px!important;margin:0 0 14px!important;overflow-x:auto!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .tabs > li,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-tabmenu > li{
+  border:0!important;border-radius:7px!important;background:transparent!important;margin:0!important;padding:0!important;flex:0 0 auto
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .tabs > li > a,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-tabmenu > li > a{
+  display:block!important;border-radius:7px!important;padding:7px 14px!important;
+  color:#475467!important;font-size:.82rem!important;text-decoration:none!important;transition:all .18s ease!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .tabs > li:hover > a,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-tabmenu > li:hover > a{
+  background:#f2f8f7!important;color:#2f6e74!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .tabs > li[class~="active"] > a,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-tabmenu > li[class~="cbi-tab"] > a{
+  background:linear-gradient(180deg,#3d8c93 0%,#388087 100%)!important;color:#fff!important;font-weight:600!important;
+  box-shadow:0 4px 10px -6px rgba(56,128,135,.7)!important
+}
+/* 表单：标签左对齐 + 字段区自适应 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value{
+  display:grid!important;grid-template-columns:minmax(160px,220px) minmax(0,1fr)!important;
+  gap:6px 18px!important;align-items:start!important;width:auto!important;
+  padding:10px 18px!important;border-bottom:1px solid #f2f4f7!important;line-height:1.5!important;margin:0!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value:last-child{border-bottom:0!important}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-title{
+  display:block!important;float:none!important;width:auto!important;padding:0!important;
+  text-align:left!important;color:#475467!important;font-weight:500!important;line-height:1.6!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-field{display:block!important;width:auto!important;min-width:0!important;padding:0!important}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-field input[type=text],
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-field input[type=password],
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-field .cbi-input-text,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-field select,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-field .cbi-dropdown{
+  max-width:520px!important;width:100%!important;min-width:0!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-description{
+  display:block!important;grid-column:2!important;padding:3px 0 0!important;
+  color:#8a93a0!important;font-size:.75rem!important;line-height:1.5!important
+}
+/* 按钮统一（含 input 类型启动项按钮） */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent input.cbi-button.cbi-input-save,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent input.cbi-button.cbi-input-apply,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-save,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-apply,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-positive,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-action{
+  background:linear-gradient(180deg,#3d8c93 0%,#388087 100%)!important;border:1px solid #2f6e74!important;
+  color:#fff!important;font-weight:500!important;box-shadow:none!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent input.cbi-button.cbi-input-reload,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-reload,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-neutral,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-edit{
+  background:#eef1f4!important;border:1px solid #d6dbe1!important;color:#344054!important;box-shadow:none!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent input.cbi-button.cbi-input-remove,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-remove,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-reset,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-negative{
+  background:#fef0ec!important;border:1px solid #f7c3b3!important;color:#d9480f!important;box-shadow:none!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent input.cbi-button.cbi-input-remove:hover,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-remove:hover,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button-reset:hover{
+  background:#d9480f!important;color:#fff!important;border-color:#d9480f!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent input.cbi-button,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-button{
+  min-height:30px!important;line-height:1.2!important;padding:5px 10px!important;border-radius:6px!important;font-size:.76rem!important
+}
+/* 表格 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent table,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .table{font-size:.8rem!important}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-section-table tr,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent table tr{transition:background .15s ease!important}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-section-table tr:hover,
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent table tr:hover{background:#f6fbfa!important}
+/* 网络接口卡 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .ifacebox{border-radius:10px!important;overflow:hidden!important;border:1px solid #e7eaee!important}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .ifacebox-head{
+  background:linear-gradient(135deg,#388087 0%,#41a39a 100%)!important;color:#fff!important;font-weight:600!important;letter-spacing:.02em!important
+}
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .ifacebox-body{background:#fff!important}
+/* 底部操作条 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-page-actions{
+  background:#fff!important;border:1px solid #e7eaee!important;border-radius:10px!important;
+  padding:10px 14px!important;margin-top:10px!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important
+}
+/* 移动端 */
+@media (max-width:768px){
+  body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container{margin-top:10px!important}
+  body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type{font-size:.95rem!important;padding:10px 13px!important;gap:9px!important}
+  body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent > .container h2:first-of-type::before{width:28px;height:28px;font-size:13px;border-radius:8px}
+  body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value{grid-template-columns:1fr!important;gap:4px!important;padding:9px 12px!important}
+  body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-description{grid-column:1!important}
+  body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .tabs > li > a,
+  body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-tabmenu > li > a{padding:6px 10px!important;font-size:.78rem!important}
+  body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-page-actions{padding:8px 10px!important}
+}
+
+
+/* ==== 阶段十七补丁：软件包页面保留原有表单排版 ==== */
+body.node-system-packages:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value{
+  display:block!important;line-height:2.1!important;padding:8px 18px!important;
+  border-bottom:1px solid #f2f4f7!important;margin:0!important
+}
+body.node-system-packages:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-title{
+  display:inline-block!important;width:auto!important;min-width:160px!important;
+  float:none!important;text-align:left!important;padding:0 12px 0 0!important;
+  vertical-align:middle!important;font-weight:500!important;color:#475467!important
+}
+body.node-system-packages:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > .cbi-value-field{
+  display:inline-block!important;width:auto!important;max-width:100%!important;vertical-align:middle!important;padding:0!important
+}
+body.node-system-packages:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value input[type=text],
+body.node-system-packages:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value-field input[type=text]{
+  width:auto!important;min-width:280px!important;max-width:420px!important
+}
+body.node-system-packages:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value .cbi-button,
+body.node-system-packages:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > input.cbi-button{
+  width:auto!important;max-width:none!important
+}
+/* 其他页面里直接挂在 .cbi-value 下的按钮也不拉伸 */
+body:not(.mwrt-home-page):not(.mwrt-overview-page) #maincontent .cbi-value > input.cbi-button{
+  width:auto!important;max-width:none!important
+}
+
+
+/* ==== 阶段十七补丁：复选框开关样式修复（移动端） ==== */
+#maincontent .checkbox{display:inline-flex!important;align-items:center!important;gap:10px!important;width:auto!important;min-height:28px!important}
+#maincontent .checkbox > input.cbi-input-checkbox{display:none!important}
+#maincontent .checkbox > label.switch{
+  position:relative!important;display:inline-block!important;width:44px!important;min-width:44px!important;max-width:44px!important;
+  height:24px!important;background:#d6dbe1!important;border-radius:999px!important;box-sizing:border-box!important;
+  vertical-align:middle!important;overflow:hidden!important;margin:0!important;cursor:pointer!important;transition:background .2s!important
+}
+#maincontent .checkbox > label.switch::before{
+  content:""!important;position:absolute!important;left:2px!important;top:2px!important;width:20px!important;height:20px!important;
+  border-radius:50%!important;background:#fff!important;box-shadow:0 1px 3px rgba(0,0,0,.25)!important;
+  transition:transform .2s!important;margin:0!important
+}
+#maincontent .checkbox > label.switch::after{display:none!important}
+#maincontent .checkbox > input.cbi-input-checkbox:checked + label.switch{background:#388087!important}
+#maincontent .checkbox > input.cbi-input-checkbox:checked + label.switch::before{transform:translateX(20px)!important}
+
+
+/* ==== 阶段十七补丁：无线页面隐藏缺失的信号图标 ==== */
+body[class*="node-network-wireless"] #maincontent #wifi_status_table img,
+body[class*="node-network-wireless"] #maincontent #wifi_assoc_table img,
+body[class*="node-network-wireless"] #maincontent table img[src*="signal"]{display:none!important}
+
+
+/* ==== 阶段十八：软件包页面重构（对齐固件风格） ==== */
+body.mwrt-pkg-page .mwrt-pkg-stats{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:12px!important;margin:0 0 14px!important}
+body.mwrt-pkg-page .pkg-stat{display:flex;align-items:center;gap:12px;background:linear-gradient(135deg,#f8fbfc 0%,#fff 70%)!important;border:1px solid #e7eaee!important;border-left:3px solid #388087!important;border-radius:10px!important;padding:12px 14px!important;box-shadow:0 1px 2px rgba(16,24,40,.03)!important;min-width:0}
+body.mwrt-pkg-page .pkg-stat-ic{width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;background:linear-gradient(135deg,#388087 0%,#2bffc6 135%);color:#fff;font-family:argon!important;font-size:15px;line-height:1}
+body.mwrt-pkg-page .pkg-ic-box::before{content:"\e915"}
+body.mwrt-pkg-page .pkg-ic-disk::before{content:"\e90c"}
+body.mwrt-pkg-page .pkg-ic-cloud::before{content:"\e908"}
+body.mwrt-pkg-page .pkg-stat-k{font-size:.72rem;color:#8a93a0;letter-spacing:.02em;line-height:1.4}
+body.mwrt-pkg-page .pkg-stat-v{font-size:1.12rem;font-weight:700;color:#12232b;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.mwrt-pkg-page .pkg-stat-v small{font-size:.7rem;font-weight:500;color:#7b8794}
+/* 软件源行 */
+body.mwrt-pkg-page .mwrt-pkg-source-row{display:flex!important;align-items:center;justify-content:space-between!important;gap:12px!important;padding:10px 16px!important;margin:0 0 10px!important;background:#fbfcfd!important;border:1px solid #eef1f4!important;border-radius:10px!important}
+body.mwrt-pkg-page .mwrt-pkg-source{display:inline-flex;align-items:center;gap:9px;color:#475467;font-weight:500;font-size:.82rem}
+body.mwrt-pkg-page .mwrt-pkg-source i{width:8px;height:8px;border-radius:50%;background:#f0a020;box-shadow:0 0 0 3px rgba(240,160,32,.15)}
+body.mwrt-pkg-page .mwrt-pkg-source-row .cbi-button{width:auto!important;max-width:none!important;flex:0 0 auto!important}
+/* 存储空间条 */
+body.mwrt-pkg-page .mwrt-pkg-storage-row{padding:12px 16px!important;margin:0 0 6px!important}
+body.mwrt-pkg-page .mwrt-pkg-storage{display:flex;flex-direction:column;gap:6px;width:100%}
+body.mwrt-pkg-page .pkg-stor-hd,body.mwrt-pkg-page .pkg-stor-ft{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:.74rem;color:#7b8794}
+body.mwrt-pkg-page .pkg-stor-hd b{color:#22333f;font-weight:600}
+body.mwrt-pkg-page .pkg-stor-bar{height:8px;border-radius:999px;background:#eef2f8;overflow:hidden}
+body.mwrt-pkg-page .pkg-stor-bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#f0a020,#f5c76a)}
+/* 表单行 */
+body.mwrt-pkg-page .mwrt-pkg-field-row{display:grid!important;grid-template-columns:150px minmax(0,1fr)!important;align-items:center!important;gap:8px 14px!important;padding:10px 16px!important;border-bottom:1px solid #f2f4f7!important;margin:0!important;line-height:1.6!important}
+body.mwrt-pkg-page .mwrt-pkg-field-row:last-child{border-bottom:0!important}
+body.mwrt-pkg-page .mwrt-pkg-field-row .cbi-value-title{display:block!important;float:none!important;width:auto!important;padding:0!important;text-align:left!important;color:#475467!important;font-weight:500!important}
+body.mwrt-pkg-page .mwrt-pkg-field-row .cbi-value-field{display:flex!important;align-items:center!important;gap:8px!important;width:auto!important;min-width:0!important}
+body.mwrt-pkg-page .mwrt-pkg-field-row input[type=text]{width:auto!important;flex:1 1 auto!important;max-width:420px!important;min-width:0!important}
+body.mwrt-pkg-page .mwrt-pkg-field-row .cbi-button{width:auto!important;max-width:none!important;flex:0 0 auto!important}
+/* 软件包表格 */
+body.mwrt-pkg-page .mwrt-pkg-table-wrap{max-height:calc(100vh - 390px);min-height:220px;overflow:auto;border-top:1px solid #eef1f4;border-radius:0 0 10px 10px;background:#fff}
+body.mwrt-pkg-page .mwrt-pkg-table-wrap .cbi-section-table{margin:0!important;border:0!important;border-radius:0!important}
+body.mwrt-pkg-page .mwrt-pkg-table-wrap .cbi-section-table-titles th{position:sticky;top:0;z-index:3}
+body.mwrt-pkg-page .cbi-section-table td:first-child form.inline{display:inline-block;margin:0}
+body.mwrt-pkg-page .cbi-section-table td:first-child a{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-width:52px!important;padding:3px 9px!important;border-radius:6px!important;background:#fef0ec!important;border:1px solid #f7c3b3!important;color:#d9480f!important;font-size:.74rem!important;font-weight:500!important;text-decoration:none!important;transition:all .15s ease!important}
+body.mwrt-pkg-page .cbi-section-table td:first-child a:hover{background:#d9480f!important;border-color:#d9480f!important;color:#fff!important}
+body.mwrt-pkg-page .cbi-section-table td:nth-child(2){font-weight:600!important;color:#1f2d3d!important;letter-spacing:.01em}
+body.mwrt-pkg-page .cbi-section-table td:nth-child(3){color:#667085!important;font-family:ui-monospace,SFMono-Regular,Consolas,monospace!important;font-size:.76rem!important}
+body.mwrt-pkg-page .cbi-section-table tr:hover td{background:#f6fbfa!important}
+/* “状态”小标题 */
+body.mwrt-pkg-page .cbi-map > h3{display:flex!important;align-items:center!important;gap:9px!important;margin:18px 0 10px!important;padding:0 2px!important;background:transparent!important;border:0!important;font-size:.92rem!important;font-weight:600!important;color:#22333f!important;border-radius:0!important}
+body.mwrt-pkg-page .cbi-map > h3::before{content:"";width:3px;height:15px;border-radius:2px;background:linear-gradient(180deg,#388087,#2bffc6)}
+/* 移动端 */
+@media (max-width:768px){
+  body.mwrt-pkg-page .mwrt-pkg-stats{grid-template-columns:1fr!important;gap:8px!important}
+  body.mwrt-pkg-page .pkg-stat{padding:10px 12px!important}
+  body.mwrt-pkg-page .mwrt-pkg-source-row{padding:9px 12px!important}
+  body.mwrt-pkg-page .mwrt-pkg-field-row{grid-template-columns:1fr!important;gap:4px!important;padding:9px 12px!important}
+  body.mwrt-pkg-page .mwrt-pkg-field-row .cbi-value-field{flex-wrap:wrap!important}
+  body.mwrt-pkg-page .mwrt-pkg-table-wrap{max-height:60vh}
+}
+
+
+/* 软件包页面：查找按钮与滚动条细节 */
+body.mwrt-pkg-page .cbi-input-find,
+body.mwrt-pkg-page .cbi-button-find,
+body.mwrt-pkg-page input.cbi-input-find{
+  background:linear-gradient(180deg,#3d8c93 0%,#388087 100%)!important;
+  border:1px solid #2f6e74!important;color:#fff!important;font-weight:500!important;min-height:30px!important;
+  line-height:1.2!important;padding:5px 10px!important;border-radius:6px!important;font-size:.76rem!important;box-shadow:none!important
+}
+body.mwrt-pkg-page .cbi-input-find:hover,
+body.mwrt-pkg-page .cbi-button-find:hover{background:linear-gradient(180deg,#45989f 0%,#3d8c93 100%)!important}
+body.mwrt-pkg-page .mwrt-pkg-table-wrap{scrollbar-width:thin!important;scrollbar-color:rgba(56,128,135,.55) transparent!important}
+body.mwrt-pkg-page .mwrt-pkg-table-wrap::-webkit-scrollbar{width:8px!important;height:8px!important}
+body.mwrt-pkg-page .mwrt-pkg-table-wrap::-webkit-scrollbar-thumb{background:rgba(56,128,135,.5)!important;border-radius:8px!important}
+body.mwrt-pkg-page .mwrt-pkg-table-wrap::-webkit-scrollbar-track{background:transparent!important}
+
+
+/* ==== 阶段十九：无线概况 Wi-Fi 快速设置 ==== */
+#maincontent .mwrt-wifi-quick{
+  background:linear-gradient(135deg,#f7fbfb 0%,#ffffff 42%)!important;
+  border:1px solid #e7eaee!important;border-radius:14px!important;
+  box-shadow:0 12px 30px -28px rgba(16,24,40,.5)!important;
+  padding:16px 18px 14px!important;margin:0 0 12px!important
+}
+#maincontent .wq-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:0 2px 10px}
+#maincontent .wq-k{font-size:.66rem;letter-spacing:.14em;color:#388087;font-weight:600;line-height:1.4}
+#maincontent .wq-head h3{
+  margin:2px 0 4px!important;padding:0!important;background:none!important;border:0!important;border-radius:0!important;
+  font-size:1.05rem!important;font-weight:600!important;color:#12232b!important;letter-spacing:.01em
+}
+#maincontent .wq-head p{margin:0;color:#8a93a0;font-size:.76rem;line-height:1.5}
+#maincontent .wq-count{
+  flex:0 0 auto;display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:999px;
+  background:#eef8f6;border:1px solid #d8ece8;color:#2f6e74;font-size:.72rem;font-weight:600;white-space:nowrap
+}
+#maincontent .wq-row{
+  display:grid;grid-template-columns:54px minmax(0,1fr) auto;gap:14px;align-items:center;
+  padding:12px 14px;background:#fff;border:1px solid #eef1f4;border-radius:11px;margin-bottom:8px;
+  transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease
+}
+#maincontent .wq-row:last-child{margin-bottom:0}
+#maincontent .wq-row:hover{border-color:#cfe3e1;box-shadow:0 10px 24px -22px rgba(56,128,135,.65);transform:translateY(-1px)}
+#maincontent .wq-band{
+  width:50px;height:50px;border-radius:13px;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#388087 0%,#2bffc6 140%);color:#fff;font-size:.76rem;font-weight:700;letter-spacing:.02em;
+  box-shadow:0 8px 16px -12px rgba(56,128,135,.8)
+}
+#maincontent .wq-info{min-width:0}
+#maincontent .wq-ssid{font-size:.92rem;font-weight:600;color:#1f2d3d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#maincontent .wq-meta{color:#8a93a0;font-size:.72rem;margin-top:3px;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+#maincontent .wq-state{display:inline-flex;align-items:center;gap:5px;color:#667085;margin-left:4px}
+#maincontent .wq-state i{width:6px;height:6px;border-radius:50%;background:#98a2b3;flex:0 0 auto}
+#maincontent .wq-state.on i{background:#2f9e44;box-shadow:0 0 0 3px rgba(47,158,68,.13)}
+#maincontent .wq-state.off{color:#98a2b3}
+#maincontent .wq-actions{display:flex;align-items:center;gap:8px}
+#maincontent .wq-btn{
+  display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;border-radius:7px;
+  font-size:.76rem;font-weight:500;line-height:1;text-decoration:none!important;cursor:pointer;border:1px solid transparent;
+  transition:all .15s ease;white-space:nowrap
+}
+#maincontent .wq-btn-primary{background:linear-gradient(180deg,#3d8c93 0%,#388087 100%);border-color:#2f6e74;color:#fff!important;box-shadow:0 4px 10px -7px rgba(56,128,135,.8)}
+#maincontent .wq-btn-primary:hover{background:linear-gradient(180deg,#45989f 0%,#3d8c93 100%);color:#fff!important;transform:translateY(-1px)}
+#maincontent .wq-btn-link{background:#eef1f4;border-color:#d6dbe1;color:#475467!important}
+#maincontent .wq-btn-link:hover{background:#e4e9ee;color:#22333f!important}
+/* 高级无线配置折叠 */
+#maincontent .mwrt-wifi-adv-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:#fff;border:1px solid #e7eaee;border-radius:10px;padding:8px 12px;margin:0 0 12px;
+  box-shadow:0 1px 2px rgba(16,24,40,.03)
+}
+#maincontent .wq-adv-toggle{
+  display:inline-flex;align-items:center;gap:8px;background:transparent;border:0;padding:0;cursor:pointer;
+  color:#344054;font-size:.82rem;font-weight:600
+}
+#maincontent .wq-adv-toggle span{display:inline-block;font-weight:400;color:#98a2b3;font-size:.72rem;margin-left:4px}
+#maincontent .wq-adv-toggle::after{content:"\25BE";font-size:9px;color:#667085;transition:transform .2s ease;margin-left:2px}
+#maincontent .wq-adv-toggle.open::after{transform:rotate(180deg)}
+#maincontent .mwrt-wifi-advanced{display:none}
+#maincontent .mwrt-wifi-advanced.open{display:block}
+/* 弹窗 */
+.mwrt-wifi-modal{display:none}
+.mwrt-wifi-modal.open{display:block}
+.mwrt-wifi-modal .wq-mask{position:fixed;inset:0;background:rgba(10,16,24,.55);backdrop-filter:blur(3px);z-index:1998}
+.mwrt-wifi-modal .wq-dialog{
+  position:fixed;z-index:1999;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(520px,92vw);max-height:min(720px,88vh);overflow:auto;background:#fff;border-radius:16px;
+  padding:18px 20px 16px;box-shadow:0 34px 90px -30px rgba(0,0,0,.65);border:1px solid #e7eaee
+}
+.mwrt-wifi-modal .wq-dlg-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid #f2f4f7}
+.mwrt-wifi-modal .wq-dlg-title{margin:2px 0 2px!important;padding:0!important;background:none!important;border:0!important;font-size:1.05rem!important;font-weight:600!important;color:#12232b!important;letter-spacing:.01em}
+.mwrt-wifi-modal .wq-dlg-sub{color:#8a93a0;font-size:.74rem}
+.mwrt-wifi-modal .wq-close{border:0;background:#f2f4f7;color:#667085;width:28px;height:28px;border-radius:8px;font-size:18px;line-height:1;cursor:pointer;flex:0 0 auto}
+.mwrt-wifi-modal .wq-close:hover{background:#e4e9ee;color:#22333f}
+.mwrt-wifi-modal .wq-loading{padding:16px 0;color:#8a93a0;font-size:.82rem}
+.mwrt-wifi-modal .wq-body{padding-top:10px}
+.mwrt-wifi-modal .wq-field{display:block;margin:0 0 12px}
+.mwrt-wifi-modal .wq-field > span{display:block;color:#475467;font-size:.78rem;font-weight:500;margin-bottom:5px}
+.mwrt-wifi-modal .wq-input{
+  width:100%!important;max-width:none!important;min-height:36px;box-sizing:border-box;
+  border:1px solid #d6dbe1!important;border-radius:7px!important;background:#fff!important;color:#1f2d3d!important;
+  padding:7px 10px!important;font-size:.84rem!important;outline:0;transition:border-color .16s ease,box-shadow .16s ease
+}
+.mwrt-wifi-modal .wq-input:focus{border-color:#388087!important;box-shadow:0 0 0 3px rgba(56,128,135,.13)!important}
+.mwrt-wifi-modal .wq-pass-wrap{display:flex;align-items:center;gap:8px}
+.mwrt-wifi-modal .wq-pass-wrap .wq-input{flex:1 1 auto}
+.mwrt-wifi-modal .wq-eye{flex:0 0 auto;height:36px;padding:0 12px;border:1px solid #d6dbe1;border-radius:7px;background:#eef1f4;color:#475467;font-size:.76rem;cursor:pointer}
+.mwrt-wifi-modal .wq-eye:hover{background:#e4e9ee}
+.mwrt-wifi-modal .wq-note{color:#8a93a0;font-size:.72rem;line-height:1.5;background:#fbfcfd;border:1px dashed #e7eaee;border-radius:8px;padding:8px 10px;margin:2px 0 8px}
+.mwrt-wifi-modal .wq-error{color:#d9480f;background:#fef0ec;border:1px solid #f7c3b3;border-radius:7px;padding:7px 10px;font-size:.76rem;margin:6px 0 0}
+.mwrt-wifi-modal .wq-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;margin-top:12px;border-top:1px solid #f2f4f7}
+.mwrt-wifi-modal .wq-full{color:#2f6e74!important;font-size:.76rem;text-decoration:none!important}
+.mwrt-wifi-modal .wq-full:hover{text-decoration:underline!important}
+.mwrt-wifi-modal .wq-foot-actions{display:flex;align-items:center;gap:8px}
+.mwrt-wifi-modal .wq-cancel{height:36px;padding:0 14px;border:1px solid #d6dbe1;border-radius:7px;background:#eef1f4;color:#475467;font-size:.8rem;cursor:pointer}
+.mwrt-wifi-modal .wq-cancel:hover{background:#e4e9ee}
+.mwrt-wifi-modal .wq-save{
+  height:36px;padding:0 16px;border:1px solid #2f6e74;border-radius:7px;
+  background:linear-gradient(180deg,#3d8c93 0%,#388087 100%);color:#fff;font-size:.8rem;font-weight:500;cursor:pointer;
+  box-shadow:0 4px 10px -7px rgba(56,128,135,.8)
+}
+.mwrt-wifi-modal .wq-save:hover{background:linear-gradient(180deg,#45989f 0%,#3d8c93 100%)}
+.mwrt-wifi-modal .wq-save:disabled{opacity:.6;cursor:default;box-shadow:none}
+.mwrt-wifi-modal .wq-iframe{display:none!important}
+@media (max-width:768px){
+  #maincontent .mwrt-wifi-quick{padding:13px 12px 12px!important}
+  #maincontent .wq-head{padding-bottom:8px}
+  #maincontent .wq-row{grid-template-columns:46px minmax(0,1fr);gap:10px;padding:11px 12px}
+  #maincontent .wq-band{width:44px;height:44px;border-radius:11px;font-size:.72rem}
+  #maincontent .wq-actions{grid-column:1/-1;justify-content:flex-start;margin-top:2px}
+  #maincontent .wq-adv-toggle span{display:none}
+  .mwrt-wifi-modal .wq-dialog{width:94vw;padding:15px 15px 14px;border-radius:14px}
+  .mwrt-wifi-modal .wq-foot{flex-wrap:wrap}
+  .mwrt-wifi-modal .wq-foot-actions{margin-left:auto}
+}
+
+.mwrt-wifi-modal .wq-error.ok{color:#2b8a3e!important;background:#ebfbee!important;border-color:#b2f2bb!important}

@@ -1,0 +1,174 @@
+:root{--font-family-sans-serif:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",Roboto,"Helvetica Neue",Arial,sans-serif!important;--font-family-normal:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",Roboto,"Helvetica Neue",Arial,sans-serif!important}html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",Roboto,"Helvetica Neue",Arial,sans-serif!important;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}h1,h2,h3,h4,h5,.panel-title,.cbi-section h3,.cbi-map > h2{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",Roboto,"Helvetica Neue",Arial,sans-serif!important;letter-spacing:0.01em}.main .main-left{--neon:#388087;--neon-cyan:#2bffc6;--panel-top:#0d1117;--panel-bottom:#11161d;--txt:#c9d1d9;--txt-dim:#8b949e;--txt-bright:#FFF;--menu-font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",Roboto,"Helvetica Neue",Arial,sans-serif;background:linear-gradient(180deg,#0d1117 0%,#11161d 100%)!important;box-shadow:0 0 24px -6px rgba(0,0,0,0.85)!important;position:relative;font-family:var(--menu-font);animation:km-side-in 0.5s ease both}.main .main-left::before{content:"";position:absolute;top:0;right:0;width:1px;height:100%;opacity:0.55;pointer-events:none;z-index:2;background:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--neon) 70%,transparent) 30%,color-mix(in srgb,var(--neon-cyan) 60%,transparent) 60%,transparent 100%)}.main .main-left::-webkit-scrollbar{width:6px!important}.main .main-left::-webkit-scrollbar-track{background:transparent!important}.main .main-left::-webkit-scrollbar-thumb{border-radius:6px!important;background:color-mix(in srgb,var(--neon) 55%,transparent)!important}.main .main-left::-webkit-scrollbar-thumb:hover{background:#388087!important}.main .main-left .sidenav-header{position:relative;padding:1.6rem 0.5rem 1.4rem!important}.main .main-left .sidenav-header .brand{background:linear-gradient(90deg,#388087 0%,#2bffc6 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.08em;font-weight:600;filter:drop-shadow(0 0 8px color-mix(in srgb,var(--neon) 50%,transparent))}.main .main-left .sidenav-header::after{content:"";position:absolute;left:1.5rem;right:1.5rem;bottom:0.4rem;height:1px;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--neon) 70%,transparent),transparent)}.main .main-left .nav{margin-top:0.6rem}.main .main-left .nav li .menu,.main .main-left .nav > li > a:first-child{color:var(--txt)!important;font-family:var(--menu-font);font-weight:500;letter-spacing:0.02em;border-radius:0.55rem!important;overflow:hidden;transition:color .25s cubic-bezier(.4,0,.2,1),background .25s cubic-bezier(.4,0,.2,1),box-shadow .25s cubic-bezier(.4,0,.2,1)!important;margin:0.18rem 0.6rem!important;padding:0.7rem 0 0.7rem 2.7rem!important}.main .main-left .nav li.slide > .menu,.main .main-left .nav > li > a:first-child{position:relative}.main .main-left .nav li .menu:hover,.main .main-left .nav > li > a:first-child:hover{color:var(--txt-bright)!important;background:linear-gradient(90deg,color-mix(in srgb,var(--neon) 26%,transparent) 0%,color-mix(in srgb,var(--neon) 6%,transparent) 100%)!important;box-shadow:inset 3px 0 0 0 var(--neon-cyan),0 0 12px -4px color-mix(in srgb,var(--neon) 60%,transparent)!important}.main .main-left .nav li .menu:hover::before,.main .main-left .nav > li > a:first-child:hover::before{transform:scale(1.15) translateX(2px)}.main .main-left .nav li .menu.active,.main .main-left .nav > li > a:first-child.active{color:var(--txt-bright)!important;background:linear-gradient(90deg,var(--neon) 0%,color-mix(in srgb,var(--neon) 65%,var(--neon-cyan)) 100%)!important;box-shadow:inset 3px 0 0 0 var(--neon-cyan),0 4px 18px -6px color-mix(in srgb,var(--neon) 85%,transparent),0 0 0 1px color-mix(in srgb,var(--neon-cyan) 30%,transparent)!important}.main .main-left .nav li .menu.active::before{transform:scale(1.1)}.main .main-left .nav li .menu::after{color:var(--txt-dim)!important;transition:transform .3s cubic-bezier(.34,1.56,.64,1),color .25s ease!important}.main .main-left .nav li .menu:hover::after{color:var(--txt-bright)!important}.main .main-left .nav li .menu.active::after{color:#fff!important;transform:rotate(90deg) scale(1.1)}.main .main-left .nav li .menu::before,.main .main-left .nav > li > a:first-child::before{color:var(--neon-cyan)!important;filter:none!important;opacity:0.92;transition:transform .25s cubic-bezier(.34,1.56,.64,1),color .25s ease,opacity .25s ease!important}.main .main-left .nav li .menu:hover::before,.main .main-left .nav li .menu.active::before,.main .main-left .nav > li > a:first-child:hover::before,.main .main-left .nav > li > a:first-child.active::before{color:#FFF!important;opacity:1}.main .main-left .nav li .menu[data-title="设备总览"]::before{content:"\e906"!important}.main .main-left .nav li .menu[data-title=Status]::before{content:"\e90d"!important}.main .main-left .nav li .menu[data-title=System]::before{content:"\e90a"!important}.main .main-left .nav li .menu[data-title=Services]::before{content:"\e909"!important}.main .main-left .nav li .menu[data-title=Control]::before{content:"\e912"!important}.main .main-left .nav li .menu[data-title=NAS]::before{content:"\e90c"!important}.main .main-left .nav li .menu[data-title=VPN]::before{content:"\e90b"!important}.main .main-left .nav li .menu[data-title=Statistics]::before{content:"\e913"!important}.main .main-left .nav li .menu[data-title=Log_out]::before,.main .main-left .nav li a[data-title=Log_out]::before,.main .main-left .nav li .food[data-title=Log_out]::before{content:"\e907"!important;color:#ff7d60!important}.main .main-left .nav li.slide .slide-menu{position:relative;margin:0.1rem 0.6rem 0.4rem 2.7rem!important;padding:0.2rem 0 0.2rem 0.6rem!important}.main .main-left .nav li.slide .slide-menu::before{content:"";position:absolute;left:0;top:0.2rem;bottom:0.2rem;width:1px;opacity:0.5;background:linear-gradient(180deg,color-mix(in srgb,var(--neon) 60%,transparent),color-mix(in srgb,var(--neon-cyan) 40%,transparent))}.main .main-left .nav li.slide .slide-menu li{position:relative;border-radius:0.4rem!important}.main .main-left .nav li.slide .slide-menu li a{color:var(--txt-dim)!important;letter-spacing:0.01em;transition:color .2s ease,transform .2s cubic-bezier(.4,0,.2,1)!important;padding:0.45rem 0 0.45rem 0.9rem!important}.main .main-left .nav li.slide .slide-menu li::after,.main .main-left .nav li.slide .slide-menu .active::after{content:""!important;position:absolute!important;left:-1px!important;top:50%!important;bottom:auto!important;width:6px!important;height:6px!important;margin-top:-3px!important;border-radius:50%!important;background:var(--txt-dim)!important;transform:translateX(-2px);transition:background .2s ease,box-shadow .2s ease,transform .2s ease!important}.main .main-left .nav li.slide .slide-menu li:hover::after,.main .main-left .nav li.slide .slide-menu .active::after,.main .main-left .nav li.slide .slide-menu .active:hover::after{width:6px!important;height:6px!important;background:#2bffc6!important;box-shadow:0 0 8px 1px rgba(43,255,198,0.8)!important;transform:translateX(-2px) scale(1.25)}.main .main-left .nav li.slide .slide-menu li:hover a{color:var(--txt-bright)!important;transform:translateX(4px)}.main .main-left .nav li.slide .slide-menu .active a{color:#2bffc6!important;font-weight:500}.main .main-left .nav li.slide .slide-menu.active li{animation:km-item-in .32s cubic-bezier(.4,0,.2,1) both}.main .main-left .nav li.slide .slide-menu.active li:nth-child(1){animation-delay:.02s}.main .main-left .nav li.slide .slide-menu.active li:nth-child(2){animation-delay:.05s}.main .main-left .nav li.slide .slide-menu.active li:nth-child(3){animation-delay:.08s}.main .main-left .nav li.slide .slide-menu.active li:nth-child(4){animation-delay:.11s}.main .main-left .nav li.slide .slide-menu.active li:nth-child(5){animation-delay:.14s}.main .main-left .nav li.slide .slide-menu.active li:nth-child(6){animation-delay:.17s}.main .main-left .nav li.slide .slide-menu.active li:nth-child(n+7){animation-delay:.2s}.main .main-left .nav li .menu[data-title=Log_out],.main .main-left .nav li a[data-title=Log_out],.main .main-left .nav li .food[data-title=Log_out]{color:#ff9b73!important;transition:color .25s ease,background .25s ease,box-shadow .25s ease!important}.main .main-left .nav li .menu[data-title=Log_out]:hover,.main .main-left .nav li a[data-title=Log_out]:hover,.main .main-left .nav li .food[data-title=Log_out]:hover{color:#fff!important;background:linear-gradient(90deg,rgba(255,125,96,0.32),rgba(255,125,96,0.08))!important;box-shadow:inset 3px 0 0 0 #ff7d60,0 0 12px -4px rgba(255,125,96,0.6)!important}.main .main-left .nav li .menu[data-title=Log_out]:hover::before,.main .main-left .nav li a[data-title=Log_out]:hover::before,.main .main-left .nav li .food[data-title=Log_out]:hover::before{color:#fff!important;transform:translateX(3px) scale(1.1)}.main-right header,.main-right header.bg-primary{background:linear-gradient(90deg,#0d1117 0%,#141b24 60%,#11161d 100%)!important;color:#e6edf3!important;position:relative}.main-right header::after{background:none!important;background-color:transparent!important;height:2px!important;bottom:0!important;top:auto!important;opacity:0.85;background-image:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--primary) 90%,transparent) 30%,rgba(43,255,198,0.9) 60%,transparent 100%)!important}.main-right header .fill{border-bottom:0!important}.main-right header .brand{background:linear-gradient(90deg,#5fd3c4 0%,#2bffc6 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;font-weight:600;letter-spacing:0.04em}.main-right header .showSide{color:#c9d1d9!important;transition:color .2s ease}.main-right header .showSide:hover{color:#2bffc6!important}.main-right header .status span{box-shadow:0 0 0 1px rgba(43,255,198,0.18),0 2px 6px -2px rgba(0,0,0,0.5)!important;transition:all .25s ease!important}.main-right header .status span[data-style="active"]{background-color:#1f6f4f!important;color:#d8ffe8!important}.main-right header .status span[data-style="inactive"]{background-color:#23303b!important;color:#9fb3bf!important}.main-right header #xhr_poll_status *{color:#c9d1d9!important}.main .main-left .nav li.slide .slide-menu li:hover::after,.main .main-left .nav li.slide .slide-menu .active::after{box-shadow:0 0 8px 1px color-mix(in srgb,var(--neon-cyan) 80%,transparent)!important}.main .main-left .nav li .menu[data-title=QuickStart]::before,.main .main-left .nav li .menu[data-title="iStore商店"]::before{content:"\e915"!important}.main .main-left .nav li .menu[data-title=Modem]::before,.main .main-left .nav li .menu[data-title=Network]::before{content:"\e908"!important}@keyframes km-side-in{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}@keyframes km-item-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}@media (prefers-color-scheme: dark){.main .main-left{background:linear-gradient(180deg,#0d1117 0%,#11161d 100%)!important}.main .main-left .nav li a{color:var(--txt)!important}.main .main-left .nav li a:hover{color:var(--txt-bright)!important}}@media (max-width: 921px){.main .main-left{box-shadow:0 0 30px -4px rgba(0,0,0,0.9)!important}}
+
+/* ==== 8080 实例菜单图标补充（NRadio 菜单标题） ==== */
+.main .main-left .nav li .menu[data-title="首页"]::before{content:"\e906"!important;color:var(--neon-cyan)!important}
+.main .main-left .nav li .menu[data-title="网络设置向导"]::before{content:"\e908"!important;color:var(--neon-cyan)!important}
+.main .main-left .nav li .menu[data-title="iStoreRouter"]::before{content:"\e911"!important;color:var(--neon-cyan)!important}
+.main .main-left .nav li .menu[data-title="iStore"]::before{content:"\e90c"!important;color:var(--neon-cyan)!important}
+.main .main-left .nav li .menu[data-title="服务"]::before{content:"\e909"!important;color:var(--neon-cyan)!important}
+.main .main-left .nav li .menu[data-title="插件"]::before{content:"\e912"!important;color:var(--neon-cyan)!important}
+.main .main-left .nav li .menu[data-title="退出"]::before{content:"\e907"!important;color:#ff7d60!important}
+.main .main-left .nav li .menu[data-title="退出"]{color:#ff9b73!important}
+/* 当前页高亮：8080 顶部 header 保持深色霓虹边线 */
+.main-right header::after{background-image:linear-gradient(90deg,transparent 0%,var(--neon) 30%,var(--neon-cyan) 60%,transparent 100%)!important}
+/* 顶部深色栏加说明文字，避免空荡 */
+.main-right header .fill .container::before{content:"NRadio · NROS 管理后台";font-size:.76rem;letter-spacing:.08em;color:#8b949e;font-weight:500;white-space:nowrap;margin-right:14px}
+@media (max-width:768px){.main-right header .fill .container::before{display:none}}
+
+/* ==== 8080 菜单增强：折叠开关 / 分组标签 / 图标补充 ==== */
+.main .main-left{transition:width .28s cubic-bezier(.4,0,.2,1)}
+.main .main-right{transition:width .28s cubic-bezier(.4,0,.2,1)}
+#mwrt-sb-toggle{position:fixed;top:50%;left:0;transform:translateY(-50%);z-index:1035;width:16px;height:46px;border:0;border-radius:0 10px 10px 0;padding:0;align-items:center;justify-content:center;cursor:pointer;background:linear-gradient(180deg,#388087,#2bffc6);color:#08131a;box-shadow:2px 0 12px rgba(0,0,0,.45);transition:left .28s,background .2s,color .2s,transform .2s;display:none}
+@media (min-width:992px){#mwrt-sb-toggle{display:flex}}
+#mwrt-sb-toggle:hover{background:linear-gradient(180deg,#2bffc6,#388087);color:#06121a}
+#mwrt-sb-toggle:active{transform:translateY(-50%) scale(.94)}
+#mwrt-sb-toggle svg{width:12px;height:12px;transition:transform .28s}
+body.mwrt-sb-collapsed .main .main-left{width:64px!important;min-width:64px!important}
+body.mwrt-sb-collapsed .main .main-right{width:calc(100% - 64px)!important;margin-left:0!important}
+body.mwrt-sb-collapsed #mwrt-sb-toggle svg{transform:rotate(180deg)}
+body.mwrt-sb-collapsed .main .main-left .sidenav-header{padding:1.15rem .1rem .9rem!important}
+body.mwrt-sb-collapsed .main .main-left .sidenav-header .brand{font-size:0!important;letter-spacing:0!important}
+body.mwrt-sb-collapsed .main .main-left .sidenav-header .brand::before{content:"N";font-size:16px;letter-spacing:.02em}
+body.mwrt-sb-collapsed .main .main-left .sidenav-header::after{left:.6rem;right:.6rem}
+body.mwrt-sb-collapsed .main .main-left .nav li .menu{font-size:0!important;padding:.8rem 0!important;text-align:center;justify-content:center}
+body.mwrt-sb-collapsed .main .main-left .nav li .menu::before{font-size:18px!important;margin:0 auto!important;transform:none!important}
+body.mwrt-sb-collapsed .main .main-left .nav li .menu::after{display:none!important}
+body.mwrt-sb-collapsed .main .main-left .nav li .slide-menu{display:none!important}
+body.mwrt-sb-collapsed .main .main-left .nav li .menu:hover{background:linear-gradient(90deg,rgba(56,128,135,.28),rgba(56,128,135,.08))!important}
+body.mwrt-sb-collapsed .main .main-left .nav li .menu.active{background:linear-gradient(180deg,#388087,#2bffc6)!important;box-shadow:none!important}
+body.mwrt-sb-collapsed .main .main-left .nav li .menu.active::before{color:#06121a!important}
+.main .main-left .nav li .mwrt-menu-group-label{list-style:none;margin:.45rem 0 .2rem;padding:.25rem 0 .25rem .15rem;border-top:1px dashed rgba(139,148,158,.22)}
+.main .main-left .nav li .mwrt-menu-group-label span{font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:#6e7d92;font-weight:600;padding-left:.15rem;white-space:nowrap}
+.main .main-left .nav li .menu[data-title="Logout"]::before{content:"\e907"!important;color:#ff7d60!important}
+.main .main-left .nav li .menu[data-title="Logout"]{color:#ff9b73!important}
+.main .main-left .nav li .menu[data-title="iStore"]::before{content:"\e915"!important;color:var(--neon-cyan)!important}
+@media (max-width:991px){#mwrt-sb-toggle{display:none!important}}
+
+/* ==== 阶段九：侧栏底部「退出」统一并固定在底部 ==== */
+@media (min-width:992px){
+  .main .main-left{display:flex!important;flex-direction:column!important}
+  .main .main-left .sidenav-header{flex:0 0 auto!important}
+  .main .main-left .nav{display:flex!important;flex-direction:column!important;flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important}
+  .main .main-left .nav > li:last-child{margin-top:auto!important;padding-top:6px!important;border-top:1px solid rgba(255,255,255,0.07)}
+}
+.main .main-left .nav li .menu[data-title="退出"],
+.main .main-left .nav li .menu[data-title="Logout"],
+.main .main-left .nav li a[data-title="Logout"]{
+  color:var(--txt)!important;background:transparent!important;box-shadow:none!important;font-weight:500!important
+}
+.main .main-left .nav li .menu[data-title="退出"]::before,
+.main .main-left .nav li .menu[data-title="Logout"]::before,
+.main .main-left .nav li a[data-title="Logout"]::before{color:#ff7d60!important}
+.main .main-left .nav li .menu[data-title="退出"]:hover,
+.main .main-left .nav li .menu[data-title="Logout"]:hover,
+.main .main-left .nav li a[data-title="Logout"]:hover{
+  color:var(--txt-bright)!important;background:linear-gradient(90deg,rgba(255,125,96,0.20),rgba(255,125,96,0.05))!important;box-shadow:inset 3px 0 0 0 #ff7d60!important
+}
+.main .main-left .nav li .menu[data-title="退出"]:hover::before,
+.main .main-left .nav li .menu[data-title="Logout"]:hover::before,
+.main .main-left .nav li a[data-title="Logout"]:hover::before{color:#fff!important}
+
+/* ==== 阶段十：浏览器降级 & 侧栏短屏/触摸适配 ==== */
+@supports not (color: color-mix(in srgb, red, blue)){
+  .main .main-left::before{background:linear-gradient(180deg,transparent 0%,rgba(56,128,135,.55) 30%,rgba(43,255,198,.42) 60%,transparent 100%)!important}
+  .main .main-left::-webkit-scrollbar-thumb{background:rgba(56,128,135,.55)!important}
+  .main .main-left .nav li .menu:hover,
+  .main .main-left .nav > li > a:first-child:hover{background:linear-gradient(90deg,rgba(56,128,135,.28),rgba(56,128,135,.08))!important}
+  .main .main-left .nav li .menu.active,
+  .main .main-left .nav > li > a:first-child.active{background:linear-gradient(90deg,#388087,#41b7a8)!important}
+  .main .main-left .nav li.slide .slide-menu::before{background:linear-gradient(180deg,rgba(56,128,135,.5),rgba(43,255,198,.22))!important}
+  .main .main-left .nav li.slide .slide-menu li::after{background:rgba(139,148,158,.4)!important}
+  .main .main-left .nav li.slide .slide-menu li:hover::after,
+  .main .main-left .nav li.slide .slide-menu .active::after{background:#2bffc6!important;box-shadow:0 0 8px 1px rgba(43,255,198,.8)!important}
+  .main .main-left .nav li .menu[data-title="Logout"]:hover,
+  .main .main-left .nav li .menu[data-title="退出"]:hover{background:linear-gradient(90deg,rgba(255,125,96,.20),rgba(255,125,96,.05))!important}
+}
+.main .main-left .nav li .menu,
+.main .main-left .nav > li > a:first-child{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+/* 矮屏（如 1024x600 / 横屏）：保证菜单可滚动、退出可见 */
+@media (min-width:992px) and (max-height:700px){
+  .main .main-left .nav{overflow-y:auto!important}
+  .main .main-left .nav > li:last-child{border-top:1px solid rgba(255,255,255,.07)}
+}
+/* 隐藏横向滚动条（侧栏） */
+.main .main-left{overflow-x:hidden!important}
+
+/* ==== 阶段十一：真机 Chrome 侧栏显示修复 ==== */
+/* 对齐固件：侧栏本身不滚动、不显示常驻滚动条（固件 cascade 无 overflow-y:scroll） */
+.main .main-left{overflow:hidden!important;flex-shrink:0!important}
+.main .main-left::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}
+/* 侧栏内容只保留一个滚动区（菜单 nav） */
+/* 固件侧栏无可见滚动条：菜单区仍可滚轮滚动，但隐藏原生/白色滚动条 */
+.main .main-left .nav{
+  overflow-y:auto!important;overflow-x:hidden!important;
+  scrollbar-width:none!important;-ms-overflow-style:none!important;
+  overscroll-behavior:contain
+}
+.main .main-left .nav::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}
+/* 退出项固定在侧栏底部；菜单超高滚动时始终可见 */
+.main .main-left .nav > li:last-child{
+  position:sticky!important;bottom:0!important;z-index:6!important;
+  margin-top:auto!important;padding-top:6px!important;
+  border-top:1px solid rgba(255,255,255,0.07)!important;
+  background:linear-gradient(180deg,rgba(13,17,23,0.72) 0%,rgba(13,17,23,0.96) 45%,#0d1117 100%)!important
+}
+/* 折叠态按钮贴合侧栏（JS 已按真实宽度定位，这里去掉额外偏移） */
+#mwrt-sb-toggle{margin-left:0!important}
+/* 抽屉同样行为 */
+body.mwrt-drawer-open .main > .main-left{overflow:hidden!important}
+body.mwrt-drawer-open .main > .main-left .nav{overflow-y:auto!important;overflow-x:hidden!important}
+
+/* ==== 阶段十四：退出项独立 footer（不再 sticky 遮挡菜单） ==== */
+.main .main-left .nav > li:last-child{
+  margin-top:0!important;padding-top:0!important;border-top:0!important;
+  position:static!important;bottom:auto!important;background:none!important;z-index:auto!important
+}
+.main .main-left .mwrt-sidebar-foot{
+  flex:0 0 auto!important;position:relative!important;z-index:6;
+  border-top:1px solid rgba(255,255,255,0.07)!important;
+  background:linear-gradient(180deg,rgba(13,17,23,0.72) 0%,rgba(13,17,23,0.96) 45%,#0d1117 100%)!important;
+  padding:6px 0 env(safe-area-inset-bottom,0px)!important
+}
+.main .main-left .mwrt-sidebar-foot > li{list-style:none!important;margin:0!important;padding:0!important;display:block!important}
+.main .main-left .mwrt-sidebar-foot > li > a.menu{
+  color:var(--txt)!important;font-family:var(--menu-font);font-weight:500;letter-spacing:.02em;
+  display:block!important;position:relative!important;text-decoration:none!important;
+  margin:.18rem .6rem!important;padding:.7rem 0 .7rem 2.5rem!important;border-radius:.55rem!important;
+  background:transparent!important;box-shadow:none!important;font-size:1rem!important;line-height:1.2;
+  overflow:hidden;transition:color .25s ease,background .25s ease,box-shadow .25s ease;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation!important
+}
+.main .main-left .mwrt-sidebar-foot > li > a.menu::before{
+  content:"\e907"!important;font-family:argon!important;position:absolute!important;
+  left:.8rem!important;top:50%!important;transform:translateY(-50%)!important;
+  color:#ff7d60!important;font-size:1rem!important;line-height:1;z-index:1
+}
+.main .main-left .mwrt-sidebar-foot > li > a.menu::after{display:none!important}
+.main .main-left .mwrt-sidebar-foot > li > a.menu:hover,
+.main .main-left .mwrt-sidebar-foot > li > a.menu:focus{
+  color:var(--txt-bright)!important;
+  background:linear-gradient(90deg,rgba(255,125,96,.20),rgba(255,125,96,.05))!important;
+  box-shadow:inset 3px 0 0 0 #ff7d60!important
+}
+body.mwrt-sb-collapsed .main .main-left .mwrt-sidebar-foot > li > a.menu{
+  padding:.7rem 0!important;margin:.18rem .35rem!important;font-size:0!important;text-align:center!important
+}
+body.mwrt-sb-collapsed .main .main-left .mwrt-sidebar-foot > li > a.menu::before{
+  left:50%!important;transform:translate(-50%,-50%)!important;font-size:1rem!important
+}
+body.mwrt-drawer-open .main > .main-left .mwrt-sidebar-foot{flex:0 0 auto!important}
+
+/* ==== 阶段十五：侧栏固定视口高度，退出贴屏幕最底部 ==== */
+@media (min-width:992px){
+  body .main{height:100vh!important;min-height:100vh!important}
+  body .main > .main-left{
+    position:fixed!important;top:0!important;left:0!important;
+    height:100vh!important;min-height:100vh!important;bottom:0!important
+  }
+}
+
+/* ==== 阶段十六：蜂窝一级菜单图标 / 状态菜单简化 ==== */
+.main .main-left .nav li .menu[data-title="Modem"]::before{content:"\e908"!important}
+
+/* 新增「蜂窝」一级菜单：让自定义 slide-menu 的 active 状态可见 */
+.main .main-left .nav li.slide .slide-menu.active{display:block!important}

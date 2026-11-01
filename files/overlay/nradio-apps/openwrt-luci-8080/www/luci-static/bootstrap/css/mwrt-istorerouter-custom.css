@@ -1,0 +1,44 @@
+/* Mwrt 主题 — iStoreRouter 全屏 SPA 对齐 */
+html, body{background:#0b1018!important}
+body{color:#e6edf3!important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif!important}
+#main{background:radial-gradient(ellipse at 18% 0%,rgba(56,128,135,.30),transparent 55%),radial-gradient(ellipse at 92% 8%,rgba(43,255,198,.10),transparent 60%),linear-gradient(165deg,#0d1117 0%,#11161d 55%,#0a0f16 100%)!important}
+.header-desktop{background:transparent!important}
+.header-desktop nav{background:linear-gradient(90deg,rgba(13,17,23,.96) 0%,rgba(20,27,36,.92) 60%,rgba(17,22,29,.96) 100%)!important;border-bottom:1px solid rgba(43,255,198,.14)!important}
+nav .logo{background:linear-gradient(90deg,#5fd3c4,#2bffc6)!important;-webkit-background-clip:text!important;background-clip:text!important;-webkit-text-fill-color:transparent!important;color:#2bffc6!important;font-weight:700!important;letter-spacing:.04em!important}
+nav a.nav-item{color:#c9d1d9!important;transition:color .2s ease!important}
+nav a.nav-item:hover{color:#2bffc6!important}
+nav a.nav-item.router-link-active{color:#2bffc6!important;font-weight:600!important}
+.tool{color:#dbe7ff!important}
+.tool .tool-item{color:#dbe7ff!important}
+.tool .tool-item .tool-item_name span{color:#dbe7ff!important}
+.tool .tool-item:hover .tool-item_name span{color:#2bffc6!important}
+.tool em{background:linear-gradient(90deg,transparent,rgba(43,255,198,.45),transparent)!important}
+#page.page-container{background:#fff!important;border-radius:14px!important;border:1px solid rgba(148,163,255,.16)!important;box-shadow:0 30px 70px -40px rgba(0,0,0,.85)!important;color:#1f2d3d!important}
+.page-container .page-flex .page-sidebar{border-right:1px solid #eef1f4!important}
+.page-container .page-flex .page-sidebar a,.page-container .page-flex .page-sidebar .item{color:#475467!important}
+.page-container .page-flex .page-sidebar a.router-link-active{color:#388087!important;font-weight:600!important}
+.text-container .text-container_item{min-height:44px!important;line-height:1.6!important;align-items:center!important;border-bottom:1px solid #f2f4f7!important}
+.text-container .text-container_item:last-child{border-bottom:0!important}
+.text-container .text-container_item .text-container_item_title{color:#667085!important;font-size:.9rem!important;font-weight:600!important;min-width:110px!important}
+.text-container .text-container_item .text-container_item_value{color:#16202c!important;font-size:.9rem!important;padding-left:12px!important}
+.text-container .text-container_item .text-container_item_flex{color:#16202c!important}
+progress{color:#388087!important;background:#eef1f4!important;border-radius:999px!important;height:10px!important}
+progress::-webkit-progress-bar{background:#eef1f4!important;border-radius:999px!important}
+progress::-webkit-progress-value{background:linear-gradient(90deg,#388087 0%,#41a39a 60%,#2bffc6 100%)!important;border-radius:999px!important}
+progress::-moz-progress-bar{background:#388087!important}
+.primary-btn{background:linear-gradient(135deg,#3d8c93,#388087)!important;border-color:#2f6e74!important;color:#fff!important;border-radius:.45rem!important;box-shadow:0 10px 22px -14px rgba(56,128,135,.8)!important}
+.primary-btn:hover{opacity:.92!important}
+.btn,.cbi-button{border-radius:.4rem!important}
+.btn-primary{background:linear-gradient(135deg,#3d8c93,#388087)!important;border-color:#2f6e74!important;color:#fff!important}
+.app-item .app-card{background:#fff!important;border:1px solid #e7eaee!important;border-radius:12px!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important}
+.app-item .app-card .app-item_info .app-title{color:#16202c!important}
+.upload-card{border:1px dashed #bdd9d7!important;background:#f7fbfa!important;border-radius:12px!important}
+.page-table table,.popups-table table{background:#fff!important;border:1px solid #e7eaee!important;border-radius:.5rem!important;overflow:hidden!important}
+.page-table table th,.popups-table table th{background:#f7f9fb!important;color:#475467!important}
+.page-table table td,.popups-table table td{border-top:1px solid #f2f4f7!important;color:#344054!important}
+.page-table table tr:nth-child(even) td{background:#fbfcfd!important}
+/* 移动端导航 */
+.mobile-nav-drawer{background:linear-gradient(180deg,#0d1117 0%,#11161d 60%,#0b1018 100%)!important;border-right:1px solid rgba(43,255,198,.18)!important;box-shadow:8px 0 30px rgba(0,0,0,.6)!important}
+.mobile-nav-header{color:#2bffc6!important}
+.mobile-nav-item{color:#c9d1d9!important}
+.mobile-nav-item.active{color:#2bffc6!important}

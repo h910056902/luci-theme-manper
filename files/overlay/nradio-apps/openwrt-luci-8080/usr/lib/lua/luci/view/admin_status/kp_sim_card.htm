@@ -1,0 +1,84 @@
+<%
+-- KP-SIM-CARD v1 · 可复用「蜂窝 / SIM 状态卡片」局部模板
+-- 数据契约：父模板在 include 前设置全局表 sim_card（不带 local），
+-- 通过 scope 回退链读到（Template.render: rawget -> viewns -> scope）。
+-- 复用方：admin_status/nradio_details.htm（驾驶舱）、聚合首页（二期）。
+local pc = (type(pcdata) == "function") and pcdata
+	or function(s)
+		return (tostring(s or ""):gsub("[<>&\"]", { ["<"] = "&lt;", [">"] = "&gt;", ["&"] = "&amp;", ['"'] = "&quot;" }))
+	end
+local sc = sim_card or {}
+local sc_status = sc.identified and "已识别运营商 · 未注册网络" or (sc.status or "未连接")
+local function has(value) return value ~= nil and value ~= "" end
+local function nz(value) return (value ~= nil and value ~= 0) and value or "--" end
+local sc_sl = sc_status
+	.. (has(sc.mode) and (" · " .. sc.mode) or "")
+	.. (has(sc.band) and (" · " .. sc.band) or "")
+local l2 = sc.line2 or nil
+%>
+<div class="hero"><div class="hero-sig <%=sc.up and "is-up" or "is-down"%><% if sc.none then %> is-none<% end %>">
+	<div class="h-id">
+		<div class="h-brand"><i class="fas fa-broadcast-tower" aria-hidden="true"></i></div>
+		<div class="h-id-t">
+			<div class="h-op-row">
+				<div class="h-op-name" data-nradio-hero="op"><%=pc(sc.operator)%></div>
+				<div class="h-bdg"><b class="h-badge" data-nradio-hero="badge"><%=pc(has(sc.mode_short) and (sc.mode_short .. (has(sc.band) and (" · " .. sc.band) or "")) or "蜂窝")%></b></div>
+				<span class="h-temp" data-nradio-temp<% if not (sc.temp and sc.temp >= 55) then %> style="display:none"<% end %>><i class="fas fa-thermometer-half" aria-hidden="true"></i><%=pc(sc.temp and string.format("%.0f℃", sc.temp) or "")%></span>
+				<a class="h-more" href="<%=pc(sc.more_url)%>" title="蜂窝详情"><span>详情</span><i class="fas fa-angle-right" aria-hidden="true"></i></a>
+			</div>
+			<div class="h-op-sub"><span class="h-dot"></span><span data-nradio-hero="status"><%=pc(sc_status)%></span><span class="h-sep">·</span><span class="h-mode" data-nradio-hero="mode"><%=pc(has(sc.mon) and ("本月 " .. sc.mon) or "本月 --")%></span><span class="h-sep">·</span><span class="h-simname" data-nradio-hero="simname"><%=pc(sc.sim)%></span></div>
+		</div>
+	</div>
+	<% if sc.none then %>
+	<div class="h-guide" data-nradio-guide>
+		<i class="fas fa-info-circle" aria-hidden="true"></i>
+		<span>未检测到蜂窝模组 · 请检查 SIM 卡是否插好、模组供电是否正常，或前往<a href="<%=pc(sc.more_url)%>">蜂窝详情</a>排查</span>
+	</div>
+	<% end %>
+	<% if l2 then %>
+	<div class="h-line2" data-nradio-line2>
+		<span class="h-l2-k"><i class="fas fa-signal" aria-hidden="true"></i>副线路</span>
+		<span class="h-l2-op" data-nradio-line2="op"><%=pc(l2.operator)%></span>
+		<span class="h-l2-badge" data-nradio-line2="badge"><%=pc(l2.badge)%></span>
+		<span class="h-l2-dot" aria-hidden="true">·</span>
+		<span data-nradio-line2="status"><%=pc(l2.connection)%></span>
+		<span class="h-l2-dot" aria-hidden="true">·</span>
+		<span class="h-l2-ip" data-nradio-line2="ip"><%=pc(l2.ipaddr)%></span>
+		<% if l2.default_route then %><span class="h-l2-dft"><i class="fas fa-route" aria-hidden="true"></i>默认路由</span><% end %>
+	</div>
+	<% end %>
+	<div class="h-mx">
+		<div class="h-m" data-nradio-hero="rsrq">
+			<div class="h-mk"><span><i class="fas fa-chart-bar"></i>RSRQ</span></div>
+			<div class="h-mv"><span class="n" data-nradio-hero="rsrq-v"><%=nz(sc.rsrq)%></span><small>dB</small></div>
+			<span class="h-mb"><span data-nradio-hero="rsrq-bar" style="width:<%=string.format("%.0f", sc.rsrq_pct or 0)%>%"></span></span>
+		</div>
+		<div class="h-m" data-nradio-hero="sinr">
+			<div class="h-mk"><span><i class="fas fa-bullseye"></i>SINR</span></div>
+			<div class="h-mv"><span class="n" data-nradio-hero="sinr-v"><%=nz(sc.sinr)%></span><small>dB</small></div>
+			<span class="h-mb"><span data-nradio-hero="sinr-bar" style="width:<%=string.format("%.0f", sc.sinr_pct or 0)%>%"></span></span>
+		</div>
+		<div class="h-m">
+			<div class="h-mk"><span><i class="fas fa-wave-square"></i>频段 Band</span></div>
+			<div class="h-mv" data-nradio-hero="band"><%=pc(has(sc.band) and sc.band or "--")%></div>
+			<div class="h-ms" data-nradio-hero="band-s"><%=pc(has(sc.earfcn) and ("频点 " .. sc.earfcn) or "--")%></div>
+		</div>
+		<div class="h-m">
+			<div class="h-mk"><span><i class="fas fa-sim-card"></i>卡槽 SIM</span></div>
+			<div class="h-mv h-mv-t" data-nradio-hero="sim"><%=pc(sc.sim)%></div>
+			<div class="h-ms h-sim" data-nradio-hero="pci"><%=pc("PCI " .. (has(sc.pci) and sc.pci or "--") .. " · 频点 " .. (has(sc.earfcn) and sc.earfcn or "--"))%></div>
+		</div>
+	</div>
+	<div class="h-sig">
+		<div class="sig-rg">
+			<svg viewBox="0 0 100 100" aria-hidden="true"><circle class="sr-tk" cx="50" cy="50" r="46"/><circle class="sr-bg" cx="50" cy="50" r="38"/><circle class="sr-fg" data-nradio-hero="ring" cx="50" cy="50" r="38" stroke-dasharray="238.8" stroke-dashoffset="<%=string.format("%.1f", 238.8 * (1 - (sc.sig_pct or 0) / 100))%>" stroke="<%=pc(sc.color)%>"/></svg>
+			<div class="ct"><span class="v" data-nradio-hero="rsrp"><%=nz(sc.rsrp)%></span><span class="l">dBm</span></div>
+		</div>
+		<div class="sig-nfo">
+			<div class="sig-k">RSRP · 信号强度</div>
+			<div class="sig-lv <%=pc(sc.level)%>" data-nradio-hero="lv"><%=pc(sc.level_text)%></div>
+			<div class="sig-bars" data-nradio-hero="bars"><% for i = 1, 5 do %><span class="<%=i <= (sc.bars or 0) and "g" or ""%>" style="height:<%=8 + i * 4%>px"></span><% end %></div>
+			<div class="sl" data-nradio-hero="sl"><%=pc(sc_sl)%></div>
+		</div>
+	</div>
+</div></div>

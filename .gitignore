@@ -1,0 +1,7 @@
+# 运行日志与设备隐私数据(不入库)
+*.log
+imei-history.log
+
+# 临时解压目录
+_pull*/
+/tmp/

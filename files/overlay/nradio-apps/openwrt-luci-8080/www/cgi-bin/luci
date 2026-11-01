@@ -1,0 +1,4372 @@
+#!/usr/bin/lua
+
+if os.getenv("SERVER_PORT") ~= "8080" then
+	io.write("Status: 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot Found\n")
+	return
+end
+
+local script_filename = os.getenv("SCRIPT_FILENAME") or (arg and arg[0]) or ""
+local instance_root = script_filename:match("^(.*)/www/cgi%-bin/luci$")
+if not instance_root or instance_root == "" then
+	io.write("Status: 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nInvalid CGI path\n")
+	return
+end
+local private_viewdir = instance_root .. "/usr/lib/lua/luci/view"
+
+require "luci.cacheloader"
+require "luci.sgi.cgi"
+
+-- 插件安装/卸载后，本实例的调度树缓存会过期（缓存文件比控制器目录旧），
+-- 表现为新装的页面访问时提示「未注册任何页面」（如 /admin/services/kaiplus）。
+-- 这里在建树之前主动失效：控制器 / menu.d / CBI model 任一目录比缓存新就删缓存。
+do
+	local ok_n, fs = pcall(require, "nixio.fs")
+	if ok_n and fs then
+		local cache = "/tmp/luci-indexcache-bootstrap"
+		local cst = fs.stat(cache)
+		if cst then
+			local cmt = tonumber(cst.mtime) or 0
+			for _, d in ipairs({
+				"/usr/lib/lua/luci/controller",
+				"/usr/lib/lua/luci/model/cbi",
+				"/usr/share/luci/menu.d",
+				"/overlay/nradio-apps/openwrt-luci-8080/usr/lib/lua/luci/view",
+			}) do
+				local dst = fs.stat(d)
+				if dst and (tonumber(dst.mtime) or 0) > cmt then
+					os.remove(cache)
+					break
+				end
+			end
+		end
+	end
+end
+
+local template = require "luci.template"
+local parser = require "luci.template.parser"
+local original_parse = parser.parse
+local shared_view_prefix = template.viewdir .. "/"
+function parser.parse(path, ...)
+	if path:sub(1, #shared_view_prefix) == shared_view_prefix then
+		local name = path:sub(#shared_view_prefix + 1)
+		-- KP-QUICKSTART-VIEW v2: overlay-with-fallback
+		-- private dir exists -> private; else keep shared (official) path.
+		-- So official view upgrades are followed automatically by removing
+		-- the same-named private file (prevents stale private view shadowing
+		-- the official new one -> white screen).
+		local kp_whitelist = name:match("^themes/bootstrap/")
+			or name == "admin_status/nradio_details.htm"
+			or name == "admin_status/kp_sim_card.htm"
+			or name == "admin_status/kp_wizard.htm"
+			or name == "admin_status/nradio_cellular.htm"
+			or name == "admin_status/nradio_device.htm"
+			or name == "admin_status/nradio_sms.htm"
+			or name == "admin_status/nradio_term.htm"
+			or name == "admin_status/nradio_docker.htm"
+			or name == "admin_status/nradio_8080_sysauth.htm"
+			-- 状态总览：换成实例私有的「驾驶舱」单页（一屏汇总）
+			or name == "admin_status/index.htm"
+			or name == "quickstart/main.htm"
+			or name == "quickstart/home.htm"
+			or name == "quickstart/wizard.htm"
+			-- KP-ISTOREROUTER-VIEW v1: 允许 iStoreRouter 的 SPA 壳走实例私有视图；
+			-- 私有目录没有同名文件时静默回退共享视图（overlay-with-fallback 语义）。
+			-- 注：v2 后渲染改走 controller 的 istorerouter_template()，
+			-- 该白名单仍然有用（私有视图若存在则优先，否则回落共享）。
+			or name == "istorerouter/index.htm"
+			or name == "istorerouter/main.htm"
+			or name == "istorerouter/main_dev.htm"
+		if kp_whitelist then
+			local kp_priv = private_viewdir .. "/" .. name
+			if require("nixio.fs").access(kp_priv) then
+				path = kp_priv
+			end
+		end
+		-- KP-TTYD-VIEW-MARKER-BEGIN
+		-- ttyd 终端页改用实例私有视图：共享视图的运行判据（tonumber("running")=nil）
+		-- 与终端地址（host:8080:7681）在 8080 独立实例下均不成立。
+		-- 私有视图缺失时静默回退共享视图，不会 500。
+		if name == "ttyd/overview.htm" then
+			local kp_ttyd_view = private_viewdir .. "/" .. name
+			if require("nixio.fs").access(kp_ttyd_view) then
+				path = kp_ttyd_view
+			end
+		end
+		-- KP-TTYD-VIEW-MARKER-END
+	end
+	return original_parse(path, ...)
+end
+
+local luci_util = require "luci.util"
+if type(luci_util.shellquote) ~= "function" then
+	function luci_util.shellquote(value)
+		return "'" .. tostring(value or ""):gsub("'", "'\\''") .. "'"
+	end
+end
+
+local original_httpdispatch = luci.dispatcher.httpdispatch
+local original_createtree = luci.dispatcher.createtree
+
+-- The stock system form writes the shared luci.main.mediaurlbase setting.
+-- Disable that field only in this CGI, including crafted form submissions.
+local cbi = require "luci.cbi"
+local original_cbi_load = cbi.load
+function cbi.load(model, ...)
+	local maps = original_cbi_load(model, ...)
+	if model == "admin_system/system" then
+		for _, map in ipairs(maps) do
+			for _, section in ipairs(map.children or {}) do
+				local field = section.fields and section.fields._mediaurlbase
+				if field then
+					field.parse = function() end
+					field.render = function() end
+				end
+			end
+		end
+	end
+	return maps
+end
+
+local function route_node(tree, path)
+	local node = tree
+	for _, name in ipairs(path) do
+		node = type(node) == "table" and node.nodes and node.nodes[name]
+		if type(node) ~= "table" then return nil end
+	end
+	return node
+end
+
+local function route_exists(tree, path)
+	local node = route_node(tree, path)
+	return node ~= nil and node.target ~= nil and not node.hidden
+end
+
+local function add_admin_alias(tree, menu, name, title, order, path)
+	if not route_exists(tree, path) then
+		return
+	end
+	menu.nodes[name] = {
+		nodes = {},
+		target = luci.dispatcher.alias(unpack(path)),
+		title = title,
+		order = order,
+		leaf = true
+	}
+end
+
+local function inject_plugin_menu(tree, admin)
+	local native, factory, known = {}, {}, {}
+	local menu = { nodes = {}, target = luci.dispatcher.firstchild(), title = "插件", order = 55 }
+	for _, group in ipairs({ "services", "vpn" }) do
+		local parent = route_node(tree, { "admin", group })
+		for name, child in pairs(parent and parent.nodes or {}) do
+			if type(child) == "table" and child.target and child.title and not child.hidden then
+				local path = { "admin", group, name }
+				local title = tostring(child.title)
+				native[#native + 1] = { title = title, path = path }
+				known[name:lower()] = true
+				add_admin_alias(tree, menu, group .. "_" .. name, title, tonumber(child.order) or 100, path)
+			end
+		end
+	end
+	for _, item in ipairs({
+		{ "ttyd", "Web SSH", { "admin", "system", "ttyd" } },
+		{ "docker", "Docker", { "admin", "docker" } }
+	}) do
+		if not known[item[1]] and route_exists(tree, item[3]) then
+			native[#native + 1] = { title = item[2], path = item[3] }
+			known[item[1]] = true
+			add_admin_alias(tree, menu, item[1], item[2], 200, item[3])
+		end
+	end
+	for _, item in ipairs({
+		{ "openvpn", "OpenVPN", { "nradioadv", "system", "openvpnfull" } },
+		{ "zerotier", "ZeroTier", { "nradioadv", "system", "zerotier" } },
+		{ "openlist", "OpenList", { "nradioadv", "system", "openlist" } },
+		{ "mosdns", "MosDNS", { "nradioadv", "system", "mosdns" } },
+		{ "ddns-go", "DDNS-GO", { "nradioadv", "system", "ddnsgo" } },
+		{ "docker", "Docker", { "nradioadv", "system", "docker" } },
+		{ "ttyd", "Web SSH", { "nradioadv", "system", "webssh" } },
+		{ "qiyou", "奇游联机宝", { "nradioadv", "system", "qiyou" } },
+		{ "leigod", "雷神加速器", { "nradioadv", "system", "leigod" } },
+		{ "aibot", "AI 助手", { "nradioadv", "system", "aibot" } },
+		{ "fanctrl", "风扇控制", { "nradioadv", "system", "fanctrl" } },
+		{ "cpeopt", "5G 连接监听", { "nradioadv", "cellular", "cpeopt" } }
+	}) do
+		if not known[item[1]] and route_exists(tree, item[3]) then
+			factory[#factory + 1] = { title = item[2], path = "/cgi-bin/luci/" .. table.concat(item[3], "/") }
+		end
+	end
+	table.sort(native, function(a, b) return a.title < b.title end)
+	luci.dispatcher.context.nradio_8080_links = { native = native, factory = factory }
+	if #native + #factory > 0 then
+		menu.nodes.overview = {
+			nodes = {}, title = "全部插件入口", order = 0, leaf = true,
+			target = function()
+				require("luci.http").redirect(luci.dispatcher.build_url("admin", "status", "details") .. "#nradio-plugin-links")
+			end
+		}
+		-- 对齐固件：固件没有「插件」一级菜单。
+		-- 注意 nradio_8080_links 仍要保留，首页的「全部插件入口」区块依赖它。
+		-- admin.nodes.nradio_plugins = menu
+	end
+end
+
+local function set_bootstrap_theme(node)
+	node.mediaurlbase = "/luci-static/bootstrap"
+	for _, child in pairs(node.nodes or {}) do
+		if type(child) == "table" then set_bootstrap_theme(child) end
+	end
+end
+
+function luci.dispatcher.createtree()
+	local tree = original_createtree()
+	local admin = tree.nodes and tree.nodes.admin
+	if admin then
+		admin.nodes = admin.nodes or {}
+		inject_plugin_menu(tree, admin)
+		tree.nodes.nradio = nil
+		tree.nodes.nradioadv = nil
+		tree.nodes.authcheck = nil
+		admin.nodes = admin.nodes or {}
+		admin.sysauth_template = "admin_status/nradio_8080_sysauth"
+		local status = admin.nodes.status
+		if not status then
+			-- order 与固件 controller/admin/status.lua 一致（固件为 20）
+			status = { nodes = {}, target = luci.dispatcher.firstchild(), title = "状态", order = 20 }
+			admin.nodes.status = status
+		end
+		if status then
+			status.nodes = status.nodes or {}
+			status.nodes.details = {
+				nodes = {},
+				target = luci.dispatcher.template("admin_status/nradio_details"),
+				-- 方案 A：与固件 admin/status 对齐，扁平挂在「状态」下，顺序紧随固件 overview
+				title = "概览",
+				order = 1,
+				leaf = true
+			}
+			-- KP-CELLULAR-MENU-BEGIN
+			status.nodes.cellular = {
+				nodes = {},
+				target = luci.dispatcher.template("admin_status/nradio_cellular"),
+				title = "蜂窝状态",
+				order = 2,
+				leaf = true
+			}
+			status.nodes.device = {
+				nodes = {},
+				target = luci.dispatcher.template("admin_status/nradio_device"),
+				title = "设备状态",
+				order = 3,
+				leaf = true
+			}
+			status.nodes.sms = {
+				nodes = {},
+				target = luci.dispatcher.template("admin_status/nradio_sms"),
+				title = "短信",
+				order = 4,
+				leaf = true
+			}
+			-- 内嵌终端（iframe 指向 ttyd:7681，需 check_origin=0）
+			status.nodes.terminal = {
+				nodes = {},
+				target = luci.dispatcher.template("admin_status/nradio_term"),
+				title = "终端",
+				order = 5,
+				leaf = true
+			}
+			-- Docker 已提升为顶层菜单，注册在 controller：
+			-- /usr/lib/lua/luci/controller/kp_docker.lua → /admin/docker
+			-- KP-CELLULAR-MENU-END
+		end
+		-- KP-QUICKSTART-MENU-BEGIN
+		-- 首页 / 网络设置向导：两个独立纯 leaf 菜单项（v2，2026-09-27）。
+		-- ⚠⚠ quickstart/network_guide 都**不能挂带 title 的子节点**：
+		--   argon 侧栏对有子节点的顶类目渲染成下拉分组，「首页」的直接链接
+		--   就消失了（v1 教训，用户实测反馈）。深链接由 wizard.htm 的
+		--   history.replaceState 预写 URL 实现，无需任何子节点。
+		-- Docker 菜单改由 controller 注册（/usr/lib/lua/luci/controller/kp_docker.lua），
+		-- 这里不再手工挂节点，避免 createtree() 与手工节点各注册一次造成重复条目。
+		admin.nodes.quickstart = {
+			nodes = {},
+			target = luci.dispatcher.template("quickstart/home"),
+			-- 对齐固件 menu.d/luci-app-quickstart.json：title=QuickStart，order=1
+			title = "QuickStart",
+			order = 1,
+			leaf = true
+		}
+		admin.nodes.network_guide = {
+			-- 对齐固件：固件没有这个一级菜单，这里只保留路由（首页的「设置向导」按钮依赖它），
+			-- hidden=true 表示不进侧栏
+			hidden = true,
+			nodes = {
+				-- 隐藏分发节点：仅供刷新/深链接 /admin/network_guide/network(/pppoe|/dhcp|/gateway)
+				-- 返回同一个 SPA 壳页。无 title + hidden=true → dispatcher.node_visible()==false
+				-- → 不进侧栏、不触发 argon 顶菜单的下拉分组渲染（v1 教训，勿加 title）。
+				network = {
+					hidden = true,
+					nodes = {
+						pppoe = { hidden = true, nodes = {}, target = luci.dispatcher.template("quickstart/wizard"), leaf = true },
+						dhcp = { hidden = true, nodes = {}, target = luci.dispatcher.template("quickstart/wizard"), leaf = true },
+						gateway = { hidden = true, nodes = {}, target = luci.dispatcher.template("quickstart/wizard"), leaf = true }
+					},
+					-- KP-WIZARD v1: 主路由改为自建「三步向导」（Wi-Fi / SIM 切换 / OpenClash 订阅）；
+					-- 原厂 Vue 向导保留在 pppoe/dhcp/gateway 深链，由 kp_wizard 页脚链接进入。
+					target = luci.dispatcher.template("admin_status/kp_wizard"),
+					leaf = true
+				}
+			},
+			target = luci.dispatcher.template("admin_status/kp_wizard"),
+			title = "网络设置向导",
+			order = 2,
+			leaf = true
+		}
+		-- KP-QUICKSTART-MENU-END
+		-- KP-ISTOREROUTER-MENU v2 BEGIN
+		-- 让 iStoreRouter 在 8080 实例可用（2026-09-27）。
+		-- 背景：共享 menu.d/luci-app-istorerouter.json 只在 80 端口那份
+		--       indexcache 里生效；8080 走自己的 /tmp/luci-indexcache-bootstrap，
+		--       加上本 CGI 用 createtree() 重建了 admin 子树，
+		--       导致 /admin/istorerouter 未注册 → 已登录也返回 "Not Found"。
+		-- 做法与 quickstart 保持一致：显式挂纯 leaf 节点，**不加带 title 的子节点**
+		-- （子节点会让 argon 侧栏把顶类目渲染成下拉分组，直接链接消失 —— v1 教训）。
+		--
+		-- ⚠⚠ v1 的坑（2026-09-27 实测，必看）：
+		--   v1 写成 target = luci.dispatcher.template("istorerouter/main")，
+		--   **绕过了 controller 的 get_params()** → 模板里的 <%=id.arch%> /
+		--   <%=id.uid%> / <%=id.version%> / <%=model%> / <%=cache_tag%> 全是 nil
+		--   → 模板第 28 行 `id.arch` 抛 "attempt to index global 'id' (a nil value)"
+		--   → dispatcher.lua:581 捕获异常，但**此时 HTTP 头已发出（200）**，
+		--     报错文本被当模板输出内联进 `arch:"Status: 500 Internal Server Error..."`，
+		--     整个 window.device_id 变成垃圾 → SPA 启动即崩 → 页面空白/转圈。
+		--   （外部表现为 200，看不出失败，极难排查 —— 必须登录取正文才看得到。）
+		--
+		-- v2 修法：target 改成**调用 controller 的 istorerouter_template()**，
+		--   它内部 render("istorerouter/main", get_params())，把 id/model/cache_tag
+		--   一并注入，与 80 端口官方路径完全同构。
+		--   ⚠ 不直接调 index()：index() 有 pgrep quickstart 守卫（守护没跑时会
+		--     改成 redirect_fallback 把人踢走）；istorerouter_template 无守卫。
+		--   controller 在共享 Lua 路径上（80 端口已加载它），8080 同样可见。
+		-- 该 view 已列入 KP-QUICKSTART-VIEW 白名单，才会从实例私有目录取；
+		-- 私有目录缺失时自动回退共享 /usr/lib/lua/luci/view/istorerouter/。
+		if require("nixio.fs").access("/usr/lib/lua/luci/view/istorerouter/main.htm")
+		   or require("nixio.fs").access(private_viewdir .. "/istorerouter/main.htm") then
+			admin.nodes.istorerouter = {
+				nodes = {},
+				target = function()
+					-- 25.12(3.0.0) 固件没有 luci-app-istorerouter，控制器与视图都不存在，
+					-- 原逻辑会 500。改为跳到厂商应用中心（80 端口的 nradioadv/appcenter），
+					-- 那个页面功能是完整的（检测新版本 / 手动安装 / 已安装 / 所有应用）。
+					local ok, ctl = pcall(require, "luci.controller.istorerouter")
+					if ok and type(ctl) == "table" and type(ctl.istorerouter_template) == "function" then
+						ctl.istorerouter_template()
+						return
+					end
+					local http = require "luci.http"
+					local host = (http.getenv("HTTP_HOST") or ""):match("^([^:]+)") or "192.168.66.1"
+					http.redirect("http://" .. host .. "/cgi-bin/luci/nradioadv/system/appcenter")
+				end,
+				title = "应用商店",
+				order = 3,
+				leaf = true
+			}
+		end
+		-- KP-ISTOREROUTER-MENU v2 END
+		-- KP-NAS-PARENT-CGI v1 BEGIN
+		-- 修复 admin/nas 整树 HTTP 500 (Access Violation: no parent node)：
+		-- 厂商 controller/quickstart.lua 只注册了叶子 admin/nas/raid|smart，
+		-- 父节点 admin/nas 由 _create_node() 自动创建而带 auto=true，
+		-- dispatcher.lua:400 assert(not dependent or not auto) 因此失败。
+		-- 这里显式清 auto 并补 target，等价于官方 node("admin","nas")。
+		do
+			local nas = admin.nodes and admin.nodes.nas
+			if type(nas) == "table" then
+				nas.auto = nil
+				nas.dependent = false
+				nas.title = nas.title or "NAS"
+				nas.order = nas.order or 9
+				if nas.target == nil then
+					nas.target = luci.dispatcher.firstchild()
+				end
+			end
+		end
+		-- KP-NAS-PARENT-CGI v1 END
+	end
+	set_bootstrap_theme(tree)
+	return tree
+end
+
+function luci.dispatcher.httpdispatch(request, prefix)
+	local config = require "luci.config"
+	config.main.mediaurlbase = "/luci-static/bootstrap"
+	config.themes = { Bootstrap = "/luci-static/bootstrap" }
+	return original_httpdispatch(request, prefix)
+end
+
+local path_info = os.getenv("PATH_INFO") or ""
+local request_method = os.getenv("REQUEST_METHOD") or ""
+
+if request_method == "GET" and (
+	path_info == "" or
+	path_info == "/" or
+	path_info == "/admin" or
+	path_info == "/admin/" or
+	path_info == "/nradio" or
+	path_info:match("^/nradio/") or
+	path_info == "/nradioadv" or
+	path_info:match("^/nradioadv/")
+) then
+	io.write("Status: 302 Found\r\n")
+	io.write("Location: /cgi-bin/luci/admin/status/details\r\n")
+	io.write("Content-Type: text/plain\r\n\r\n")
+	return
+end
+
+-- KP-SERVICES-MARKER v1 (kunpeng-istoreos-style) —— 服务入口侧栏菜单
+-- 插入位置：CGI 包装器 `luci.dispatcher.indexcache = ...` 之前
+-- 语义：在包装器自己的 createtree 之上再包一层，追加「服务」菜单（鲲鹏商店 / 1Panel / Docker）
+-- 1Panel 地址：直接解析 /usr/local/bin/1pctl 的 ORIGINAL_PORT/ORIGINAL_ENTRANCE 常量，
+--              不依赖执行 bash 脚本（CGI 环境下 1pctl 可能不可用）
+do
+	local _kp_prev_createtree = luci.dispatcher.createtree
+	function luci.dispatcher.createtree()
+		local tree = _kp_prev_createtree()
+		local admin = tree.nodes and tree.nodes.admin
+		if admin then
+			admin.nodes = admin.nodes or {}
+			local http = require "luci.http"
+			local function kp_host()
+				local name = tostring(http.getenv("SERVER_NAME") or ""):gsub(":%d+$", "")
+				if name == "" then
+					name = tostring(luci.sys.exec("ip -4 addr show br-lan | grep -m1 -oE 'inet [0-9.]+' | awk '{print $2}'") or "")
+					name = name:gsub("%s+", "")
+				end
+				return name
+			end
+			local function kp_panel_base()
+				local port, ent = "10090", ""
+				local f = io.open("/usr/local/bin/1pctl", "r")
+				if f then
+					local txt = f:read("*a") or ""
+					f:close()
+					port = txt:match("ORIGINAL_PORT=(%d+)") or port
+					ent = txt:match("ORIGINAL_ENTRANCE=([%w%-_]+)") or ""
+				end
+				local base = "http://" .. kp_host() .. ":" .. port
+				if ent ~= "" then base = base .. "/" .. ent end
+				return base
+			end
+			local svc = {
+				nodes = {}, target = luci.dispatcher.firstchild(), title = "服务", order = 50
+			}
+			svc.nodes.kp_store = {
+				nodes = {}, title = "鲲鹏商店", order = 1, leaf = true,
+				target = function()
+					http.redirect("http://" .. kp_host() .. "/cgi-bin/luci/nradioadv/system/appcenter")
+				end
+			}
+			svc.nodes.kp_1panel = {
+				nodes = {}, title = "1Panel 面板", order = 2, leaf = true,
+				target = function()
+					http.redirect(kp_panel_base())
+				end
+			}
+			svc.nodes.kp_docker = {
+				nodes = {}, title = "Docker 容器", order = 3, leaf = true,
+				target = function()
+					http.redirect(kp_panel_base() .. "/containers")
+				end
+			}
+			-- 对齐固件：固件的「服务」下没有 鲲鹏商店/1Panel/Docker 这三项
+			-- admin.nodes.kp_services = svc
+		end
+		return tree
+	end
+end
+
+-- KP-PROCESSES-MARKER v1 —— 系统进程页空白修复（仅 8080 实例）
+-- 根因：本固件 busybox v1.33.2 的 `top -bn1` 列序与 LuCI 期望不符
+--       （实际 PID PPID USER STAT VSZ %VSZ CPU %CPU COMMAND，
+--        且 %VSZ>100 时会和 VSZ 粘连成 "1639m163.9"），
+--       而 luci.sys.process.list()（sys.lua:527）按老 busybox 列序
+--       PID PPID USER STAT VSZ %MEM% %CPU% COMMAND 写正则 →
+--       实测 176 行进程一行都匹配不到 → 进程页永远只有表头。
+-- 处置：把 process.list 换成读取 /usr/bin/top（KP-TOP-SHIM，输出兼容列序）。
+--       仅覆盖本 CGI 进程内的 luci.sys.process.list，不改任何系统文件、
+--       不影响 80 端口原生界面。
+-- 回滚：删除本 do...end 块即可（进程页回到"只有表头"的原状）。
+do
+	local kp_sys = require "luci.sys"
+	local kp_util = require "luci.util"
+	local kp_shim = "/usr/bin/top"
+
+	-- 垫片存在时才覆盖，缺失则保留原实现（安全降级）
+	local kp_f = io.open(kp_shim, "r")
+	if kp_f then
+		kp_f:close()
+		function kp_sys.process.list()
+			local data = {}
+			local ps = kp_util.execi(kp_shim .. " -bn1")
+			if not ps then return data end
+			for line in ps do
+				local pid, ppid, user, stat, vsz, mem, cpu, cmd = line:match(
+					"^ *(%d+) +(%d+) +(%S.-%S) +([RSDZTW][W ][<N ]) +(%d+) +(%d+%%) +(%d+%%) +(.+)")
+				local idx = tonumber(pid)
+				if idx then
+					data[idx] = {
+						['PID']     = pid,
+						['PPID']    = ppid,
+						['USER']    = user,
+						['STAT']    = stat,
+						['VSZ']     = vsz,
+						['%MEM']    = mem,
+						['%CPU']    = cpu,
+						['COMMAND'] = cmd
+					}
+				end
+			end
+			return data
+		end
+	end
+end
+
+-- KP-CELLULAR-ENDPOINT v1 START ============================================
+-- 8080 独立 LuCI 实例的蜂窝写操作 / 邻区扫描 / 短信发送端点。
+--
+-- 为什么塞在 cgi-bin/luci 里：本实例**没有 controller 目录**，
+--   只有 3 个 view 目录（admin_status / themes / ttyd），
+--   加控制器会牵扯 route 注册与 indexcache，风险远大于收益。
+--
+-- ⚠️ 为什么不 hook luci.dispatcher.httpdispatch：
+--   luci.sgi.cgi.run() 把 httpdispatch 放进 **coroutine** 里跑
+--   （cgi.lua:54 `coroutine.create(luci.dispatcher.httpdispatch)`），
+--   输出全靠 coroutine 的 yield 协议（id=1/2/3/4/5/6）交回主循环。
+--   我们在包装函数里直接 return 而不 yield，主循环拿不到数据 → 客户端收到空响应/回落到页面。
+--   → 因此本端点**不走 dispatcher**，而是在 CGI 文件主体、`luci.sgi.cgi.run()` 之前
+--     直接解析请求并 `io.write` 原始 HTTP 响应（等价于 cgi.lua:243 那个 302 早退块的做法）。
+--
+-- 鉴权：复用 LuCI 自身的 sysauth cookie，自行核对 ubus session（username=root）。
+--
+-- 安全：所有写操作都做「参数白名单 + 范围校验」，只触碰 cpecfg 一个 uci 文件。
+--
+-- 回滚：删除本块即可（无其它残留）。
+do
+	local function kp_trim(v)
+		return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+	end
+
+	local function kp_urldec(v)
+		return (tostring(v or ""):gsub("+", " "):gsub("%%(%x%x)", function(h)
+			return string.char(tonumber(h, 16))
+		end))
+	end
+
+	-- 解析 query string → table，重复键自动收成数组
+	local function kp_parse_qs(qs)
+		local out = {}
+		for k, v in tostring(qs or ""):gmatch("([%w_%.%-]+)=([^&]*)") do
+			local dec = kp_urldec(v)
+			if out[k] == nil then
+				out[k] = dec
+			elseif type(out[k]) == "table" then
+				out[k][#out[k] + 1] = dec
+			else
+				out[k] = { out[k], dec }
+			end
+		end
+		return out
+	end
+
+	-- 解析 multipart/form-data（只收文本字段，忽略文件字段）
+	-- 前端用 FormData 提交锁频，之前只解析 urlencoded，导致字段全丢。
+	local function kp_parse_multipart(body, boundary)
+		local out, sep = {}, "--" .. boundary
+		local s = body:find(sep, 1, true)
+		while s do
+			local nx = body:find(sep, s + #sep, true)
+			if not nx then break end
+			local chunk = body:sub(s + #sep, nx - 1):gsub("^\r?\n", "")
+			local head, val = chunk:match("^(.-)\r?\n\r?\n(.*)$")
+			if head and val then
+				val = val:gsub("\r?\n$", "")
+				local name = head:match('name="([^"]*)"')
+				if name and not head:match('filename="') then
+					if out[name] == nil then
+						out[name] = val
+					elseif type(out[name]) == "table" then
+						out[name][#out[name] + 1] = val
+					else
+						out[name] = { out[name], val }
+					end
+				end
+			end
+			s = nx
+		end
+		return out
+	end
+
+	-- 解析请求体 → table（支持 urlencoded 与 multipart，重复键收成数组）
+	local function kp_parse_body(env)
+		local ct = env.CONTENT_TYPE or ""
+		local len = tonumber(env.CONTENT_LENGTH) or 0
+		if len <= 0 or len > 1024 * 64 then return {} end
+		local body = io.read("*a") or ""
+
+		local boundary = ct:match("boundary=([^;]+)")
+		if boundary and ct:find("multipart/form%-data", 1) then
+			return kp_parse_multipart(body, (boundary:gsub('"', "")))
+		end
+
+		if not ct:find("application/x%-www%-form%-urlencoded") then return {} end
+		local out = {}
+		for k, v in body:gmatch("([%w_%.%-]+)=([^&]*)") do
+			local dec = kp_urldec(v)
+			if out[k] == nil then
+				out[k] = dec
+			elseif type(out[k]) == "table" then
+				out[k][#out[k] + 1] = dec
+			else
+				out[k] = { out[k], dec }
+			end
+		end
+		return out
+	end
+
+	-- 输出 JSON（直接写 HTTP 响应，不经 dispatcher）
+	local function kp_write_json(tbl)
+		local jsonc = require "luci.jsonc"
+		local ok, body = pcall(function() return jsonc.stringify(tbl) end)
+		if not ok or type(body) ~= "string" then
+			body = '{"code":1,"msg":"json encode failed"}'
+		end
+		io.write("Status: 200 OK\r\n")
+		io.write("Content-Type: application/json; charset=utf-8\r\n")
+		io.write("Cache-Control: no-store\r\n")
+		io.write("Content-Length: " .. #body .. "\r\n\r\n")
+		io.write(body)
+		io.flush()
+	end
+
+	-- 把「连续多个 JSON 对象」的串切成对象数组。
+	-- ⚠️ 不能用 jsonc.parse 的返回值取「已消费长度」——luci.jsonc.parse 只返回 1 个值。
+	--    这里逐字符扫描，跟踪花括号深度 + 字符串/转义状态，切出每个顶层对象。
+	local function kp_split_json_objs(s)
+		local out, depth, in_str, esc, start = {}, 0, false, false, nil
+		for i = 1, #s do
+			local c = s:sub(i, i)
+			if in_str then
+				if esc then esc = false
+				elseif c == "\\" then esc = true
+				elseif c == '"' then in_str = false end
+			elseif c == '"' then
+				in_str = true
+				if not start then start = i end
+			elseif c == "{" then
+				if depth == 0 then start = i end
+				depth = depth + 1
+			elseif c == "}" then
+				depth = depth - 1
+				if depth == 0 and start then
+					out[#out + 1] = s:sub(start, i)
+					start = nil
+				end
+			end
+		end
+		return out
+	end
+
+	-- 校验 sysauth 是否为有效 root 会话
+	local function kp_check_auth()
+		local cookie = os.getenv("HTTP_COOKIE") or ""
+		-- sysauth 后面可能不是纯 hex（部分主题会带后缀），放宽到 [^;]+ 再截取
+		local tok = cookie:match("sysauth=([0-9a-fA-F]+)")
+		if not tok or #tok < 16 then return false end
+		local sys = require "luci.sys"
+		local raw = sys.exec("ubus call session list 2>/dev/null") or ""
+		if raw == "" then return false end
+		local jsonc = require "luci.jsonc"
+		for _, chunk in ipairs(kp_split_json_objs(raw)) do
+			local ok, obj = pcall(jsonc.parse, chunk)
+			if ok and type(obj) == "table" then
+				local sid = tostring(obj.ubus_rpc_session or "")
+				if sid == tok then
+					local data = obj.data or {}
+					-- 实测字段名是 data.user（不是 username），两者都认
+					local user = tostring(data.user or data.username or "")
+					if user == "root" then return true end
+				end
+			end
+		end
+		return false
+	end
+
+	-- shell 单引号安全转义（经典 '"'"' 技巧）。
+	-- 为什么必须转义：AT 写命令形如
+	--     AT^NRFREQLOCK=3,1,2,"78,41"
+	-- 里面的双引号如果直接拼进 shell 命令，会被 shell 当成引号定界符吃掉，
+	-- 结果 ubus 收到畸形 JSON，返回体里连 code 字段都没有（表现为 code=nil）。
+	-- 实测对照：
+	--     带引号  AT^NRFREQLOCK=3,1,2,"78,41"   → OK，回读 3/1,2/78/41 锁定生效
+	--     无引号  AT^NRFREQLOCK=3,1,2,78,41    → +CME ERROR: 50，锁定失败
+	-- 所以必须保留引号，且必须让引号安全穿过 shell。
+	local function kp_shq(s)
+		return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+	end
+
+	-- 发 AT 命令（经 ubus）
+	local function kp_at(iface, cmd, wait)
+		local sys = require "luci.sys"
+		local jsonc = require "luci.jsonc"
+		-- JSON 层转义：\ → \\ ，" → \"
+		local jcmd = tostring(cmd):gsub("\\", "\\\\"):gsub('"', '\\"')
+		local payload = string.format(
+			'{"cmd":"%s","wait":%d,"at_log_level":0,"block":1}',
+			jcmd, wait or 1000)
+		local raw = sys.exec(string.format(
+			"ubus call %s at_cmd %s 2>/dev/null", iface, kp_shq(payload))) or ""
+		local ok, data = pcall(jsonc.parse, raw)
+		if ok and type(data) == "table" then return data end
+		return nil
+	end
+
+	local function kp_at_text(res)
+		if type(res) ~= "table" then return "" end
+		return tostring(res.respone or "")
+	end
+
+	-- 只读 AT 白名单：调试台只放这些命令，写操作一律走锁频页签
+	local KP_AT_ALLOW = {
+		["ATI"] = true,
+		["AT+CGSN"] = true,          -- IMEI
+		["AT+GSN"] = true,           -- 串号（部分模块）
+		["AT+CIMI"] = true,          -- IMSI
+		["AT+CPIN?"] = true,         -- SIM 状态
+		["AT+CSQ"] = true,           -- 信号质量（RSSI）
+		["AT+COPS?"] = true,         -- 当前运营商
+		["AT+CEREG?"] = true,        -- 4G/5G 注册状态
+		["AT+CGREG?"] = true,        -- 分组域注册状态
+		["AT^SYSINFO?"] = true,      -- 系统信息
+		["AT^SYSINFOEX"] = true,     -- 系统信息（扩展）
+		["AT^MONNC"] = true,         -- 邻区
+		["AT^NRFREQLOCK?"] = true,   -- 5G 锁频回读
+		["AT^LTEFREQLOCK?"] = true,  -- 4G 锁频回读
+	}
+
+	-- 解析 ^NRFREQLOCK? / ^LTEFREQLOCK? 回读
+	-- 真实响应：AT^NRFREQLOCK?\r\r\n^NRFREQLOCK: 3\r\n0,7\r\n78\r\n41\r\n...\r\nOK\r\n
+	-- 注意开头有 AT 回显行，且第 2 行是 <mobility>,<count>
+	local function kp_parse_lock(res, key)
+		local txt = kp_at_text(res)
+		if txt == "" then return nil end
+		local lines = {}
+		for line in txt:gmatch("[^\r\n]+") do
+			line = kp_trim(line)
+			if line ~= "" and not line:match("^AT") and line ~= "OK" then
+				lines[#lines + 1] = line
+			end
+		end
+		local t, mobility, bands = nil, "0", {}
+		for i, line in ipairs(lines) do
+			local n = line:match("^%^" .. key .. ":%s*(%d+)")
+			if n then
+				t = n
+				local nxt = lines[i + 1]
+				if nxt then
+					local m = nxt:match("^(%d+)%s*,")
+					if m then mobility = m end
+				end
+			elseif t and t ~= "0" then
+				local b = line:match("^(%d+)$")
+				if b then bands[#bands + 1] = b end
+			end
+		end
+		if not t then return nil end
+		if t == "0" then return { type = "0", mobility = "0", bands = {} } end
+		return { type = t, mobility = mobility, bands = bands }
+	end
+
+	-- 邻区扫描（AT^MONNC）
+	-- 每行：RAT,ARFCN,PCI(hex),RSRP,RSRQ,SINR
+	-- 升级点：PCI 同时给十六进制与十进制；标注同频；算相对服务小区的 ΔRSRP；按 RSRP 降序
+	local function kp_do_neighbor(snap)
+		local res = kp_at("atsdcpe", "AT^MONNC", 1500)
+		if type(res) ~= "table" or tostring(res.code) ~= "0" then
+			return false, "模块未响应（可能该卡槽无卡或未注册）"
+		end
+		local serving_pci = snap and tostring(snap.pci or "") or ""
+		local serving_rsrp = (snap and tonumber(snap.rsrp)) or 0
+		local serving_arfcn = (snap and tostring(snap.earfcn or "")) or ""
+		local txt = kp_at_text(res)
+		local cells = {}
+		for line in txt:gmatch("[^\r\n]+") do
+			local mode, arfcn, pci, rsrp, rsrq, sinr =
+				line:match("^%s*%^MONNC:%s*([A-Za-z0-9]+),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*)")
+			if mode then
+				local hex = kp_trim(pci):upper()
+				local dec = tonumber(hex, 16)
+				local arfcn_t = kp_trim(arfcn)
+				local r = tonumber(rsrp)
+				local pct = 0
+				if r then
+					pct = math.floor((r + 140) * 100 / 60)
+					if pct < 5 then pct = 5 end
+					if pct > 100 then pct = 100 end
+				end
+				-- 与设备原生 command_huawei_neighbour 一致：RSRP < -120 视为无效
+				if r and r >= -120 then
+					cells[#cells + 1] = {
+						mode = mode, earfcn = arfcn_t,
+						pci = dec and tostring(dec) or hex,
+						pci_hex = hex,
+						rsrp = rsrp, rsrq = rsrq, sinr = sinr, pct = pct,
+						same_freq = (serving_arfcn ~= "" and arfcn_t == serving_arfcn),
+						delta = (serving_rsrp ~= 0) and (r - serving_rsrp) or nil,
+					}
+				end
+			end
+		end
+		table.sort(cells, function(a, b)
+			return (tonumber(a.rsrp) or -999) > (tonumber(b.rsrp) or -999)
+		end)
+		local sys = require "luci.sys"
+		local ts = kp_trim(sys.exec("date '+%H:%M:%S' 2>/dev/null"))
+		return true, { cells = cells, time = ts, total = #cells }
+	end
+
+	-- 锁频：应用 / 解除
+	local function kp_do_lock(form)
+		local sys = require "luci.sys"
+		local action = kp_trim(form.action)
+		local mode = kp_trim(form.lock_mode)
+		local mobility = (kp_trim(form.lock_mobility) == "1") and "1" or "0"
+
+		local function band_list(name, max_band)
+			local out, seen = {}, {}
+			local raw = form[name]
+			local vals = {}
+			if type(raw) == "table" then vals = raw
+			elseif type(raw) == "string" and raw ~= "" then vals = { raw } end
+			for _, v in ipairs(vals) do
+				local n = tonumber(v)
+				if n and n >= 1 and n <= max_band and not seen[n] then
+					seen[n] = true; out[#out + 1] = tostring(n)
+				end
+			end
+			return out
+		end
+
+		local cmds, summary = {}, {}
+
+		if action == "lock_clear" then
+			cmds[#cmds + 1] = { "AT+CFUN=0", 1500 }
+			cmds[#cmds + 1] = { "AT^NRFREQLOCK=0", 1500 }
+			cmds[#cmds + 1] = { "AT^LTEFREQLOCK=0", 1500 }
+			cmds[#cmds + 1] = { "AT+CFUN=1", 2500 }
+			summary[#summary + 1] = "已下发解除锁定"
+		elseif mode == "band" then
+			local b5 = band_list("band5", 512)
+			local b4 = band_list("band4", 512)
+			if #b5 == 0 and #b4 == 0 then
+				return false, "没有勾选任何频段；如需解除锁定请点「解除锁定」"
+			end
+			cmds[#cmds + 1] = { "AT+CFUN=0", 1500 }
+			if #b5 > 0 then
+				table.sort(b5, function(a, b) return tonumber(a) > tonumber(b) end)
+				cmds[#cmds + 1] = { string.format('AT^NRFREQLOCK=3,%s,%d,"%s"',
+					mobility, #b5, table.concat(b5, ",")), 2500 }
+				summary[#summary + 1] = "5G 频段 " .. table.concat(b5, "/")
+			else
+				cmds[#cmds + 1] = { "AT^NRFREQLOCK=0", 1500 }
+			end
+			if #b4 > 0 then
+				table.sort(b4, function(a, b) return tonumber(a) > tonumber(b) end)
+				cmds[#cmds + 1] = { string.format('AT^LTEFREQLOCK=3,%s,%d,"%s"',
+					mobility, #b4, table.concat(b4, ",")), 2500 }
+				summary[#summary + 1] = "4G 频段 " .. table.concat(b4, "/")
+			else
+				cmds[#cmds + 1] = { "AT^LTEFREQLOCK=0", 1500 }
+			end
+			cmds[#cmds + 1] = { "AT+CFUN=1", 2500 }
+		elseif mode == "cell" then
+			local a5 = tonumber(kp_trim(form.earfcn5))
+			local p5 = tonumber(kp_trim(form.pci5))
+			local a4 = tonumber(kp_trim(form.earfcn4))
+			local p4 = tonumber(kp_trim(form.pci4))
+			if a5 and (a5 < 0 or a5 > 875000) then return false, "5G 频点超出范围（0–875000）" end
+			if p5 and (p5 < 0 or p5 > 1007) then return false, "5G PCI 超出范围（0–1007）" end
+			if a4 and (a4 < 0 or a4 > 875000) then return false, "4G 频点超出范围（0–875000）" end
+			if p4 and (p4 < 0 or p4 > 503) then return false, "4G PCI 超出范围（0–503）" end
+			if not a5 and not a4 then return false, "按小区锁定时至少需要填写一个制式的频点" end
+
+			cmds[#cmds + 1] = { "AT+CFUN=0", 1500 }
+			if a5 then
+				-- TD Tech 按频点锁定：type=2,<mobility>,1,"<arfcn>"
+				cmds[#cmds + 1] = { string.format('AT^NRFREQLOCK=2,%s,1,"%d"', mobility, a5), 2500 }
+				summary[#summary + 1] = string.format("5G ARFCN %d%s", a5, p5 and (" PCI " .. p5) or "")
+			else
+				cmds[#cmds + 1] = { "AT^NRFREQLOCK=0", 1500 }
+			end
+			if a4 then
+				cmds[#cmds + 1] = { string.format('AT^LTEFREQLOCK=2,%s,1,"%d"', mobility, a4), 2500 }
+				summary[#summary + 1] = string.format("4G ARFCN %d%s", a4, p4 and (" PCI " .. p4) or "")
+			else
+				cmds[#cmds + 1] = { "AT^LTEFREQLOCK=0", 1500 }
+			end
+			cmds[#cmds + 1] = { "AT+CFUN=1", 2500 }
+		else
+			return false, "未识别的锁定模式"
+		end
+
+		local detail = {}
+		for _, c in ipairs(cmds) do
+			local res = kp_at("atsdcpe", c[1], c[2])
+			local txt = kp_at_text(res)
+			local state
+			if txt:find("+CME ERROR", 1, true) or txt:find("ERROR", 1, true) then
+				state = kp_trim(txt:match("([%+%w%s:]*ERROR[^\r\n]*)")) or "ERROR"
+			elseif txt:find("OK", 1, true) then
+				state = "OK"
+			elseif type(res) == "table" then
+				state = "code=" .. tostring(res.code)
+			else
+				state = "无响应"
+			end
+			detail[#detail + 1] = c[1] .. " → " .. state
+		end
+
+		-- 同步 uci cpecfg，保持与系统设置一致
+		local sim = kp_trim(sys.exec("uci -q get cpesel.sim.cur 2>/dev/null"))
+		if sim == "" then sim = "1" end
+		if action == "lock_clear" then
+			sys.exec("uci -q set cpecfg.cpesim" .. sim .. ".custom_freq=0")
+			sys.exec("uci -q set cpecfg.cpesim" .. sim .. ".custom_earfcn5=0")
+			sys.exec("uci -q set cpecfg.cpesim" .. sim .. ".custom_earfcn4=0")
+			sys.exec("uci -q delete cpecfg.cpesim" .. sim .. ".freq")
+			sys.exec("uci -q delete cpecfg.cpesim" .. sim .. ".earfcn5")
+			sys.exec("uci -q delete cpecfg.cpesim" .. sim .. ".earfcn4")
+			sys.exec("uci -q commit cpecfg")
+		end
+
+		return true, table.concat(summary, "；"), table.concat(detail, " | ")
+	end
+
+	-- ===== 蜂窝运维：采样 / 历史 / 事件 =====
+	-- 设计：只读，不写 UCI；状态文件放 /tmp，随重启清空。
+	--   /tmp/kpc-cell-hist.json   最近 180 个采样点（10 s 一点 ≈ 30 分钟）
+	--   /tmp/kpc-cell-events.json 最近 40 条事件（切小区/脱网/恢复/信号骤降/高温）
+	local HIST_FILE, EVT_FILE = "/tmp/kpc-cell-hist.json", "/tmp/kpc-cell-events.json"
+	local HIST_MAX, EVT_MAX, HIST_KEEP = 180, 40, 90
+
+	local function kp_json_read(path)
+		local f = io.open(path, "r")
+		if not f then return nil end
+		local raw = f:read("*a")
+		f:close()
+		if not raw or raw == "" then return nil end
+		local jsonc = require "luci.jsonc"
+		local ok, data = pcall(jsonc.parse, raw)
+		if ok and type(data) == "table" then
+			if type(data.list) == "table" then return data.list end
+			return data
+		end
+		return nil
+	end
+
+	local function kp_json_write(path, tbl)
+		local jsonc = require "luci.jsonc"
+		local ok, body = pcall(function() return jsonc.stringify(tbl) end)
+		if not ok or type(body) ~= "string" then return false end
+		local tmp = path .. ".tmp"
+		local f = io.open(tmp, "w")
+		if not f then return false end
+		f:write(body)
+		f:close()
+		os.remove(path)
+		os.rename(tmp, path)
+		return true
+	end
+
+	-- 当前蜂窝快照（ubus 只读，无 AT 延迟）
+	local function kp_cell_snapshot()
+		local sys = require "luci.sys"
+		local jsonc = require "luci.jsonc"
+		local raw = sys.exec("ubus call infocd cpestatus '{\"name\":\"cpe\"}' 2>/dev/null") or ""
+		local ok, obj = pcall(jsonc.parse, raw)
+		if not ok or type(obj) ~= "table" or type(obj.result) ~= "table" then return nil end
+		-- 兼容 result 为数组或单个对象两种返回形态
+		local list = obj.result
+		if type(list.status) == "table" or type(list.name) == "string" then list = { list } end
+		local st
+		for _, e in ipairs(list) do
+			local sub = e.status or e
+			if type(sub) == "table" and tostring(sub.name) == "cpe" then st = sub break end
+		end
+		if not st then
+			for _, e in ipairs(list) do
+				local sub = e.status or e
+				if type(sub) == "table" and tostring(sub.model or "") ~= "" then st = sub break end
+			end
+		end
+		if type(st) ~= "table" then return nil end
+		local function s(k) return kp_trim(st[k]) end
+		local function n(k) return tonumber(kp_trim(st[k])) or 0 end
+		-- 字段名各家不同：本机实测是 download/upload/sim_mon/sim_flow，
+		-- 老代码写的 flow_dl/flow_ul/mon_flow/total_flow 实际不存在 → 恒为 0
+		local function pick(...)
+			for _, k in ipairs({ ... }) do
+				local v = kp_trim(st[k])
+				if v ~= "" then return tonumber(v) or 0 end
+			end
+			return 0
+		end
+		return {
+			mode = s("mode"), band = s("band"), earfcn = s("earfcn"),
+			pci = s("pci"), cid = s("cell"), tac = s("tac"),
+			rsrp = n("rsrp"), rsrq = n("rsrq"), sinr = n("sinr"), cqi = n("CQI"),
+			dl = pick("download", "flow_dl"), ul = pick("upload", "flow_ul"),
+			mon = pick("sim_mon", "mon_flow"), total = pick("sim_flow", "total_flow"),
+			temp = n("model_temp"), sim = s("simno"), iccid = s("iccid"),
+			model = s("model"), rev = s("revision"),
+		}
+	end
+
+	-- ===== TA → 距离（通用换算，支持标定覆盖） =====
+	-- 协议默认（3GPP TS 38.211 §4.3.1、TS 38.213 §4.2）：
+	--   NR  每步往返 16×64×Tc/2^μ → 单向 78.125/2^μ 米（μ=0/1/2/3 对应 SCS 15/30/60/120 kHz）
+	--   LTE 每步往返 16×Ts        → 单向 78.125 米（等价 μ=0）
+	-- 但模块上报的单位并不标准化，所以留了标定口子：
+	--   uci kpnet.ta.step  = 米/单位（实测标定后写入，优先级最高）
+	--   uci kpnet.ta.scs   = NR 子载波间隔（默认 30 kHz，n78/n41/n79 常见）
+	local TA_BASE_M = 78.125
+
+	local function kp_ta_step(mode)
+		local sys = require "luci.sys"
+		local ov = tonumber(kp_trim(sys.exec("uci -q get kpnet.ta.step 2>/dev/null")))
+		if ov and ov > 0.1 and ov < 10000 then return ov, "calibrated" end
+		local m = tostring(mode or ""):upper()
+		if m:find("LTE", 1, true) or m:find("4G", 1, true) then
+			return TA_BASE_M, "lte"
+		end
+		local scs = tonumber(kp_trim(sys.exec("uci -q get kpnet.ta.scs 2>/dev/null"))) or 30
+		local mu = 0
+		if scs >= 120 then mu = 3
+		elseif scs >= 60 then mu = 2
+		elseif scs >= 30 then mu = 1 end
+		return TA_BASE_M / (2 ^ mu), "nr"
+	end
+
+	local function kp_ta_estimate(raw, mode)
+		local v = tonumber(raw)
+		if not v or v < 0 then return nil end
+		local step, src = kp_ta_step(mode)
+		local dist = v * step
+		local function rr(x) return math.floor(x + 0.5) end
+		return {
+			raw = v, step_m = string.format("%.1f", step), source = src,
+			meters = rr(dist),
+			low = math.max(0, rr(dist - step)),
+			high = rr(dist + step),
+			text = string.format("≈ %d m（±%d m，估算）", rr(dist), rr(step)),
+		}
+	end
+
+	-- 从 AT+C5GREG? 里取 TA 候选 / TAC / NCI
+	-- 返回：ta_candidate, tac, nci
+	local function kp_read_c5greg()
+		local txt = kp_at_text(kp_at("atsdcpe", "AT+C5GREG?", 1200))
+		local tac, nci, cand
+		for line in txt:gmatch("[^\r\n]+") do
+			local rest = line:match("^%+C5GREG:%s*(.+)$")
+			if rest then
+				local _, _, t, c, _, tail = rest:match('^(%d+),(%d+),"([^"]*)","([^"]*)",(%d+),(.*)$')
+				if t then tac, nci = t, c end
+				if tail then
+					for tok in tail:gmatch("[^,]+") do
+						tok = kp_trim(tok)
+						if tok:match("^%d+$") then
+							local nv = tonumber(tok)
+							if nv and nv <= 1282 then cand = nv end
+						end
+					end
+				end
+			end
+		end
+		return cand, tac, nci
+	end
+
+	-- ===== RSRP 路损 → 距离（第二路估算，用于与 TA 交叉校验） =====
+	-- 关键：必须用「每 RE 功率」而不是基站总功率，否则会差 30 dB 量级。
+	-- 可调参数（uci，缺省时用默认值）：
+	--   kpnet.rf.eirp_re  每 RE 等效全向辐射功率 dBm，默认 20
+	--   kpnet.rf.n        路损指数，默认 3.3（城区）；郊区 2.7~3.0
+	local LTE_BAND_MHZ = {
+		["1"] = 2100, ["3"] = 1800, ["5"] = 850, ["8"] = 900,
+		["34"] = 2015, ["38"] = 2595, ["39"] = 1895, ["40"] = 2350, ["41"] = 2555,
+	}
+
+	local function kp_rf_cfg()
+		local sys = require "luci.sys"
+		local eirp = tonumber(kp_trim(sys.exec("uci -q get kpnet.rf.eirp_re 2>/dev/null")))
+		local n = tonumber(kp_trim(sys.exec("uci -q get kpnet.rf.n 2>/dev/null")))
+		if not eirp or eirp <= 0 then eirp = 20 end
+		if not n or n < 1.5 or n > 6 then n = 3.3 end
+		return { eirp = eirp, n = n }
+	end
+
+	-- NR-ARFCN → MHz（3GPP TS 38.104 Table 5.4.2.1-1）
+	local function kp_nr_freq_mhz(arfcn)
+		local v = tonumber(arfcn)
+		if not v or v <= 0 then return nil end
+		if v < 600000 then return v * 0.005 end
+		if v < 2016667 then return 3000 + (v - 600000) * 0.015 end
+		return 24250.08 + (v - 2016667) * 0.06
+	end
+
+	local function kp_pl_distance(rsrp, freq_mhz, cfg)
+		local r = tonumber(rsrp)
+		if not r or r == 0 or r > -30 then return nil end
+		cfg = cfg or kp_rf_cfg()
+		local f = tonumber(freq_mhz) or 3500
+		local pl = cfg.eirp - r
+		local fspl1 = 32.44 + 20 * math.log10(f)
+		local d_km = 10 ^ ((pl - fspl1) / (10 * cfg.n))
+		if d_km <= 0 or d_km > 100 then return nil end
+		return {
+			meters = math.floor(d_km * 1000 + 0.5),
+			pl = math.floor(pl * 10 + 0.5) / 10,
+			freq = math.floor(f + 0.5),
+			eirp = cfg.eirp, n = string.format("%.1f", cfg.n),
+		}
+	end
+
+	-- 两路估算的一致性：相差 ≥3 倍判为不可信
+	local function kp_dist_check(ta, pl)
+		if not ta or not pl or pl.meters <= 0 or ta.meters <= 0 then return nil end
+		local hi = math.max(ta.meters, pl.meters)
+		local lo = math.min(ta.meters, pl.meters)
+		local ratio = hi / lo
+		return {
+			ratio = math.floor(ratio * 10 + 0.5) / 10,
+			consistent = ratio < 3,
+			text = (ratio >= 3)
+				and string.format("两路相差 %.1f 倍，不可信", ratio)
+				or string.format("两路接近（%.1f 倍），可参考", ratio),
+		}
+	end
+
+	-- 服务小区全量（含 NCI / TA / 服务域 / MCC-MNC）
+	-- 三条 AT 串行约 3 秒，调用方必须缓存，不能进 poll 主链路
+	local function kp_cell_detail()
+		local snap = kp_cell_snapshot()
+		local d = { code = 0, ts = os.time(), serving = snap }
+		if not snap then return d end
+
+		local cand, tac, nci = kp_read_c5greg()
+		d.tac = tac or snap.tac
+		d.nci = nci
+		if cand then
+			d.ta = kp_ta_estimate(cand, snap.mode)
+			if d.ta then
+				d.ta.field = "C5GREG.tail"
+				d.ta.unverified = true
+			end
+		end
+
+		-- ^HCSQ 的编码各家不一，这里只透传原始值，不当 dBm 用
+		local htxt = kp_at_text(kp_at("atsdcpe", "AT^HCSQ?", 1200))
+		d.hcsq_raw = kp_trim(htxt:match("%^HCSQ:%s*([^\r\n]+)") or "")
+
+		-- 服务域 + MCC/MNC：SYSINFOEX 给域，MONSC 给网络号
+		local stxt = kp_at_text(kp_at("atsdcpe", "AT^SYSINFOEX", 1200))
+		-- 回显行在前，不能锚定行首
+		d.domain = stxt:match('%^SYSINFOEX:[^"\r\n]*"([^"]+)"') or ""
+
+		local mtxt = kp_at_text(kp_at("atsdcpe", "AT^MONSC", 1200))
+		local mline = mtxt:match("%^MONSC:%s*([^\r\n]+)")
+		if mline then
+			local f = {}
+			for v in mline:gmatch("[^,]+") do f[#f + 1] = kp_trim(v) end
+			if #f >= 4 then
+				d.mcc, d.mnc = f[2], f[3]
+			end
+			if #f >= 7 then
+				-- 第 7 段是十六进制 PCI，与服务小区交叉校验
+				local h = tonumber(f[7], 16)
+				if h then d.pci_hex = string.format("%X", h) end
+			end
+		end
+
+		-- 第二路估算：RSRP 路损反推，并与 TA 做一致性判定
+		local cfg = kp_rf_cfg()
+		local freq = kp_nr_freq_mhz(snap.earfcn) or LTE_BAND_MHZ[tostring(snap.band or "")]
+		if not freq and tostring(snap.mode or ""):upper():find("NR", 1, true) then freq = 3500 end
+		d.pl = kp_pl_distance(snap.rsrp, freq, cfg)
+		if d.ta then d.ta.check = kp_dist_check(d.ta, d.pl) end
+
+		return d
+	end
+
+	-- 采一个点：追加历史、检测事件、返回 (当前点, 最近 90 点, 事件表)
+	local function kp_cell_sample()
+		local snap = kp_cell_snapshot()
+		if not snap then return nil, nil, nil end
+		local now = os.time()
+		local hist = kp_json_read(HIST_FILE) or {}
+		local evts = kp_json_read(EVT_FILE) or {}
+		if type(hist) ~= "table" then hist = {} end
+		if type(evts) ~= "table" then evts = {} end
+
+		local last = hist[#hist]
+		local dt = (last and type(last.t) == "number") and (now - last.t) or 0
+
+		-- 吞吐速率（字节/秒）：用累计计数器做差
+		-- 护栏：上一包计数为 0（历史脏点/刚重启）时不计算，避免出现巨额尖峰；
+		--       超过 200 MB/s 的结果直接丢弃（模块不可能达到，属计数跳变）
+		snap.dlr, snap.ulr = 0, 0
+		if last and dt > 0 and dt <= 600 then
+			local ldl, lul = tonumber(last.dl) or 0, tonumber(last.ul) or 0
+			if ldl > 0 and snap.dl >= ldl then
+				local v = (snap.dl - ldl) / dt
+				if v <= 209715200 then snap.dlr = math.floor(v) end
+			end
+			if lul > 0 and snap.ul >= lul then
+				local v = (snap.ul - lul) / dt
+				if v <= 209715200 then snap.ulr = math.floor(v) end
+			end
+		end
+		snap.t = now
+
+		-- 事件检测（只在相邻两点之间比较，避免重复报）
+		local function ev(lv, msg) evts[#evts + 1] = { t = now, lv = lv, msg = msg } end
+		if last and dt > 0 then
+			local lp, lc = tostring(last.pci or ""), tostring(last.cid or "")
+			if lp ~= "" and snap.pci ~= "" and lp ~= snap.pci then
+				ev("info", string.format("小区切换 PCI %s → %s（%s %s → %s %s）",
+					lp, snap.pci, tostring(last.band or "-"), tostring(last.earfcn or "-"),
+					snap.band, snap.earfcn))
+			elseif lc ~= "" and snap.cid ~= "" and lc ~= snap.cid then
+				ev("info", string.format("服务小区变更 Cell %s → %s", lc, snap.cid))
+			end
+			local was_down = (tostring(last.mode or "") == "")
+			local is_down = (snap.mode == "")
+			if is_down and not was_down then
+				ev("err", "蜂窝网脱网：模块无服务")
+			elseif was_down and not is_down then
+				ev("ok", "已恢复注册：" .. snap.mode .. (snap.band ~= "" and (" · " .. snap.band) or ""))
+			end
+			local lr, cr = tonumber(last.rsrp) or 0, snap.rsrp
+			if lr < 0 and cr < 0 and lr >= -105 and cr < -110 then
+				ev("warn", string.format("信号骤降 %d → %d dBm", lr, cr))
+			end
+			local lt = tonumber(last.temp) or 0
+			if lt > 0 and lt < 70 and snap.temp >= 70 then
+				ev("warn", string.format("模块温度达到 %d °C", snap.temp))
+			end
+			-- SIM 变更检测：只记录 ICCID 末 6 位，避免把完整卡号写进日志
+			local li = tostring(last.iccid or "")
+			if li ~= "" and snap.iccid ~= "" and li ~= snap.iccid then
+				ev("warn", "SIM 卡变更：ICCID 尾号 " .. snap.iccid:sub(-6))
+			end
+		end
+
+		-- 10 s 一点；高频请求只覆盖最后一点，避免刷爆数组
+		if dt >= 8 or #hist == 0 then
+			hist[#hist + 1] = snap
+		else
+			hist[#hist] = snap
+		end
+		while #hist > HIST_MAX do table.remove(hist, 1) end
+		while #evts > EVT_MAX do table.remove(evts, 1) end
+
+		kp_json_write(HIST_FILE, hist)
+		kp_json_write(EVT_FILE, evts)
+
+		local out = {}
+		for i = math.max(1, #hist - HIST_KEEP + 1), #hist do out[#out + 1] = hist[i] end
+		return snap, out, evts
+	end
+
+	-- 信号质量分档统计（RSRP / SINR 各 5 档）
+	-- 分档与页面提示、阈值保持一致，避免两处口径漂移
+	local RSRP_EDGES = { -85, -95, -105, -115 }
+	local SINR_EDGES = { 20, 13, 5, 0 }
+
+	local function kp_bin_index(v, edges)
+		for i = 1, #edges do
+			if v >= edges[i] then return i end
+		end
+		return #edges + 1
+	end
+
+	local function kp_histograms(hist)
+		local rb, sb = { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
+		local rv, sv = {}, {}
+		for _, p in ipairs(hist) do
+			local r = tonumber(p.rsrp) or 0
+			if r < 0 then
+				local ri = kp_bin_index(r, RSRP_EDGES)
+				rb[ri] = rb[ri] + 1
+				rv[#rv + 1] = r
+			end
+			local raw = p.sinr
+			if raw ~= nil and raw ~= "" then
+				local s = tonumber(raw)
+				if s then
+					local si = kp_bin_index(s, SINR_EDGES)
+					sb[si] = sb[si] + 1
+					sv[#sv + 1] = s
+				end
+			end
+		end
+
+		local function pct_list(bins, total)
+			local out = {}
+			for i = 1, 5 do
+				out[i] = total > 0 and math.floor(bins[i] * 100 / total + 0.5) or 0
+			end
+			return out
+		end
+
+		local function summarize(t)
+			local n = #t
+			if n == 0 then return { n = 0, avg = 0, min = 0, max = 0, p10 = 0, p50 = 0, p90 = 0 } end
+			local sum = 0
+			for _, v in ipairs(t) do sum = sum + v end
+			table.sort(t)
+			local function pick(q)
+				local i = math.floor(n * q + 0.5)
+				if i < 1 then i = 1 end
+				if i > n then i = n end
+				return t[i]
+			end
+			return { n = n, avg = math.floor(sum / n + 0.5), min = t[1], max = t[n],
+				p10 = pick(0.10), p50 = pick(0.50), p90 = pick(0.90) }
+		end
+
+		local rn, sn = 0, 0
+		for i = 1, 5 do rn = rn + rb[i]; sn = sn + sb[i] end
+		return {
+			rsrp = { bins = rb, total = rn, pct = pct_list(rb, rn), s = summarize(rv) },
+			sinr = { bins = sb, total = sn, pct = pct_list(sb, sn), s = summarize(sv) },
+		}
+	end
+
+	local function kp_fmt_bytes(n)
+		n = tonumber(n) or 0
+		if n >= 1073741824 then return string.format("%.2f GiB", n / 1073741824) end
+		if n >= 1048576 then return string.format("%.1f MiB", n / 1048576) end
+		if n >= 1024 then return string.format("%.1f KiB", n / 1024) end
+		return string.format("%d B", n)
+	end
+
+	-- 纯文本诊断报告（下载）
+	local function kp_write_report(snap, hist, evts)
+		local lines = {}
+		local function add(s) lines[#lines + 1] = s end
+		add("NRadio 蜂窝诊断报告")
+		add("生成时间: " .. os.date("%Y-%m-%d %H:%M:%S"))
+		add(string.rep("-", 46))
+		if not snap then
+			add("模块无响应：infocd cpestatus 未返回可用状态。")
+		else
+			add(string.format("制式 %s · 频段 %s · 频点 %s · PCI %s",
+				snap.mode == "" and "-" or snap.mode,
+				snap.band == "" and "-" or snap.band,
+				snap.earfcn == "" and "-" or snap.earfcn,
+				snap.pci == "" and "-" or snap.pci))
+			add(string.format("TAC %s · Cell %s · SIM %s",
+				snap.tac == "" and "-" or snap.tac,
+				snap.cid == "" and "-" or snap.cid,
+				snap.sim == "" and "-" or snap.sim))
+			add(string.format("RSRP %d dBm · RSRQ %d dB · SINR %d dB · CQI %d",
+				snap.rsrp, snap.rsrq, snap.sinr, snap.cqi))
+			add(string.format("模块温度 %d °C · 本月 %s · 累计 %s",
+				snap.temp, kp_fmt_bytes(snap.mon), kp_fmt_bytes(snap.total)))
+		end
+		add(string.rep("-", 46))
+		local n = 0
+		local minr, maxr, sumr, mins, maxs, sums = 0, 0, 0, 0, 0, 0
+		for _, p in ipairs(hist or {}) do
+			local r, s2 = tonumber(p.rsrp) or 0, tonumber(p.sinr) or 0
+			if r < 0 then
+				n = n + 1
+				if minr == 0 or r < minr then minr = r end
+				if r > maxr then maxr = r end
+				sumr = sumr + r
+				if mins == 0 or s2 < mins then mins = s2 end
+				if s2 > maxs then maxs = s2 end
+				sums = sums + s2
+			end
+		end
+		if n > 0 then
+			add(string.format("历史样本 %d 点（本页打开期间）", n))
+			add(string.format("RSRP min/avg/max: %d / %.0f / %d dBm", minr, sumr / n, maxr))
+			add(string.format("SINR min/avg/max: %d / %.1f / %d dB", mins, sums / n, maxs))
+		else
+			add("历史样本：无（打开蜂窝页后开始采样）")
+		end
+		add(string.rep("-", 46))
+		add("最近事件:")
+		local from = math.max(1, #(evts or {}) - 19)
+		if #(evts or {}) == 0 then add("  （无）") end
+		for i = from, #(evts or {}) do
+			local e = evts[i]
+			add(string.format("  [%s] %-4s %s", os.date("%H:%M:%S", e.t or 0), e.lv or "-", e.msg or ""))
+		end
+		local body = table.concat(lines, "\n") .. "\n"
+		io.write("Status: 200 OK\r\n")
+		io.write("Content-Type: text/plain; charset=utf-8\r\n")
+		io.write('Content-Disposition: attachment; filename="kpc-cell-diag.txt"\r\n')
+		io.write("Cache-Control: no-store\r\n")
+		io.write("Content-Length: " .. #body .. "\r\n\r\n")
+		io.write(body)
+		io.flush()
+	end
+
+	-- ===== 网优：在线设备 / 分设备限速 / 优先级 =====
+	-- 方案：Linux tc HTB 软件整形。
+	--   · 下行整形在 WAN 口（按目的 IP 分类），上行整形在 LAN 口（按源 IP 分类）
+	--   · 每设备一个 class，叶子挂 fq_codel；兜底 class 给未列名设备
+	--   · HNAT 硬件转发会绕过 qdisc → 启用期间挂起 mtkhnat，关闭/重置时恢复
+	-- 状态：UCI 包 kpnet（重启后自动恢复）+ /tmp/kpc-qos/（class 映射与速率采样）
+	local QOS_DIR = "/tmp/kpc-qos"
+	local QOS_STATE = QOS_DIR .. "/state.json"
+	local QOS_RATE = QOS_DIR .. "/rate.json"
+	local QOS_HNAT_FLAG = QOS_DIR .. "/hnat_suspended"
+	local QOS_APPLIER = "/etc/kpnet-qos-apply.sh"
+	local QOS_INIT = "/etc/init.d/kpnet_qos"
+	local QOS_HOTPLUG = "/etc/hotplug.d/iface/99-kpnet-qos"
+	-- 优先级 → tc prio 与带宽天花板（占上行带宽百分比）
+	local QOS_PRIO = {
+		high   = { prio = 1, ceil = 100 },
+		normal = { prio = 2, ceil = 70 },
+		low    = { prio = 3, ceil = 25 },
+	}
+
+	local function qos_exec(cmd)
+		local sys = require "luci.sys"
+		return sys.exec(cmd .. " 2>/dev/null") or ""
+	end
+
+	local function qos_flag(path)
+		local f = io.open(path, "r")
+		if f then f:close() return true end
+		return false
+	end
+
+	-- 读小文件（/tmp、/proc 等）；本块没有 read_file，统一走 io.open
+	local function qos_read(path)
+		local f = io.open(path, "r")
+		if not f then return "" end
+		local body = f:read("*a") or ""
+		f:close()
+		return body
+	end
+
+	local function qos_write(path, body, mode)
+		local f = io.open(path, "w")
+		if not f then return false end
+		f:write(body)
+		f:close()
+		if mode then qos_exec("chmod " .. mode .. " " .. path) end
+		return true
+	end
+
+	-- 在线设备：DHCP 租约 + 无线关联 + ARP
+	local function kp_dev_collect()
+		local devs, by_mac = {}, {}
+		local function upsert(mac, ip, host)
+			mac = (mac or ""):lower()
+			if mac == "" or not mac:match("^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") then return nil end
+			local d = by_mac[mac]
+			if not d then
+				d = { mac = mac, ip = "", host = "", kind = "lan", sig = 0, band = "",
+					online = false }
+				by_mac[mac] = d
+				devs[#devs + 1] = d
+			end
+			if ip and ip ~= "" and d.ip == "" then d.ip = ip end
+			if host and host ~= "" and host ~= "*" and d.host == "" then d.host = host end
+			return d
+		end
+
+		-- DHCP 租约
+		for line in (qos_read("/tmp/dhcp.leases")):gmatch("[^\n]+") do
+			local exp, mac, ip, host = line:match("^(%d+)%s+(%S+)%s+(%S+)%s+(%S+)")
+			if mac and ip then
+				local d = upsert(mac, ip, host)
+				if d then d.dhcp = true end
+			end
+		end
+
+		-- 无线关联（信号 / 频段）
+		for line in (qos_read("/proc/net/dev")):gmatch("[^\n]+") do
+			local name = line:match("^%s*([%w%.%-]+):")
+			if name and (name:match("^ra%d+$") or name:match("^rai%d+$")) then
+				local info = qos_exec("iwinfo " .. name .. " info") or ""
+				local ch = kp_trim(info:match("Channel:%s*(%d+)"))
+				local band = ""
+				if ch ~= "" then band = ((tonumber(ch) or 0) <= 14) and "2.4G" or "5G" end
+				local out = qos_exec("iwinfo " .. name .. " assoclist") or ""
+				for aline in out:gmatch("[^\n]+") do
+					-- 注意：MAC 必须写在字符集外，[%x%x] 在 Lua 里等价于单字符集合
+					local mac, sig = aline:match("^%s*(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)%s+(%-?%d+)%s*dBm")
+					if mac then
+						local d = upsert(mac)
+						if d then
+							d.kind, d.band, d.sig, d.iface = "wifi", band, tonumber(sig) or 0, name
+						end
+					end
+				end
+			end
+		end
+
+		-- ARP（在线状态）：只看 LAN 侧，避免把 WAN 网关/上游设备混进来
+		for line in (qos_exec("ip neigh show") or ""):gmatch("[^\n]+") do
+			local ip, devname, mac, state = line:match(
+				"^(%d+%.%d+%.%d+%.%d+)%s+dev%s+(%S+)%s+lladdr%s+(%S+)%s+(%u+)")
+			if ip and mac and devname == "br-lan" then
+				local d = upsert(mac, ip)
+				if d then
+					d.online = (state == "REACHABLE" or state == "DELAY"
+						or state == "PROBE" or state == "STALE")
+				end
+			end
+		end
+
+		for _, d in ipairs(devs) do
+			if d.host == "" then d.host = d.mac:sub(-8) end
+		end
+		table.sort(devs, function (a, b)
+			if a.online ~= b.online then return a.online end
+			return a.mac < b.mac
+		end)
+		return devs
+	end
+
+	local function qos_load_state()
+		local st = kp_json_read(QOS_STATE)
+		if type(st) ~= "table" then st = {} end
+		return st
+	end
+
+	-- 解析 tc class 统计：class htb <root>:<id> ... Sent N bytes
+	local function qos_class_bytes(dev)
+		local out = qos_exec("tc -s class show dev " .. dev) or ""
+		local map, cur = {}, nil
+		for line in out:gmatch("[^\n]+") do
+			local id = line:match("^class htb %d+:(%d+)")
+			if id then cur = tonumber(id) end
+			local sent = line:match("^%s*Sent (%d+) bytes")
+			if cur and sent then map[cur] = (map[cur] or 0) + tonumber(sent) end
+		end
+		return map
+	end
+
+	-- 速率 = 本次 class 计数 - 上次快照；快照至少间隔 1 秒
+	local function qos_rate_sample(state)
+		local now = os.time()
+		local devs = (type(state.devices) == "table") and state.devices or {}
+		if #devs == 0 then return {} end
+		local dl = qos_class_bytes(state.wan or "eth3")
+		local ul = qos_class_bytes(state.lan or "br-lan")
+		local prev = kp_json_read(QOS_RATE) or {}
+		local prevt = tonumber(prev.t) or 0
+		local dt = now - prevt
+		local rates = {}
+		for _, d in ipairs(devs) do
+			local id = tonumber(d.id) or 0
+			local rd, ru = 0, 0
+			if dt >= 1 and dt <= 600 and id > 0 then
+				local pd = tonumber((prev.dl or {})[tostring(id)]) or 0
+				local pu = tonumber((prev.ul or {})[tostring(id)]) or 0
+				if dl[id] and dl[id] >= pd then rd = math.floor((dl[id] - pd) / dt) end
+				if ul[id] and ul[id] >= pu then ru = math.floor((ul[id] - pu) / dt) end
+			end
+			rates[d.mac] = { dl = rd, ul = ru }
+		end
+		local snap = { t = now, dl = {}, ul = {} }
+		for id, v in pairs(dl) do snap.dl[tostring(id)] = v end
+		for id, v in pairs(ul) do snap.ul[tostring(id)] = v end
+		kp_json_write(QOS_RATE, snap)
+		return rates
+	end
+
+	local function qos_rate_clear()
+		os.remove(QOS_RATE)
+	end
+
+	-- 生成整形脚本（值全部来自已校验的配置）
+	local function qos_build_script(cfg)
+		local wan, lan = cfg.wan, cfg.lan
+		local plan = cfg.plan
+		local defdown, defup = cfg.default_down, cfg.default_up
+		local defp = QOS_PRIO[cfg.default_prio] or QOS_PRIO.normal
+		local L = {}
+		L[#L + 1] = "#!/bin/sh"
+		L[#L + 1] = "# 由 8080 状态页生成：分设备限速 + 优先级（HTB + fq_codel）"
+		L[#L + 1] = "WAN=" .. wan
+		L[#L + 1] = "LAN=" .. lan
+		L[#L + 1] = "PLAN=" .. plan
+		L[#L + 1] = ""
+		L[#L + 1] = "# HNAT 硬件转发会绕过 qdisc，限速期间挂起"
+		L[#L + 1] = "if [ -x /etc/init.d/mtkhnat ]; then"
+		L[#L + 1] = "  /etc/init.d/mtkhnat stop >/dev/null 2>&1"
+		L[#L + 1] = "  mkdir -p " .. QOS_DIR
+		L[#L + 1] = "  : > " .. QOS_HNAT_FLAG
+		L[#L + 1] = "fi"
+		L[#L + 1] = ""
+		L[#L + 1] = "tc qdisc del dev $WAN root 2>/dev/null"
+		L[#L + 1] = "tc qdisc del dev $LAN root 2>/dev/null"
+		L[#L + 1] = ""
+		L[#L + 1] = "root_htb() {"
+		L[#L + 1] = "  d=$1; h=$2"
+		L[#L + 1] = "  tc qdisc add dev $d root handle $h: htb default 99 || return 1"
+		L[#L + 1] = "  tc class add dev $d parent $h: classid $h:99 htb rate ${PLAN}kbit \\"
+		L[#L + 1] = "    ceil ${PLAN}kbit prio " .. defp.prio .. " || return 1"
+		L[#L + 1] = "  tc qdisc add dev $d parent $h:99 handle $((h + 90)): fq_codel || return 1"
+		L[#L + 1] = "}"
+		L[#L + 1] = "root_htb $WAN 1 || exit 1"
+		L[#L + 1] = "root_htb $LAN 2 || exit 1"
+		L[#L + 1] = ""
+		L[#L + 1] = "# 兜底限速（未列名设备）：0 = 不限"
+		L[#L + 1] = "if [ " .. defdown .. " -gt 0 ]; then"
+		L[#L + 1] = "  tc class change dev $WAN parent 1: classid 1:99 htb rate ${defdown}kbit \\"
+		L[#L + 1] = "    ceil ${defdown}kbit prio " .. defp.prio
+		L[#L + 1] = "fi"
+		L[#L + 1] = "if [ " .. defup .. " -gt 0 ]; then"
+		L[#L + 1] = "  tc class change dev $LAN parent 2: classid 2:99 htb rate ${defup}kbit \\"
+		L[#L + 1] = "    ceil ${defup}kbit prio " .. defp.prio
+		L[#L + 1] = "fi"
+		L[#L + 1] = ""
+		L[#L + 1] = "# 每设备：下行按目的 IP（WAN），上行按源 IP（LAN）"
+		for _, d in ipairs(cfg.devices) do
+			local p = QOS_PRIO[d.prio] or QOS_PRIO.normal
+			local id = d.id
+			local down = (tonumber(d.down) or 0)
+			local up = (tonumber(d.up) or 0)
+			local dceil = math.max(down, math.floor(plan * p.ceil / 100))
+			local uceil = math.max(up, math.floor(plan * p.ceil / 100))
+			L[#L + 1] = "# " .. d.mac .. " " .. (d.host or "")
+			L[#L + 1] = "tc class add dev $WAN parent 1: classid 1:" .. id .. " htb rate "
+				.. down .. "kbit ceil " .. dceil .. "kbit prio " .. p.prio .. " || exit 1"
+			L[#L + 1] = "tc qdisc add dev $WAN parent 1:" .. id .. " handle " .. (id + 1000)
+				.. ": fq_codel || exit 1"
+			L[#L + 1] = "tc filter add dev $WAN protocol ip parent 1:0 prio " .. p.prio
+				.. " u32 match ip dst " .. d.ip .. "/32 flowid 1:" .. id .. " || exit 1"
+			L[#L + 1] = "tc class add dev $LAN parent 2: classid 2:" .. id .. " htb rate "
+				.. up .. "kbit ceil " .. uceil .. "kbit prio " .. p.prio .. " || exit 1"
+			L[#L + 1] = "tc qdisc add dev $LAN parent 2:" .. id .. " handle " .. (id + 2000)
+				.. ": fq_codel || exit 1"
+			L[#L + 1] = "tc filter add dev $LAN protocol ip parent 2:0 prio " .. p.prio
+				.. " u32 match ip src " .. d.ip .. "/32 flowid 2:" .. id .. " || exit 1"
+		end
+		L[#L + 1] = "exit 0"
+		return table.concat(L, "\n") .. "\n"
+	end
+
+	-- 直接写 /etc/config/kpnet：本机 uci add/set 对全新包报 "Entry not found"
+	local function qos_uci_write(cfg)
+		local L = {}
+		L[#L + 1] = "config globals 'qos'"
+		L[#L + 1] = "\toption enabled '1'"
+		L[#L + 1] = "\toption wan '" .. cfg.wan .. "'"
+		L[#L + 1] = "\toption lan '" .. cfg.lan .. "'"
+		L[#L + 1] = "\toption plan '" .. cfg.plan .. "'"
+		L[#L + 1] = "\toption default_down '" .. cfg.default_down .. "'"
+		L[#L + 1] = "\toption default_up '" .. cfg.default_up .. "'"
+		L[#L + 1] = "\toption default_prio '" .. cfg.default_prio .. "'"
+		for i, d in ipairs(cfg.devices) do
+			L[#L + 1] = ""
+			L[#L + 1] = "config dev 'dev" .. i .. "'"
+			L[#L + 1] = "\toption mac '" .. d.mac .. "'"
+			L[#L + 1] = "\toption ip '" .. d.ip .. "'"
+			L[#L + 1] = "\toption host '" .. d.host:gsub("[%s\']", "") .. "'"
+			L[#L + 1] = "\toption down '" .. tostring(d.down or 0) .. "'"
+			L[#L + 1] = "\toption up '" .. tostring(d.up or 0) .. "'"
+			L[#L + 1] = "\toption prio '" .. d.prio .. "'"
+		end
+		local ok = qos_write("/etc/config/kpnet", table.concat(L, "\n") .. "\n", "644")
+		if ok then qos_exec("uci commit kpnet") end
+		return ok
+	end
+
+	local function qos_install_persist()
+		qos_write(QOS_INIT, table.concat({
+			"#!/bin/sh /etc/rc.common",
+			"START=98",
+			"start() {",
+			'  [ "$(uci -q get kpnet.@globals[-1].enabled)" = "1" ] || return 0',
+			'  [ -x ' .. QOS_APPLIER .. ' ] && ' .. QOS_APPLIER,
+			"}",
+			"",
+		}, "\n"), "755")
+		qos_write(QOS_HOTPLUG, table.concat({
+			"#!/bin/sh",
+			'# WAN 重新上线后恢复分设备限速',
+			'[ "$ACTION" = "ifup" ] || exit 0',
+			'[ "$(uci -q get kpnet.@globals[-1].enabled)" = "1" ] || exit 0',
+			'[ -x ' .. QOS_APPLIER .. ' ] && ' .. QOS_APPLIER .. ' >/dev/null 2>&1',
+			"",
+		}, "\n"), "755")
+	end
+
+	local function qos_apply(cfg)
+		local body = qos_build_script(cfg)
+		qos_exec("mkdir -p " .. QOS_DIR)
+		qos_write(QOS_DIR .. "/apply.sh", body, "755")
+		local sys = require "luci.sys"
+		local rc = sys.call(QOS_DIR .. "/apply.sh >/tmp/kpc-qos-apply.log 2>&1")
+		if rc ~= 0 then
+			return false, "tc 应用失败（rc=" .. tostring(rc) .. "），已保留原配置"
+		end
+		qos_write(QOS_APPLIER, body, "755")
+		qos_uci_write(cfg)
+		qos_install_persist()
+		-- 运行时状态（class 映射 + 速率基线）
+		local st = { applied = true, wan = cfg.wan, lan = cfg.lan, plan = cfg.plan,
+			default_down = cfg.default_down, default_up = cfg.default_up,
+			default_prio = cfg.default_prio, devices = cfg.devices,
+			orig_wan = kp_trim(qos_exec("tc qdisc show dev " .. cfg.wan):match("^%S+")),
+			orig_lan = kp_trim(qos_exec("tc qdisc show dev " .. cfg.lan):match("^%S+")) }
+		kp_json_write(QOS_STATE, st)
+		qos_rate_clear()
+		return true, "已应用 " .. #cfg.devices .. " 台设备限速"
+	end
+
+	local function qos_reset()
+		local st = qos_load_state()
+		qos_exec("tc qdisc del dev eth3 root 2>/dev/null")
+		qos_exec("tc qdisc del dev br-lan root 2>/dev/null")
+		-- 还原启用前的根队列（eth3 原本是 fq_codel）
+		local function restore(dev, orig)
+			if orig and orig:find("fq_codel", 1, true) then
+				qos_exec("tc qdisc add dev " .. dev .. " root fq_codel 2>/dev/null")
+			end
+		end
+		restore("eth3", st.orig_wan)
+		restore("br-lan", st.orig_lan)
+		if qos_flag(QOS_HNAT_FLAG) then
+			qos_exec("/etc/init.d/mtkhnat start >/dev/null 2>&1")
+		end
+		os.remove(QOS_HNAT_FLAG)
+		os.remove(QOS_APPLIER)
+		os.remove(QOS_INIT)
+		os.remove(QOS_HOTPLUG)
+		os.remove(QOS_STATE)
+		os.remove(QOS_RATE)
+		qos_exec("rm -f /etc/config/kpnet")
+		qos_exec("uci -q delete kpnet; uci commit kpnet")
+		return true, "已恢复默认（清除全部限速与优先级）"
+	end
+
+	-- 校验并组装配置
+	local function qos_parse_cfg(form, devs)
+		local known = {}
+		for _, d in ipairs(devs) do known[d.mac] = d end
+
+		local function num(v, lo, hi, def)
+			local n = tonumber(kp_trim(v))
+			if not n then return def end
+			if n < lo then n = lo end
+			if n > hi then n = hi end
+			return math.floor(n)
+		end
+
+		local cfg = {
+			wan = kp_trim(form.wan),
+			lan = kp_trim(form.lan),
+			plan = num(form.plan, 1000, 5000000, 1000000),
+			default_down = num(form.default_down, 0, 1000000, 0),
+			default_up = num(form.default_up, 0, 1000000, 0),
+			default_prio = "normal",
+		}
+		if cfg.wan == "" then cfg.wan = "eth3" end
+		if cfg.lan == "" then cfg.lan = "br-lan" end
+		local dp = kp_trim(form.default_prio):lower()
+		if QOS_PRIO[dp] then cfg.default_prio = dp end
+
+		-- 设备列表：JSON 字符串（前端 FormData 传）
+		local items = form.devices
+		if type(items) == "string" then
+			local jsonc = require "luci.jsonc"
+			local ok, parsed = pcall(jsonc.parse, items)
+			if ok and type(parsed) == "table" then items = parsed else items = nil end
+		end
+		if type(items) ~= "table" then return nil, "设备配置缺失或格式错误" end
+
+		local out, id, seen = {}, 99, {}
+		for _, it in ipairs(items) do
+			if type(it) == "table" then
+				local mac = kp_trim(it.mac):lower()
+				local dev = known[mac]
+				if not dev then
+					return nil, "设备 " .. (mac == "" and "（空）" or mac) .. " 不在线，请刷新列表"
+				end
+				if dev.ip == "" then
+					return nil, dev.host .. " 未获取到 IP，无法限速"
+				end
+				if seen[mac] then return nil, "设备重复：" .. mac end
+				seen[mac] = true
+				local prio = kp_trim(it.prio):lower()
+				if not QOS_PRIO[prio] then prio = "normal" end
+				id = id + 1
+				out[#out + 1] = {
+					id = id, mac = mac, ip = dev.ip, host = dev.host,
+					down = num(it.down, 0, 1000000, 0),
+					up = num(it.up, 0, 1000000, 0),
+					prio = prio,
+				}
+			end
+		end
+		if #out == 0 then return nil, "没有需要限速的设备" end
+		cfg.devices = out
+		return cfg
+	end
+
+	-- 短信发送
+	local function kp_do_sms(form)
+		local num = kp_trim(form.sms_number):gsub("[%s%-]", "")
+		local text = tostring(form.sms_text or "")
+		if not num:match("^%+?%d+$") then return false, "收件号码格式不正确" end
+		if #num < 3 or #num > 20 then return false, "收件号码长度不正确" end
+		if #text == 0 then return false, "短信内容不能为空" end
+		if #text > 480 then return false, "短信内容超过 480 字符" end
+		-- 去掉控制字符，避免注入 AT 命令
+		local safe = text:gsub("[%z\1-\8\11\12\14-\31\r\n]", " ")
+		if safe:sub(-1) == "\26" then safe = safe:sub(1, -2) end
+
+		kp_at("atsdcpe", "AT+CMGF=1", 1200)
+		kp_at("atsdcpe", 'AT+CMGS="' .. num .. '"', 900)
+		local res = kp_at("atsdcpe", safe .. "\26", 6000)
+		local txt = kp_at_text(res)
+		if txt:find("ERROR", 1, true) then
+			return false, "模块返回错误：" .. kp_trim(txt:gsub("[\r\n]+", " "))
+		end
+		return true, "已提交发送（" .. #text .. " 字符）"
+	end
+
+	-- ---- 请求分发 ----
+	local function kp_try_handle()
+		local path_info = os.getenv("PATH_INFO") or ""
+		local qs = os.getenv("QUERY_STRING") or ""
+		local q = kp_parse_qs(qs)
+		local action = kp_trim(q.action)
+		if action == "" then return false end
+
+		local kind = nil
+		if path_info:match("^/admin/status/cellular/?$") then kind = "cellular"
+		elseif path_info:match("^/admin/status/sms/?$") then kind = "sms"
+		elseif path_info:match("^/admin/docker/?$") then kind = "docker"
+		elseif path_info:match("^/admin/status/docker/?$") then kind = "docker" end
+		if not kind then return false end
+
+		local actions
+		if kind == "cellular" then
+			actions = { neighbor = true, lock_apply = true, lock_clear = true, poll = true,
+			      stats = true, cell = true, ta_cal = true, diag = true, at = true,
+			      devices = true, qos_apply = true, qos_reset = true,
+			      web_listen = true, web_listen_apply = true,
+			      at_raw = true, modem_reboot = true, terminal = true, hnat = true,
+			      swap = true, simlock = true,
+			      backup_full = true, backup_ipk = true, backup_list = true,
+			      backup_get = true, backup_del = true, pkg_restore = true,
+			      docker = true }
+		elseif kind == "docker" then
+			actions = { docker = true }
+		else
+			actions = { sms_send = true, sms_fwd_get = true, sms_fwd_set = true }
+		end
+		if not actions[action] then return false end
+
+		-- 鉴权（必须在任何输出之前）
+		if not kp_check_auth() then
+			kp_write_json({ code = 1, msg = "会话已过期，请重新登录" })
+			return true
+		end
+
+		local env = {
+			CONTENT_TYPE = os.getenv("CONTENT_TYPE") or "",
+			CONTENT_LENGTH = os.getenv("CONTENT_LENGTH") or "",
+			REQUEST_METHOD = os.getenv("REQUEST_METHOD") or "",
+		}
+		local form = kp_parse_body(env)
+		-- body 优先，missing 的键用 query 补
+		for k, v in pairs(q) do
+			if form[k] == nil then form[k] = v end
+		end
+		form.action = action
+
+		if action == "poll" then
+			local snap, hist, evts = kp_cell_sample()
+			if not snap then
+				kp_write_json({ code = 1, msg = "模块无响应" })
+				return true
+			end
+			kp_write_json({ code = 0, ts = snap.t, cell = snap, hist = hist, events = evts })
+			return true
+		end
+
+		if action == "web_listen" then
+			local sys = require "luci.sys"
+			local function q(k) return kp_trim(sys.exec("uci -q get " .. k .. " 2>/dev/null")) end
+			local mode, port = q("kpnet.web.listen"), q("kpnet.web.port")
+			if mode == "" then mode = "auto" end
+			if port == "" then port = "8080" end
+			local cands = { { ip = "0.0.0.0", label = "全部地址" } }
+			local seen = { ["0.0.0.0"] = true }
+			local curdev = ""
+			for line in (sys.exec("ip -4 addr show 2>/dev/null") or ""):gmatch("[^\n]+") do
+				local d = line:match("^%d+:%s*([^:@]+)")
+				if d then curdev = kp_trim(d) end
+				local ip = line:match("inet%s+(%d+%.%d+%.%d+%.%d+)")
+				if ip and ip ~= "127.0.0.1" and not seen[ip] then
+					seen[ip] = true
+					cands[#cands + 1] = { ip = ip, label = curdev }
+				end
+			end
+			local eff = kp_trim(sys.exec("[ -x /usr/bin/kp8080-listen ] && /usr/bin/kp8080-listen resolve 2>/dev/null"))
+			kp_write_json({ code = 0, current = q("uhttpd.openwrt8080.listen_http"),
+				mode = mode, port = port, lan = q("network.lan.ipaddr"),
+				effective = eff, candidates = cands })
+			return true
+		end
+
+		if action == "web_listen_apply" then
+			local sys = require "luci.sys"
+			-- 本固件的 uci 不能用 set 新建配置文件：缺文件时先落一份骨架，否则后续 set 全部静默失败
+			sys.call("[ -f /etc/config/kpnet ] || printf \"config web 'web'\\n\\toption listen 'auto'\\n\\toption port '8080'\\n\" > /etc/config/kpnet")
+			sys.call("uci -q get kpnet.web >/dev/null 2>&1 || uci set kpnet.web=web")
+			local mode = kp_trim(form.mode)
+			local ip = kp_trim(form.ip)
+			local port = tonumber(kp_trim(form.port)) or 8080
+			if port < 1 or port > 65535 then
+				kp_write_json({ code = 1, msg = "端口需在 1~65535 之间" })
+				return true
+			end
+			if mode == "custom" then
+				if not ip:match("^%d+%.%d+%.%d+%.%d+$") then
+					kp_write_json({ code = 1, msg = "IP 格式不正确" })
+					return true
+				end
+				if ip ~= "0.0.0.0" then
+					local addrs = sys.exec("ip -4 addr show 2>/dev/null") or ""
+					if not addrs:find("inet " .. ip .. "/", 1, true) then
+						kp_write_json({ code = 1, msg = "地址 " .. ip .. " 不在本机任何接口上，绑定会失败" })
+						return true
+					end
+				end
+				sys.call("uci set kpnet.web.listen=" .. kp_shq(ip .. ":" .. port))
+			elseif mode == "all" then
+				sys.call("uci set kpnet.web.listen='all'")
+			else
+				sys.call("uci set kpnet.web.listen='auto'")
+			end
+			sys.call("uci set kpnet.web.port='" .. port .. "'")
+			sys.call("uci commit kpnet")
+			-- 延迟 3 秒再切：先让本次响应回到浏览器，避免请求被自己打断
+			sys.exec("( sleep 3; [ -x /usr/bin/kp8080-listen ] && /usr/bin/kp8080-listen apply ) >/tmp/kp8080-listen.log 2>&1 &")
+			kp_write_json({ code = 0, msg = "已提交，3 秒后切换；绑定失败会自动回滚" })
+			return true
+		end
+
+		if action == "cell" then
+			-- 5 秒缓存：本动作要跑 3~4 条 AT，不能被 10 秒轮询直接打
+			local CACHE = "/tmp/kpc-cell-detail.json"
+			local mtime = nil
+			pcall(function() mtime = require("nixio.fs").stat(CACHE).mtime end)
+			if mtime and (os.time() - (tonumber(mtime) or 0)) < 5 then
+				local c = kp_json_read(CACHE)
+				if type(c) == "table" and c.code == 0 then
+					kp_write_json(c)
+					return true
+				end
+			end
+			local data = kp_cell_detail()
+			kp_json_write(CACHE, data)
+			kp_write_json(data)
+			return true
+		end
+
+		if action == "ta_cal" then
+			-- 标定：给定 TA 读数与实际距离，反推「米/单位」并写入 UCI
+			local ta = tonumber(kp_trim(form.ta))
+			local meters = tonumber(kp_trim(form.meters))
+			if not ta or ta <= 0 or not meters or meters <= 0 then
+				kp_write_json({ code = 1, msg = "需要 ta 与 meters 两个正数" })
+				return true
+			end
+			local step = meters / ta
+			if step < 0.5 or step > 5000 then
+				kp_write_json({ code = 1, msg = "标定结果异常（0.5~5000 米/单位之外），请检查输入" })
+				return true
+			end
+			local sys = require "luci.sys"
+			sys.call("uci set kpnet.ta.step='" .. string.format("%.3f", step) .. "' 2>/dev/null")
+			sys.call("uci commit kpnet 2>/dev/null")
+			os.remove("/tmp/kpc-cell-detail.json")
+			kp_write_json({ code = 0, step_m = math.floor(step * 100 + 0.5) / 100,
+				msg = string.format("已标定：%.2f 米/单位（TA=%s → %sm）", step, tostring(ta), tostring(meters)) })
+			return true
+		end
+
+		if action == "stats" then
+			local hist = kp_json_read(HIST_FILE) or {}
+			if type(hist) ~= "table" then hist = {} end
+			local d = kp_histograms(hist)
+			d.code = 0
+			d.ts = os.time()
+			d.points = #hist
+			kp_write_json(d)
+			return true
+		end
+
+		if action == "diag" then
+			local snap, hist, evts = kp_cell_sample()
+			kp_write_report(snap, hist, evts)
+			return true
+		end
+
+		if action == "at" then
+			local cmd = kp_trim(form.cmd):upper():gsub("%s+$", "")
+			if cmd == "" or not KP_AT_ALLOW[cmd] then
+				kp_write_json({ code = 1, msg = "命令不在只读白名单内" })
+				return true
+			end
+			local res = kp_at("atsdcpe", cmd, 2500)
+			local txt = kp_at_text(res)
+			kp_write_json({
+				code = 0,
+				cmd = cmd,
+				ok = (type(res) == "table" and tostring(res.code) == "0"),
+				resp = (txt ~= "" and txt or "(无响应)"),
+			})
+			return true
+		end
+
+		-- 高级 AT：任意命令，必须显式确认（白名单之外的写入类命令有风险）
+		if action == "at_raw" then
+			local cmd = kp_trim(form.cmd)
+			if kp_trim(form.confirm) ~= "1" then
+				kp_write_json({ code = 1, msg = "高级命令需要先勾选确认" })
+				return true
+			end
+			if cmd == "" or #cmd > 200 then
+				kp_write_json({ code = 1, msg = "命令为空或过长（上限 200 字符）" })
+				return true
+			end
+			if not cmd:upper():match("^AT") then
+				kp_write_json({ code = 1, msg = "只接受 AT 开头的命令" })
+				return true
+			end
+			local res = kp_at("atsdcpe", cmd, 3000)
+			local txt = kp_at_text(res)
+			kp_write_json({
+				code = 0, cmd = cmd,
+				ok = (type(res) == "table" and tostring(res.code) == "0"),
+				resp = (txt ~= "" and txt or "(无响应)"),
+			})
+			return true
+		end
+
+		-- 模块重启：AT+CFUN=1,1，会自动脱网数十秒
+		if action == "modem_reboot" then
+			if kp_trim(form.confirm) ~= "1" then
+				kp_write_json({ code = 1, msg = "需要确认" })
+				return true
+			end
+			local res = kp_at("atsdcpe", "AT+CFUN=1,1", 2500)
+			kp_write_json({ code = 0, msg = "已下发模块重启指令，约 20~60 秒恢复",
+				resp = kp_at_text(res) })
+			return true
+		end
+
+		-- 网页终端：本机已有 ttyd，这里只做状态与启停
+		if action == "terminal" then
+			local sys = require "luci.sys"
+			local op = kp_trim(form.op)
+			if op == "start" or op == "stop" then
+				sys.call("/etc/init.d/ttyd " .. op .. " >/dev/null 2>&1")
+				sys.exec("sleep 1")
+			end
+			local pid = kp_trim(sys.exec("pidof ttyd 2>/dev/null"))
+			-- ttyd 的 section 类型是 server（ttyd.default=server），
+			-- 之前写 @ttyd[0] 永远取不到，会静默回落到 7681
+			local function uget(keys)
+				for _, k in ipairs(keys) do
+					local v = kp_trim(sys.exec("uci -q get " .. k .. " 2>/dev/null"))
+					if v ~= "" then return v end
+				end
+				return ""
+			end
+			local port = uget({ "ttyd.@server[0].port", "ttyd.default.port" })
+			if port == "" then port = "7681" end
+			local lan = kp_trim(sys.exec("uci -q get network.lan.ipaddr 2>/dev/null"))
+			local cred = uget({ "ttyd.@server[0].credential", "ttyd.default.credential" })
+			kp_write_json({
+				code = 0, running = (pid ~= ""), pid = pid, port = port,
+				url = "http://" .. (lan ~= "" and lan or "192.168.66.1") .. ":" .. port,
+				credential = (cred ~= "" and cred ~= "0"), lan = lan,
+			})
+			return true
+		end
+
+		-- 硬件加速：只读展示 HNAT，开关仅动软件 flow_offloading
+		if action == "hnat" then
+			local sys = require "luci.sys"
+			local op = kp_trim(form.op)
+			local function rd(p, n)
+				local f = io.open(p, "r")
+				if not f then return "" end
+				local v = f:read(n or 200) or ""
+				f:close()
+				return kp_trim(v)
+			end
+			if op == "on" or op == "off" then
+				if kp_trim(form.confirm) ~= "1" then
+					kp_write_json({ code = 1, msg = "需要确认" })
+					return true
+				end
+				sys.call("uci set firewall.@defaults[0].flow_offloading='" .. (op == "on" and "1" or "0") .. "'")
+				sys.call("uci commit firewall")
+				sys.call("/etc/init.d/firewall reload >/dev/null 2>&1")
+				sys.exec("sleep 1")
+			end
+			local mod = sys.exec("lsmod 2>/dev/null | grep -c mtkhnat") or "0"
+			local hook = rd("/sys/kernel/debug/hnat/hook_toggle", 32)
+			local ver = rd("/sys/kernel/debug/hnat/hnat_version", 64)
+			local entry_raw = rd("/sys/kernel/debug/hnat/hnat_entry", 64)
+			local n_entry = 0
+			local f = io.open("/sys/kernel/debug/hnat/all_entry", "r")
+			if f then
+				for _ in f:lines() do n_entry = n_entry + 1 end
+				f:close()
+			end
+			local sw = kp_trim(sys.exec("uci -q get firewall.@defaults[0].flow_offloading 2>/dev/null"))
+			kp_write_json({
+				code = 0,
+				module_loaded = (tonumber(kp_trim(mod)) or 0) > 0,
+				hook = hook, version = ver, entry_head = entry_raw,
+				entries = n_entry,
+				soft_offload = (sw == "1"),
+			})
+			return true
+		end
+
+		-- swap 管理：对齐固件 mwrt-swapfile 的安全设计
+		-- 固件是「zram(pri 100) 主 + SD 文件(pri 10) 兜底」双层策略；
+		-- 本机内核 CONFIG_ZSMALLOC 未开启、没有 zram 模块，所以只做文件这一层，
+		-- 但沿用固件的：路径 /overlay/swapfile、64MB 分块写、先写 .tmp 再改名、
+		-- 空间检查（需求 +256MB 余量）、swapon -p 10、后台生成不阻塞请求。
+		if action == "swap" then
+			local sys = require "luci.sys"
+			local SWAPFILE = "/overlay/swapfile"
+			local TMPFILE  = "/overlay/swapfile.tmp"
+			local BUSY     = "/tmp/kpswap.busy"
+			local PRIO     = 10
+			local CHUNK    = 64
+			local op = kp_trim(form.op)
+
+			if op == "on" then
+				if kp_trim(form.confirm) ~= "1" then
+					kp_write_json({ code = 1, msg = "需要确认" })
+					return true
+				end
+				local mb = tonumber(kp_trim(form.size)) or 512
+				if mb < 128 or mb > 1024 then
+					kp_write_json({ code = 1, msg = "swap 大小需在 128~1024 MB" })
+					return true
+				end
+				local avail = tonumber(kp_trim(sys.exec("df -m /overlay 2>/dev/null | awk 'NR==2{print $4}'"))) or 0
+				if avail < mb + 256 then
+					kp_write_json({ code = 1,
+						msg = string.format("/overlay 剩余 %d MB，至少需要 %d MB（文件 %d + 余量 256）", avail, mb + 256, mb) })
+					return true
+				end
+				-- 持久化：本固件的 /etc/init.d/fstab 不处理 swap（实测 grep 为空），
+				-- 所以不用 fstab，改由自带的 /etc/init.d/kpswap 开机挂载
+				sys.call("uci -q delete fstab.@swap[0] 2>/dev/null; uci commit fstab")
+				sys.call("/etc/init.d/kpswap enable >/dev/null 2>&1")
+
+				if kp_trim(sys.exec("[ -f " .. SWAPFILE .. " ] && echo 1")) == "1" then
+					sys.call("swapon -p " .. PRIO .. " " .. SWAPFILE .. " >/dev/null 2>&1")
+					kp_write_json({ code = 0, msg = "已启用现有 swap 文件（priority " .. PRIO .. "）" })
+					return true
+				end
+
+				-- 首次生成：后台跑，避免请求超时（512MB 在 f2fs 上要几十秒）
+				local n = math.floor(mb / CHUNK)
+				local script = string.format(
+					"rm -f %s; i=0; while [ $i -lt %d ]; do " ..
+					"dd if=/dev/zero of=%s bs=1M count=%d seek=$((i*%d)) conv=notrunc 2>/dev/null || { rm -f %s; exit 1; }; " ..
+					"sync; i=$((i+1)); done; " ..
+					"chmod 600 %s; mkswap %s >/dev/null 2>&1 && mv -f %s %s && sync && " ..
+					"swapon -p %d %s >/dev/null 2>&1; rm -f %s",
+					TMPFILE, n, TMPFILE, CHUNK, CHUNK, TMPFILE,
+					TMPFILE, TMPFILE, TMPFILE, SWAPFILE, PRIO, SWAPFILE, BUSY)
+				sys.exec("( " .. script .. " ) >/tmp/kpswap.log 2>&1 & echo $! > " .. BUSY)
+				kp_write_json({ code = 0, building = true,
+					msg = string.format("正在后台生成 %d MB（分 %d 块写），完成后自动启用", mb, n) })
+				return true
+			end
+
+			if op == "off" then
+				if kp_trim(form.confirm) ~= "1" then
+					kp_write_json({ code = 1, msg = "需要确认" })
+					return true
+				end
+				sys.call("/etc/init.d/kpswap disable >/dev/null 2>&1")
+				sys.call("swapoff " .. SWAPFILE .. " >/dev/null 2>&1")
+				sys.call("uci -q delete fstab.@swap[0] 2>/dev/null; uci commit fstab")
+				sys.call("rm -f " .. SWAPFILE .. " " .. TMPFILE .. " " .. BUSY)
+				kp_write_json({ code = 0, msg = "已关闭并删除 swap 文件" })
+				return true
+			end
+
+			-- 状态
+			local total, used, prio = 0, 0, nil
+			local f = io.open("/proc/swaps", "r")
+			if f then
+				f:read("*l")
+				for line in f:lines() do
+					local sz, us, pr = line:match("%s(%d+)%s+(%d+)%s+(%-?%d+)$")
+					if sz then
+						total = total + tonumber(sz)
+						used = used + tonumber(us)
+						prio = tonumber(pr)
+					end
+				end
+				f:close()
+			end
+			local exists = kp_trim(sys.exec("[ -f " .. SWAPFILE .. " ] && du -m " .. SWAPFILE .. " 2>/dev/null | cut -f1"))
+			local building = kp_trim(sys.exec("[ -f " .. BUSY .. " ] && echo 1")) == "1"
+			local progress = 0
+			if building then
+				progress = tonumber(kp_trim(sys.exec("du -m " .. TMPFILE .. " 2>/dev/null | cut -f1"))) or 0
+			end
+			local persist = kp_trim(sys.exec("[ -e /etc/rc.d/S12kpswap ] && echo 1"))
+			kp_write_json({
+				code = 0, on = (total > 0),
+				total_kb = total, used_kb = used, priority = prio,
+				file_mb = tonumber(exists) or 0,
+				persist = (persist ~= ""),
+				path = SWAPFILE,
+				building = building, progress_mb = progress,
+				zram = (kp_trim(sys.exec("ls -d /sys/block/zram0 2>/dev/null")) ~= ""),
+				swappiness = tonumber(kp_trim(sys.exec("cat /proc/sys/vm/swappiness 2>/dev/null"))) or 60,
+			})
+			return true
+		end
+
+		-- ===== Docker 管理（左侧菜单「Docker」页）=====
+		if action == "docker" then
+			local sys = require "luci.sys"
+			local op = kp_trim(form.op)
+
+			local function ok_id(s)
+				return s ~= nil and s ~= "" and s:match("^[%w%._%-]+$") ~= nil
+			end
+			local function lines(s)
+				local t = {}
+				for l in (s or ""):gmatch("[^\r\n]+") do t[#t + 1] = l end
+				return t
+			end
+
+			if op == "ps" then
+				local items = {}
+				for _, l in ipairs(lines(sys.exec(
+					"docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}' 2>/dev/null"))) do
+					local id, name, img, st, ports = l:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
+					if id and id ~= "" then
+						items[#items + 1] = { id = id, name = name, image = img, status = st, ports = ports }
+					end
+				end
+				kp_write_json({ code = 0, items = items })
+				return true
+			end
+
+			if op == "images" then
+				local items = {}
+				for _, l in ipairs(lines(sys.exec(
+					"docker images --format '{{.Repository}}|{{.Tag}}|{{.ID}}|{{.Size}}' 2>/dev/null"))) do
+					local repo, tag, id, size = l:match("^([^|]*)|([^|]*)|([^|]*)|(.*)$")
+					if repo and repo ~= "" then
+						items[#items + 1] = { repo = repo, tag = tag, id = id, size = size }
+					end
+				end
+				kp_write_json({ code = 0, items = items })
+				return true
+			end
+
+			if op == "info" then
+				local ver  = kp_trim(sys.exec("docker version --format '{{.Server.Version}}' 2>/dev/null"))
+				local drv  = kp_trim(sys.exec("docker info --format '{{.Driver}}' 2>/dev/null"))
+				local root = kp_trim(sys.exec("docker info --format '{{.DockerRootDir}}' 2>/dev/null"))
+				local run  = tonumber(kp_trim(sys.exec("docker ps -q 2>/dev/null | wc -l"))) or 0
+				local all  = tonumber(kp_trim(sys.exec("docker ps -aq 2>/dev/null | wc -l"))) or 0
+				local imgs = tonumber(kp_trim(sys.exec("docker images -q 2>/dev/null | wc -l"))) or 0
+				local nnet = tonumber(kp_trim(sys.exec("docker network ls -q 2>/dev/null | wc -l"))) or 0
+				local nvol = tonumber(kp_trim(sys.exec("docker volume ls -q 2>/dev/null | wc -l"))) or 0
+				local up   = kp_trim(sys.exec("pidof dockerd 2>/dev/null"))
+				local kver = kp_trim(sys.exec("uname -r"))
+				local api  = kp_trim(sys.exec("docker version --format '{{.Server.APIVersion}}' 2>/dev/null"))
+				local rtime= kp_trim(sys.exec("docker info --format '{{.DefaultRuntime}}' 2>/dev/null"))
+				kp_write_json({
+					code = 0, running = (up ~= ""), pid = up,
+					version = ver, driver = drv, root = root,
+					containers = all, running_containers = run, images = imgs,
+					networks = nnet, volumes = nvol,
+					kernel = kver, apiver = api, runtime = rtime,
+				})
+				return true
+			end
+
+			-- 磁盘占用（对应 dockerman 概览页的系统占用）
+			if op == "df" then
+				local items = {}
+				for _, l in ipairs(lines(sys.exec(
+					"docker system df --format '{{.Type}}|{{.TotalCount}}|{{.Active}}|{{.Size}}|{{.Reclaimable}}' 2>/dev/null"))) do
+					local ty, total, act, size, recl = l:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
+					if ty and ty ~= "" then
+						items[#items + 1] = { type = ty, total = total, active = act, size = size, reclaimable = recl }
+					end
+				end
+				kp_write_json({ code = 0, items = items })
+				return true
+			end
+
+			if op == "networks" then
+				local items = {}
+				for _, l in ipairs(lines(sys.exec(
+					"docker network ls --format '{{.Name}}|{{.Driver}}|{{.Scope}}|{{.ID}}' 2>/dev/null"))) do
+					local name, drv, scope, id = l:match("^([^|]*)|([^|]*)|([^|]*)|(.*)$")
+					if name and name ~= "" then
+						local subnet = kp_trim(sys.exec("docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' " ..
+							name .. " 2>/dev/null"))
+						items[#items + 1] = { name = name, driver = drv, scope = scope, id = id, subnet = subnet }
+					end
+				end
+				kp_write_json({ code = 0, items = items })
+				return true
+			end
+
+			if op == "volumes" then
+				local items = {}
+				for _, l in ipairs(lines(sys.exec(
+					"docker volume ls --format '{{.Name}}|{{.Driver}}|{{.Mountpoint}}' 2>/dev/null"))) do
+					local name, drv, mp = l:match("^([^|]*)|([^|]*)|(.*)$")
+					if name and name ~= "" then
+						items[#items + 1] = { name = name, driver = drv, mountpoint = mp }
+					end
+				end
+				kp_write_json({ code = 0, items = items })
+				return true
+			end
+
+			-- 最近事件（对应 dockerman 的 Events 页）
+			if op == "events" then
+				local items = {}
+				for _, l in ipairs(lines(sys.exec(
+					"docker events --since 2h --until 0s --format '{{.Time}}|{{.Type}}|{{.Action}}|{{.Actor.Attributes.name}}' 2>/dev/null | tail -60"))) do
+					local t, ty, act, nm = l:match("^([^|]*)|([^|]*)|([^|]*)|(.*)$")
+					if t and t ~= "" then
+						items[#items + 1] = { time = t, type = ty, action = act, name = nm }
+					end
+				end
+				kp_write_json({ code = 0, items = items })
+				return true
+			end
+
+			-- 配置只读视图（对应 dockerman 的 Configuration，仅展示关键项）
+			if op == "config" then
+				local raw = sys.exec("cat /etc/docker/daemon.json 2>/dev/null") or ""
+				local uci = {
+					alt = kp_trim(sys.exec("uci -q get dockerd.globals.alt_config_file 2>/dev/null")),
+					root = kp_trim(sys.exec("uci -q get dockerd.globals.data_root 2>/dev/null")),
+					host = kp_trim(sys.exec("uci -q get dockerd.globals.host 2>/dev/null")),
+					ipt  = kp_trim(sys.exec("uci -q get dockerd.globals.iptables 2>/dev/null")),
+					pool = kp_trim(sys.exec("uci -q get dockerd.globals.bip 2>/dev/null")),
+				}
+				kp_write_json({ code = 0, daemon_json = raw, uci = uci })
+				return true
+			end
+
+			if op == "start" or op == "stop" or op == "restart" or op == "rm" or op == "rmi"
+				or op == "rmnet" or op == "rmvol" then
+				if kp_trim(form.confirm) ~= "1" then
+					kp_write_json({ code = 1, msg = "需要确认" })
+					return true
+				end
+				local target = kp_trim(form.target)
+				if not ok_id(target) then
+					kp_write_json({ code = 1, msg = "目标名非法" })
+					return true
+				end
+				local cmd
+				if op == "rm" then
+					cmd = "docker rm -f " .. target
+				elseif op == "rmi" then
+					cmd = "docker rmi " .. target
+				elseif op == "rmnet" then
+					cmd = "docker network rm " .. target
+				elseif op == "rmvol" then
+					cmd = "docker volume rm " .. target
+				else
+					cmd = "docker " .. op .. " " .. target
+				end
+				local rc = sys.call(cmd .. " >/dev/null 2>&1")
+				kp_write_json({ code = rc == 0 and 0 or 1, msg = rc == 0 and "已执行" or "执行失败（详见 docker 日志）" })
+				return true
+			end
+
+			kp_write_json({ code = 1, msg = "未知操作" })
+			return true
+		end
+
+		-- ===== 在线恢复：按 kp-restore 清单补装缺失插件 =====
+		-- 后台跑 opkg，状态写 /tmp/kp-pkgrestore.state，前端轮询
+		if action == "pkg_restore" then
+			local sys = require "luci.sys"
+			local op = kp_trim(form.op)
+			local LIST  = "/etc/kp-restore/packages.txt"
+			local STATE = "/tmp/kp-pkgrestore.state"
+			local LOG   = "/tmp/kp-pkgrestore.log"
+			local BUSY  = "/tmp/kp-pkgrestore.busy"
+
+			if op == "stop" then
+				local pid = kp_trim(sys.exec("cat " .. BUSY .. " 2>/dev/null"))
+				if pid ~= "" then sys.call("kill " .. pid .. " 2>/dev/null") end
+				sys.call("rm -f " .. BUSY)
+				kp_write_json({ code = 0, msg = "已停止（正在安装的那个包可能已装完）" })
+				return true
+			end
+
+			if op == "start" then
+				if kp_trim(sys.exec("[ -f " .. LIST .. " ] && echo 1")) ~= "1" then
+					kp_write_json({ code = 1, msg = "缺少 " .. LIST .. "，请先安装 kp-restore 恢复包" })
+					return true
+				end
+				if kp_trim(sys.exec("[ -f " .. BUSY .. " ] && echo 1")) == "1" then
+					kp_write_json({ code = 1, msg = "已有恢复任务在运行" })
+					return true
+				end
+				local body = [[#!/bin/sh
+LOG=/tmp/kp-pkgrestore.log
+ST=/tmp/kp-pkgrestore.state
+: > $LOG
+echo "stage=update i=0 ok=0 fail=0 total=0" > $ST
+opkg update >/dev/null 2>&1
+opkg list-installed 2>/dev/null | awk '{print $1}' | sort > /tmp/kp-have.txt
+awk '{print $1}' /etc/kp-restore/packages.txt | sort > /tmp/kp-want.txt
+awk 'NR==FNR{h[$1]=1;next} !($1 in h){print $1}' /tmp/kp-have.txt /tmp/kp-want.txt > /tmp/kp-miss.txt
+total=$(wc -l < /tmp/kp-miss.txt)
+i=0; ok=0; fail=0
+echo "stage=install i=0 ok=0 fail=0 total=$total" > $ST
+while read p; do
+  [ -z "$p" ] && continue
+  i=$((i+1))
+  if opkg install "$p" >/dev/null 2>&1; then
+    ok=$((ok+1)); echo "OK   $p" >> $LOG
+  else
+    fail=$((fail+1)); echo "FAIL $p" >> $LOG
+  fi
+  echo "stage=install i=$i ok=$ok fail=$fail total=$total cur=$p" > $ST
+done < /tmp/kp-miss.txt
+echo "stage=done i=$i ok=$ok fail=$fail total=$total" > $ST
+rm -f /tmp/kp-pkgrestore.busy
+]]
+				local f = io.open("/tmp/kp-pkgrestore.sh", "w")
+				if not f then
+					kp_write_json({ code = 1, msg = "无法写入脚本" })
+					return true
+				end
+				f:write(body); f:close()
+				sys.exec("chmod 755 /tmp/kp-pkgrestore.sh")
+				sys.exec("( sh /tmp/kp-pkgrestore.sh ) >/dev/null 2>&1 & echo $! > " .. BUSY)
+				kp_write_json({ code = 0, msg = "已开始，正在更新软件源…" })
+				return true
+			end
+
+			-- status
+			local out = {
+				code = 0,
+				running  = (kp_trim(sys.exec("[ -f " .. BUSY .. " ] && echo 1")) == "1"),
+				has_list = (kp_trim(sys.exec("[ -f " .. LIST .. " ] && echo 1")) == "1"),
+				log      = kp_trim(sys.exec("tail -12 " .. LOG .. " 2>/dev/null")),
+			}
+			local st = kp_trim(sys.exec("cat " .. STATE .. " 2>/dev/null"))
+			for k, v in st:gmatch("(%w+)=(%S*)") do
+				out[k] = tonumber(v) or v
+			end
+			kp_write_json(out)
+			return true
+		end
+
+		-- ===== 一键备份：配置 + 插件清单 + 面板 ipk =====
+		-- 产物：/tmp/kp-backup-<时间戳>.tar.gz
+		--   config.tar.gz       sysupgrade -k -b（含 /etc/config 全量 + installed_packages.txt）
+		--   packages.txt        opkg list-installed（人工核对）
+		--   nradio-luci-8080.ipk 面板安装包（找不到就跳过，MANIFEST 里会写）
+		--   MANIFEST.txt / restore.sh
+		if action == "backup_full" then
+			local sys = require "luci.sys"
+			local ts = os.date("%Y%m%d-%H%M%S")
+			local dir = "/tmp/kpbackup-" .. ts
+			sys.call("rm -rf " .. dir .. "; mkdir -p " .. dir)
+
+			local cfg_rc = sys.call("sysupgrade -k -b " .. dir .. "/config.tar.gz >/dev/null 2>&1")
+			sys.call("opkg list-installed > " .. dir .. "/packages.txt 2>/dev/null")
+
+			local ipk = kp_trim(sys.exec("ls -t /tmp/nradio-luci-8080_*.ipk 2>/dev/null | head -1"))
+			if ipk == "" then
+				ipk = kp_trim(sys.exec("ls -t /root/pkgs/nradio-luci-8080_*.ipk 2>/dev/null | head -1"))
+			end
+			local has_ipk = false
+			if ipk ~= "" then
+				has_ipk = (sys.call("cp " .. ipk .. " " .. dir .. "/nradio-luci-8080.ipk 2>/dev/null") == 0)
+			end
+
+			local model = kp_trim(sys.exec("cat /tmp/sysinfo/model 2>/dev/null"))
+			local fw = kp_trim(sys.exec(". /etc/openwrt_release 2>/dev/null; echo -n \"$DISTRIB_DESCRIPTION\""))
+			local npkg = tonumber(kp_trim(sys.exec("opkg list-installed 2>/dev/null | wc -l"))) or 0
+
+			local mf = io.open(dir .. "/MANIFEST.txt", "w")
+			if mf then
+				mf:write("NRadio 8080 一键备份\n")
+				mf:write("生成时间: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n")
+				mf:write("设备型号: " .. (model ~= "" and model or "未知") .. "\n")
+				mf:write("固件版本: " .. (fw ~= "" and fw or "未知") .. "\n")
+				mf:write("已装插件: " .. npkg .. " 个\n")
+				mf:write("配置备份: " .. (cfg_rc == 0 and "成功" or "失败") .. "\n")
+				mf:write("面板 ipk: " .. (has_ipk and "已包含" or "未包含") .. "\n")
+				mf:write("\n恢复步骤见 restore.sh\n")
+				mf:close()
+			end
+
+			local rs = io.open(dir .. "/restore.sh", "w")
+			if rs then
+				rs:write("#!/bin/sh\n")
+				rs:write("# 一键恢复：把本目录放到路由器 /tmp 下，执行 sh restore.sh\n")
+				rs:write('D=$(cd "$(dirname "$0")" && pwd)\n')
+				rs:write('echo "[1/3] 恢复配置..."\n')
+				rs:write('tar -xzf "$D/config.tar.gz" -C / && echo "  配置已还原"\n')
+				rs:write('echo "[2/3] 重装面板..."\n')
+				rs:write('[ -f "$D/nradio-luci-8080.ipk" ] && opkg install --force-reinstall "$D/nradio-luci-8080.ipk"\n')
+				rs:write('echo "[3/3] 重启服务..."\n')
+				rs:write('/etc/init.d/uhttpd restart >/dev/null 2>&1\n')
+				rs:write('/etc/init.d/kpsmsfwd restart >/dev/null 2>&1\n')
+				rs:write('/etc/init.d/kpswap start >/dev/null 2>&1\n')
+				rs:write('echo "完成：http://$(uci -q get network.lan.ipaddr):8080/"\n')
+				rs:close()
+				sys.call("chmod 755 " .. dir .. "/restore.sh")
+			end
+
+			local name = "kp-backup-" .. ts .. ".tar.gz"
+			local rc = sys.call("cd /tmp && tar czf " .. name .. " -C " .. dir .. " . 2>/dev/null")
+			local size = tonumber(kp_trim(sys.exec("wc -c < /tmp/" .. name .. " 2>/dev/null")))
+			sys.call("rm -rf " .. dir)
+
+			if rc ~= 0 or not size or size <= 0 then
+				kp_write_json({ code = 1, msg = "打包失败（磁盘空间不足？）" })
+				return true
+			end
+			kp_write_json({ code = 0, name = name, size = size, ipk = has_ipk, pkgs = npkg })
+			return true
+		end
+
+		-- 一键恢复包（ipk）：可直接在应用商店 / opkg 安装，安装即恢复
+		-- 注意：本固件 opkg 只认 gzip(tar(debian-binary, control.tar.gz, data.tar.gz))
+		if action == "backup_ipk" then
+			local sys = require "luci.sys"
+			local ts = os.date("%Y%m%d-%H%M%S")
+			local ver = os.date("%Y.%m.%d-%H%M%S")
+			local W = "/tmp/kpbipk-" .. ts
+			local DATA = W .. "/data/etc/kp-backup"
+			sys.call("rm -rf " .. W .. "; mkdir -p " .. W .. "/control " .. DATA)
+
+			local cfg_rc = sys.call("sysupgrade -k -b " .. DATA .. "/config.tar.gz >/dev/null 2>&1")
+			sys.call("opkg list-installed > " .. DATA .. "/packages.txt 2>/dev/null")
+
+			local ipk = kp_trim(sys.exec("ls -t /tmp/nradio-luci-8080_*.ipk 2>/dev/null | head -1"))
+			if ipk == "" then
+				ipk = kp_trim(sys.exec("ls -t /root/pkgs/nradio-luci-8080_*.ipk 2>/dev/null | head -1"))
+			end
+			local has_ipk = false
+			if ipk ~= "" then
+				has_ipk = (sys.call("cp " .. ipk .. " " .. DATA .. "/nradio-luci-8080.ipk 2>/dev/null") == 0)
+			end
+
+			local model = kp_trim(sys.exec("cat /tmp/sysinfo/model 2>/dev/null"))
+			local fw = kp_trim(sys.exec(". /etc/openwrt_release 2>/dev/null; echo -n \"$DISTRIB_DESCRIPTION\""))
+			local npkg = tonumber(kp_trim(sys.exec("opkg list-installed 2>/dev/null | wc -l"))) or 0
+
+			local function wf(path, text, mode)
+				local f = io.open(path, "w")
+				if f then f:write(text); f:close() end
+				if mode then sys.call("chmod " .. mode .. " " .. path) end
+			end
+
+			wf(DATA .. "/MANIFEST.txt", table.concat({
+				"NRadio 8080 恢复包\n",
+				"生成时间: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n",
+				"设备型号: " .. (model ~= "" and model or "未知") .. "\n",
+				"固件版本: " .. (fw ~= "" and fw or "未知") .. "\n",
+				"已装插件: " .. npkg .. " 个\n",
+				"配置备份: " .. (cfg_rc == 0 and "成功" or "失败") .. "\n",
+				"面板 ipk: " .. (has_ipk and "已包含" or "未包含") .. "\n",
+				"\n安装方式：把本 ipk 传到路由器后\n",
+				"  ubus call appcenter local '{\"file\":\"<路径>\"}'\n",
+				"或 opkg install <路径>\n",
+				"安装后自动还原配置并重装面板。\n",
+			}, ""))
+
+			wf(DATA .. "/restore.sh", table.concat({
+				"#!/bin/sh\n",
+				"# 手动恢复：sh /etc/kp-backup/restore.sh\n",
+				"D=/etc/kp-backup\n",
+				"echo \"[1/3] 恢复配置...\"\n",
+				"tar -xzf \"$D/config.tar.gz\" -C / && echo \"  配置已还原\"\n",
+				"echo \"[2/3] 还原面板...\"\n",
+				"[ -f \"$D/nradio-luci-8080.ipk\" ] && tar -xzf \"$D/nradio-luci-8080.ipk\" -C /tmp data.tar.gz && tar -xzf /tmp/data.tar.gz -C /\n",
+				"echo \"[3/3] 重启服务...\"\n",
+				"/etc/init.d/uhttpd restart >/dev/null 2>&1\n",
+				"/etc/init.d/kpsmsfwd restart >/dev/null 2>&1\n",
+				"echo \"完成：http://$(uci -q get network.lan.ipaddr):8080/\"\n",
+			}, ""), "755")
+
+			-- 注意：不能写「Depends: 」空值 —— 本固件 opkg 解析空依赖会直接段错误
+			wf(W .. "/control/control", table.concat({
+				"Package: kp-backup\n",
+				"Version: " .. ver .. "\n",
+				"Architecture: all\n",
+				"Maintainer: NRadio 8080\n",
+				"Section: utils\n",
+				"Priority: optional\n",
+				"Description: NRadio 8080 one-click restore package (config + packages + panel)\n",
+			}, ""))
+
+			wf(W .. "/control/postinst", table.concat({
+				"#!/bin/sh\n",
+				"D=/etc/kp-backup\n",
+				"[ -f \"$D/config.tar.gz\" ] && tar -xzf \"$D/config.tar.gz\" -C / >/dev/null 2>&1 && echo \"kp-backup: 配置已还原\"\n",
+				"# 面板直接用解包方式还原，避免在 opkg 事务里嵌套调用 opkg 造成锁冲突\n",
+				"if [ -f \"$D/nradio-luci-8080.ipk\" ]; then\n",
+				"  tar -xzf \"$D/nradio-luci-8080.ipk\" -C /tmp data.tar.gz 2>/dev/null && tar -xzf /tmp/data.tar.gz -C / 2>/dev/null\n",
+				"  rm -f /tmp/data.tar.gz\n",
+				"  chmod 755 /overlay/nradio-apps/openwrt-luci-8080/www/cgi-bin/luci 2>/dev/null\n",
+				"  echo \"kp-backup: 面板已还原\"\n",
+				"fi\n",
+				"rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache 2>/dev/null\n",
+				"/etc/init.d/uhttpd restart >/dev/null 2>&1\n",
+				"/etc/init.d/kpsmsfwd restart >/dev/null 2>&1\n",
+				"/etc/init.d/kpswap start >/dev/null 2>&1\n",
+				"echo \"kp-backup: 恢复完成，访问 http://$(uci -q get network.lan.ipaddr 2>/dev/null):8080/\"\n",
+				"exit 0\n",
+			}, ""), "755")
+
+			wf(W .. "/control/postrm", "#!/bin/sh\nrm -rf /etc/kp-backup\nrm -rf /tmp/luci-indexcache* /tmp/luci-modulecache 2>/dev/null\nexit 0\n", "755")
+
+			local name = "kp-backup-" .. ts .. ".ipk"
+			local rc = sys.call(
+				"cd " .. W ..
+				" && echo 2.0 > debian-binary" ..
+				" && tar -C control -czf control.tar.gz ." ..
+				" && tar -C data -czf data.tar.gz ." ..
+				" && tar -czf /tmp/" .. name .. " debian-binary control.tar.gz data.tar.gz 2>/dev/null")
+			local size = tonumber(kp_trim(sys.exec("wc -c < /tmp/" .. name .. " 2>/dev/null")))
+			sys.call("rm -rf " .. W)
+
+			if rc ~= 0 or not size or size <= 0 then
+				kp_write_json({ code = 1, msg = "打包 ipk 失败" })
+				return true
+			end
+			kp_write_json({ code = 0, name = name, size = size, ipk = has_ipk, pkgs = npkg })
+			return true
+		end
+
+		if action == "backup_list" then
+			local sys = require "luci.sys"
+			local items = {}
+			-- 本固件 busybox 没有 stat applet，只能走 wc -c
+			local out = sys.exec("for f in /tmp/kp-backup-*.tar.gz /tmp/kp-backup-*.ipk; do [ -f $f ] && echo $(wc -c < $f)\\|$f; done 2>/dev/null") or ""
+			for line in out:gmatch("[^\n]+") do
+				local size, path = line:match("^(%d+)|(.+)$")
+				if path then
+					local base = path:match("([^/]+)$") or path
+					items[#items + 1] = { name = base, size = tonumber(size) or 0 }
+				end
+			end
+			-- 文件名里带时间戳，按名字倒序即最新在前
+			table.sort(items, function(a, b) return a.name > b.name end)
+			kp_write_json({ code = 0, items = items })
+			return true
+		end
+
+		if action == "backup_get" then
+			local name = kp_trim(form.name)
+			if not (name:match("^kp%-backup%-[%d%-]+%.tar%.gz$") or name:match("^kp%-backup%-[%d%-]+%.ipk$")) then
+				kp_write_json({ code = 1, msg = "文件名非法" })
+				return true
+			end
+			local f = io.open("/tmp/" .. name, "rb")
+			if not f then
+				kp_write_json({ code = 1, msg = "备份文件不存在" })
+				return true
+			end
+			local size = f:seek("end") or 0
+			f:seek("set", 0)
+			local ctype = name:match("%.ipk$") and "application/vnd.debian.binary-package" or "application/gzip"
+			io.write("Content-Type: " .. ctype .. "\r\n")
+			io.write('Content-Disposition: attachment; filename="' .. name .. '"\r\n')
+			io.write("Content-Length: " .. size .. "\r\n")
+			io.write("Cache-Control: no-store\r\n\r\n")
+			while true do
+				local chunk = f:read(65536)
+				if not chunk then break end
+				io.write(chunk)
+			end
+			f:close()
+			return true
+		end
+
+		if action == "backup_del" then
+			local name = kp_trim(form.name)
+			if not (name:match("^kp%-backup%-[%d%-]+%.tar%.gz$") or name:match("^kp%-backup%-[%d%-]+%.ipk$")) then
+				kp_write_json({ code = 1, msg = "文件名非法" })
+				return true
+			end
+			os.remove("/tmp/" .. name)
+			kp_write_json({ code = 0, msg = "已删除" })
+			return true
+		end
+
+		-- 锁状态：厂商 SIM 保护锁，只读显示（密钥在厂商侧，无法也不应绕过）
+		if action == "simlock" then
+			local sys = require "luci.sys"
+			local flag = kp_trim(sys.exec("bdinfo -g sim_protect 2>/dev/null"))
+			local has_pkg = kp_trim(sys.exec("[ -f /usr/lib/lua/luci/controller/nradio/hsimlock.lua ] && echo 1"))
+			kp_write_json({
+				code = 0,
+				supported = (flag ~= ""),
+				protect = (flag == "1"),
+				page = (has_pkg == "1"),
+				raw = flag,
+			})
+			return true
+		end
+
+		if action == "devices" then
+			local devs = kp_dev_collect()
+			local st = qos_load_state()
+			local conf, rates = {}, {}
+			if st.applied then
+				for _, d in ipairs(st.devices or {}) do conf[d.mac] = d end
+				rates = qos_rate_sample(st)
+			end
+			for _, d in ipairs(devs) do
+				local c = conf[d.mac]
+				if c then
+					d.down, d.up, d.prio = c.down or 0, c.up or 0, c.prio or "normal"
+					d.limited = true
+				else
+					d.down, d.up, d.prio = 0, 0, "normal"
+					d.limited = false
+				end
+				local r = rates[d.mac]
+				d.rx = r and r.dl or 0
+				d.tx = r and r.ul or 0
+			end
+			kp_write_json({
+				code = 0, ts = os.time(), devices = devs,
+				qos = {
+					applied = st.applied and true or false,
+					wan = st.wan or "eth3", plan = st.plan or 0,
+					default_down = st.default_down or 0,
+					default_up = st.default_up or 0,
+					default_prio = st.default_prio or "normal",
+					hnat_suspended = qos_flag(QOS_HNAT_FLAG),
+				},
+			})
+			return true
+		end
+
+		if action == "qos_apply" then
+			local devs = kp_dev_collect()
+			local cfg, err = qos_parse_cfg(form, devs)
+			if not cfg then
+				kp_write_json({ code = 1, msg = err or "配置无效" })
+				return true
+			end
+			local ok, msg = qos_apply(cfg)
+			kp_write_json(ok and { code = 0, msg = msg } or { code = 1, msg = msg })
+			return true
+		end
+
+		if action == "qos_reset" then
+			local ok, msg = qos_reset()
+			kp_write_json({ code = ok and 0 or 1, msg = msg })
+			return true
+		end
+
+		if action == "neighbor" then
+			local snap = kp_cell_snapshot()
+			local ok, data = kp_do_neighbor(snap)
+			if not ok then
+				kp_write_json({ code = 1, msg = data })
+				return true
+			end
+			-- 邻区画像：按「频点|PCI」累计出现次数与历史最优 RSRP，供判断邻区是否在逼近
+			local NB_FILE = "/tmp/kpc-nb.json"
+			local hist = kp_json_read(NB_FILE) or {}
+			if type(hist) ~= "table" then hist = {} end
+			local now = os.time()
+			for _, c in ipairs(data.cells) do
+				local key = c.earfcn .. "|" .. tostring(c.pci)
+				local h = hist[key]
+				if type(h) ~= "table" then h = { first = now, seen = 0 }; hist[key] = h end
+				h.seen = (tonumber(h.seen) or 0) + 1
+				h.last = now
+				local cur = tonumber(c.rsrp)
+				h.last_rsrp = cur or 0
+				-- 注意：RSRP 是负数，best 不能用 0 兜底，否则永远更新不上
+				if cur and (h.best == nil or cur > (tonumber(h.best) or -999)) then
+					h.best = cur
+				end
+				c.seen = h.seen
+				c.best = h.best
+			end
+			-- 上限 300 条，按最后出现时间淘汰
+			local keys = {}
+			for k in pairs(hist) do keys[#keys + 1] = k end
+			if #keys > 300 then
+				table.sort(keys, function(a, b)
+					return (tonumber((hist[a] or {}).last) or 0) > (tonumber((hist[b] or {}).last) or 0)
+				end)
+				for i = 301, #keys do hist[keys[i]] = nil end
+			end
+			kp_json_write(NB_FILE, hist)
+			data.code, data.msg = 0, ""
+			data.serving = snap and {
+				pci = tostring(snap.pci or ""),
+				rsrp = tonumber(snap.rsrp) or 0,
+				earfcn = tostring(snap.earfcn or ""),
+				band = tostring(snap.band or ""),
+				sinr = tonumber(snap.sinr) or 0,
+			} or nil
+			-- 邻区距离：以服务小区距离为锚点，按 ΔRSRP 换算（绝对项互相抵消）
+			-- 锚点优先 TA，其次服务小区路损；都拿不到就不给距离
+			local cfg = kp_rf_cfg()
+			local anchor = nil
+			local taRaw = kp_read_c5greg()
+			if taRaw then
+				local te = kp_ta_estimate(taRaw, snap and snap.mode)
+				if te then anchor = te.meters end
+			end
+			if not anchor then
+				local e = kp_pl_distance(snap and snap.rsrp,
+					kp_nr_freq_mhz(snap and snap.earfcn or "") or 3500, cfg)
+				if e then anchor = e.meters end
+			end
+			for _, c in ipairs(data.cells) do
+				local dl = tonumber(c.delta)
+				if dl and anchor then
+					-- ΔRSRP 为负（比服务小区弱）→ 距离更远，所以取 -dl
+					c.dist = math.floor(anchor * 10 ^ (-dl / (10 * cfg.n)) + 0.5)
+				end
+			end
+			data.anchor = anchor
+			kp_write_json(data)
+			return true
+		end
+
+		if action == "lock_apply" or action == "lock_clear" then
+			local ok, msg, detail = kp_do_lock(form)
+			local sys = require "luci.sys"
+			sys.exec("sleep 1")
+			local state = {
+				lock5 = kp_parse_lock(kp_at("atsdcpe", "AT^NRFREQLOCK?", 1200), "NRFREQLOCK"),
+				lock4 = kp_parse_lock(kp_at("atsdcpe", "AT^LTEFREQLOCK?", 1200), "LTEFREQLOCK"),
+				trace = detail,
+			}
+			kp_write_json({ code = ok and 0 or 1, msg = msg, state = state })
+			return true
+		end
+
+		if action == "sms_send" then
+			local ok, msg = kp_do_sms(form)
+			kp_write_json({ code = ok and 0 or 1, msg = msg })
+			return true
+		end
+
+		-- 短信转发：读取配置 + 守护状态
+		if action == "sms_fwd_get" then
+			local sys = require "luci.sys"
+			local function q(k)
+				return kp_trim(sys.exec("uci -q get kpsmsfwd.main." .. k .. " 2>/dev/null"))
+			end
+			local body = ""
+			local bf = io.open("/etc/kpsmsfwd.body", "r")
+			if bf then body = bf:read("*a") or ""; bf:close() end
+			kp_write_json({
+				code = 0,
+				enable = (q("enable") == "1"),
+				url = q("url"),
+				body = body,
+				interval = tonumber(q("interval")) or 20,
+				running = ((tonumber(kp_trim(sys.exec("ps w 2>/dev/null | grep -c '[k]psmsfwd'"))) or 0) > 0),
+				seen = tonumber(kp_trim(sys.exec("wc -l < /tmp/kpsmsfwd.seen 2>/dev/null"))) or 0,
+				log = kp_trim(sys.exec("tail -3 /tmp/kpsmsfwd.log 2>/dev/null")),
+			})
+			return true
+		end
+
+		-- 短信转发：保存配置并重启守护
+		if action == "sms_fwd_set" then
+			local sys = require "luci.sys"
+			local enable = (kp_trim(form.enable) == "1") and "1" or "0"
+			local url = kp_trim(form.url)
+			local body = form.body or ""
+			local interval = tonumber(kp_trim(form.interval)) or 20
+			if interval < 10 then interval = 10 end
+			if interval > 300 then interval = 300 end
+			if enable == "1" and url == "" then
+				kp_write_json({ code = 1, msg = "启用前需要填写 webhook 地址" })
+				return true
+			end
+			if url ~= "" and not url:match("^https?://") then
+				kp_write_json({ code = 1, msg = "地址需以 http:// 或 https:// 开头" })
+				return true
+			end
+			-- 本固件 uci 不能新建配置文件，先落骨架再 set
+			sys.call("[ -f /etc/config/kpsmsfwd ] || printf \"config main 'main'\\n\\toption enable '0'\\n\\toption interval '20'\\n\\toption url ''\\n\" > /etc/config/kpsmsfwd")
+			sys.call("uci -q get kpsmsfwd.main >/dev/null 2>&1 || uci set kpsmsfwd.main=main")
+			sys.call("uci set kpsmsfwd.main.enable='" .. enable .. "'")
+			sys.call("uci set kpsmsfwd.main.url='" .. url:gsub("'", "") .. "'")
+			sys.call("uci set kpsmsfwd.main.interval='" .. interval .. "'")
+			sys.call("uci commit kpsmsfwd")
+			-- 模板含引号/空格，走文件而不是 uci
+			local f = io.open("/etc/kpsmsfwd.body", "w")
+			if f then f:write(body); f:close() end
+			sys.call("/etc/init.d/kpsmsfwd restart >/dev/null 2>&1")
+			kp_write_json({ code = 0, msg = "已保存，转发守护已重启" })
+			return true
+		end
+
+		return false
+	end
+
+	-- 在 run() 之前就地处理（输出走 io.write，与 cgi.lua 的早退块同款）
+	if kp_try_handle() then
+		return
+	end
+end
+-- KP-CELLULAR-ENDPOINT v1 END ==============================================
+
+-- KP-STATUS-API v1 START ====================================================
+-- 状态聚合接口：为「健康条 / 日志摘要 / 进程排行」提供数据。
+--
+-- 设计约束：
+--   * 只读：仅 io.open(/proc, /sys)、df、ip neigh，不写任何配置；
+--   * 不走 dispatcher（原因同 KP-CELLULAR-ENDPOINT：sgi.cgi 用 coroutine 输出，
+--     在包装函数里 return 会丢响应），直接在 CGI 主体里 io.write 原始 HTTP；
+--   * 结果缓存 3 秒（/tmp/kp-status.json），7 个页面共用一份，避免重复扫 /proc；
+--   * 任何单项采集失败只让对应字段缺省，不影响整体返回。
+--
+-- 用法：GET /cgi-bin/luci/admin/status/<任意状态页>?action=kp_status
+-- 回滚：删除本 do..end 块即可（前端会因 404 自动降级为不显示健康条）。
+do
+	local jsonc = require "luci.jsonc"
+	local sys = require "luci.sys"
+	local fs = require "nixio.fs"
+
+	local CACHE = "/tmp/kp-status.json"
+	local TTL = 3
+
+	local function trim(s)
+		return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+	end
+
+	local function read_file(p, max)
+		local f = io.open(p, "r")
+		if not f then return nil end
+		local v = max and f:read(max) or f:read("*a")
+		f:close()
+		return v
+	end
+
+	-- ===== 在线设备：真实读取 =====
+	-- 判定链：无线关联表 → 桥接 FDB → ARP/neigh → DHCP 租约，按 MAC 去重。
+	-- 只认「MAC 开头」的行：iwinfo 在无终端时会输出 "No station connected"
+	-- 之类的提示行，按行数统计会把提示行当成设备。
+	local function kp_mac_ok(m)
+		if type(m) ~= "string" then return false end
+		m = m:lower()
+		if not m:match("^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") then return false end
+		if m == "00:00:00:00:00:00" then return false end
+		if (tonumber(m:sub(1, 2), 16) or 0) % 2 == 1 then return false end -- 组播/广播
+		return true
+	end
+
+	-- 无线接口名动态发现：不写死 ra0/rai0（本机还有 rai1、多 SSID 虚拟口）
+	local function kp_wifi_devs()
+		local seen, out = {}, {}
+		local function add(n)
+			if n and n ~= "" and not seen[n] then seen[n] = true; out[#out + 1] = n end
+		end
+		for line in (sys.exec("ls -d /sys/class/net/*/wireless 2>/dev/null") or ""):gmatch("[^\n]+") do
+			add(line:match("/net/([^/]+)/wireless$"))
+		end
+		if #out == 0 then
+			local raw = sys.exec("ubus call network.wireless status 2>/dev/null") or ""
+			for n in raw:gmatch('"ifname"%s*:%s*"([^"]+)"') do add(n) end
+		end
+		if #out == 0 then
+			for _, n in ipairs({ "ra0", "rai0", "rai1", "rax0", "rax1", "wlan0", "wlan1" }) do add(n) end
+		end
+		return out
+	end
+
+	-- 关联终端：只取 MAC 行；行尾 "N ms/s ago" 是最后一次收包，
+	-- MTK 驱动可能把已离开的终端留在表里，超 1 小时无收包算残留条目。
+	local function kp_assoc(ifn)
+		local out = {}
+		for line in (sys.exec("iwinfo " .. ifn .. " assoclist 2>/dev/null") or ""):gmatch("[^\n]+") do
+			local mac = line:match("^%s*(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+			if mac and kp_mac_ok(mac) then
+				local ago = tonumber(line:match("(%d+)%s*ms%s*ago"))
+				if ago then ago = ago / 1000
+				else ago = tonumber(line:match("(%d+)%s*s%s*ago")) or 0 end
+				if ago <= 3600 then
+					out[#out + 1] = { mac = mac:lower(),
+						sig = tonumber(line:match("(%-?%d+)%s*dBm")) or 0, ago = ago }
+				end
+			end
+		end
+		return out
+	end
+
+	-- 桥接转发表（有线侧设备在这里出现）
+	local function kp_fdb()
+		local out = {}
+		local raw = sys.exec("bridge fdb show br br-lan 2>/dev/null") or ""
+		if raw == "" then raw = sys.exec("brctl showmacs br-lan 2>/dev/null") or "" end
+		for line in raw:gmatch("[^\n]+") do
+			local mac = line:match("(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+			if mac and kp_mac_ok(mac) then
+				local low = line:lower()
+				-- 跳过网桥自身的 local/self/permanent 条目（brctl 用 is local? 列）
+				local skip = low:match("%f[%a]self%f[%A]") or low:match("%f[%a]permanent%f[%A]")
+					or low:match("%f[%a]local%f[%A]") or low:match("%syes%s")
+				if not skip then
+					out[mac:lower()] = line:match("dev%s+(%S+)") or "br-lan"
+				end
+			end
+		end
+		return out
+	end
+
+	-- ARP/neigh：给出 IP 与可达状态。
+	-- 只取 LAN 桥：WAN 口的邻居是运营商网关，算进来会虚增设备数。
+	local function kp_neigh()
+		local out, loose = {}, {}
+		for line in (sys.exec("ip neigh show 2>/dev/null") or ""):gmatch("[^\n]+") do
+			local ip, mac, st = line:match("^(%d+%.%d+%.%d+%.%d+)%s+.*lladdr%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)%s+(%u+)")
+			if ip and mac and kp_mac_ok(mac) then
+				local dev = line:match("dev%s+(%S+)") or ""
+				local e = { ip = ip, state = st, dev = dev }
+				if dev == "br-lan" then out[mac:lower()] = e
+				elseif dev:match("^br%-") then loose[mac:lower()] = e end
+			end
+		end
+		if next(out) == nil then return loose end
+		return out
+	end
+
+	local function kp_online_devices()
+		local map, order = {}, {}
+		local function up(mac)
+			if not kp_mac_ok(mac) then return nil end
+			mac = mac:lower()
+			local d = map[mac]
+			if not d then
+				d = { mac = mac, ip = "", host = "", kind = "lan", sig = 0, iface = "", online = false }
+				map[mac] = d
+				order[#order + 1] = d
+			end
+			return d
+		end
+
+		-- 1) 无线关联 = 在线
+		local radios = {}
+		for _, ifn in ipairs(kp_wifi_devs()) do
+			local list = kp_assoc(ifn)
+			radios[#radios + 1] = { dev = ifn, n = #list }
+			for _, a in ipairs(list) do
+				local d = up(a.mac)
+				if d then d.kind, d.sig, d.iface, d.online = "wifi", a.sig, ifn, true end
+			end
+		end
+
+		-- 2) 桥接表：补有线接口归属
+		for mac, dev in pairs(kp_fdb()) do
+			local d = up(mac)
+			if d and d.iface == "" then d.iface = dev end
+		end
+
+		-- 3) ARP：补 IP，判定在网
+		for mac, n in pairs(kp_neigh()) do
+			local d = up(mac)
+			if d then
+				if d.ip == "" then d.ip = n.ip end
+				if n.state == "REACHABLE" or n.state == "DELAY" or n.state == "PROBE" or n.state == "STALE" then
+					d.online = true
+				end
+			end
+		end
+
+		-- 4) DHCP 租约：补主机名；桥接表里也有它才算在网
+		local leases = 0
+		for line in (read_file("/tmp/dhcp.leases") or ""):gmatch("[^\n]+") do
+			local _, mac, ip, host = line:match("^(%d+)%s+(%S+)%s+(%S+)%s+(%S+)")
+			if mac and ip then
+				leases = leases + 1
+				local d = up(mac)
+				if d then
+					if d.ip == "" then d.ip = ip end
+					if host and host ~= "*" and host ~= "" then d.host = host end
+					d.dhcp = true
+					if not d.online and d.iface ~= "" then d.online = true end
+				end
+			end
+		end
+
+		local wifi_n, lan_n = 0, 0
+		for _, d in ipairs(order) do
+			if d.online then
+				if d.kind == "wifi" then wifi_n = wifi_n + 1 else lan_n = lan_n + 1 end
+			end
+		end
+		table.sort(order, function(a, b)
+			if a.online ~= b.online then return a.online end
+			if (a.kind == "wifi") ~= (b.kind == "wifi") then return a.kind == "wifi" end
+			return (a.ip or "") < (b.ip or "")
+		end)
+		local out = {}
+		for _, d in ipairs(order) do
+			if d.online and #out < 40 then
+				out[#out + 1] = { mac = d.mac, ip = d.ip, host = d.host, kind = d.kind,
+					sig = d.sig, iface = d.iface }
+			end
+		end
+		return { total = wifi_n + lan_n, wifi = wifi_n, wired = lan_n,
+			radios = radios, leases = leases, devices = out }
+	end
+
+	-- 逐字符切 JSON 顶层对象（session list 是「多个对象拼接」，不是数组）
+	local function split_json_objs(s)
+		local out, depth, in_str, esc, start = {}, 0, false, false, nil
+		for i = 1, #s do
+			local c = s:sub(i, i)
+			if in_str then
+				if esc then esc = false
+				elseif c == "\\" then esc = true
+				elseif c == '"' then in_str = false end
+			elseif c == '"' then
+				in_str = true
+				if not start then start = i end
+			elseif c == "{" then
+				if depth == 0 then start = i end
+				depth = depth + 1
+			elseif c == "}" then
+				depth = depth - 1
+				if depth == 0 and start then
+					out[#out + 1] = s:sub(start, i)
+					start = nil
+				end
+			end
+		end
+		return out
+	end
+
+	local function check_auth()
+		local cookie = os.getenv("HTTP_COOKIE") or ""
+		local tok = cookie:match("sysauth=([0-9a-fA-F]+)")
+		if not tok or #tok < 16 then return false end
+		local raw = sys.exec("ubus call session list 2>/dev/null") or ""
+		if raw == "" then return false end
+		for _, chunk in ipairs(split_json_objs(raw)) do
+			local ok, obj = pcall(jsonc.parse, chunk)
+			if ok and type(obj) == "table" then
+				if tostring(obj.ubus_rpc_session or "") == tok then
+					local data = obj.data or {}
+					local user = tostring(data.user or data.username or "")
+					if user == "root" then return true end
+				end
+			end
+		end
+		return false
+	end
+
+	-- /proc/<pid>/stat：comm 可能含空格/括号，用最后一个 ')' 定位
+	local function proc_stat(pid)
+		local st = read_file("/proc/" .. pid .. "/stat")
+		if not st then return nil end
+		local lp = st:find("%(")
+		if not lp then return nil end
+		local rp = st:match(".*%)()")
+		if not rp then return nil end
+		local comm = st:sub(lp + 1, rp - 2)
+		local rest = st:sub(rp + 1)
+		local f = {}
+		for tok in rest:gmatch("%S+") do f[#f + 1] = tok end
+		return {
+			comm = comm,
+			state = f[1] or "?",
+			ppid = tonumber(f[2]) or 0,
+			rss = (tonumber(f[22]) or 0) * 4096,   -- 页 → 字节
+		}
+	end
+
+	local function collect()
+		local d = { code = 0, ts = os.time() }
+
+		-- 运行时间
+		local up = read_file("/proc/uptime") or ""
+		d.uptime = tonumber(up:match("^(%d+)")) or 0
+
+		-- CPU 核数
+		local ncpu = 0
+		for _ in (read_file("/proc/cpuinfo") or ""):gmatch("processor%s*:") do ncpu = ncpu + 1 end
+		d.ncpu = math.max(ncpu, 1)
+
+		-- 负载
+		local la = read_file("/proc/loadavg") or ""
+		local l1, l5, l15 = la:match("^(%S+)%s+(%S+)%s+(%S+)")
+		d.load = { tonumber(l1) or 0, tonumber(l5) or 0, tonumber(l15) or 0 }
+
+		-- CPU 利用率（/proc/stat 双采样，间隔 200ms；采样失败则整段缺省）
+		pcall(function()
+			local function snap()
+				local l = (read_file("/proc/stat") or ""):match("^cpu%s+([^\n]+)")
+				if not l then return nil end
+				local f = {}
+				for tok in l:gmatch("%d+") do f[#f + 1] = tonumber(tok) end
+				local sum = 0
+				for i = 1, 8 do sum = sum + (f[i] or 0) end   -- user..steal
+				if sum < 1 then return nil end
+				return { sum = sum, idle = (f[4] or 0) + (f[5] or 0) }
+			end
+			local a = snap()
+			if not a then return end
+			local slept = false
+			local okn, nixio = pcall(require, "nixio")
+			if okn and type(nixio) == "table" and nixio.nanosleep then
+				slept = pcall(nixio.nanosleep, 0, 200 * 1000 * 1000)
+			end
+			if not slept then sys.exec("sleep 0.2") end
+			local b = snap()
+			-- 采样间隔不足（nanosleep 不可用/参数不符）时退回 busybox sleep
+			if not b or (b.sum - a.sum) < 5 then
+				sys.exec("sleep 0.2")
+				b = snap()
+			end
+			if not b then return end
+			local dt = b.sum - a.sum
+			if dt < 1 then return end
+			local used = dt - (b.idle - a.idle)
+			if used < 0 then used = 0 end
+			d.cpu = { pct = math.floor(used * 100 / dt + 0.5) }
+		end)
+
+		-- 内存（kB → 字节）
+		local mem = {}
+		for line in (read_file("/proc/meminfo") or ""):gmatch("[^\n]+") do
+			local k, v = line:match("^(%w+):%s+(%d+)")
+			if k then mem[k] = tonumber(v) * 1024 end
+		end
+		d.mem = {
+			total     = mem.MemTotal or 0,
+			available = mem.MemAvailable or mem.MemFree or 0,
+			free      = mem.MemFree or 0,
+			cached    = (mem.Cached or 0) + (mem.Buffers or 0),
+			buffers   = mem.Buffers or 0,
+			slab      = mem.Slab or 0,
+			swap_total = mem.SwapTotal or 0,
+			swap_free  = mem.SwapFree or 0,
+		}
+
+		-- 存储（overlay 为主，附带根分区与 /tmp）
+		local df = sys.exec("df -kP / /tmp /overlay 2>/dev/null") or ""
+		local mounts = {}
+		for line in df:gmatch("[^\n]+") do
+			local f = {}
+			for v in line:gmatch("%S+") do f[#f + 1] = v end
+			local mnt = f[#f]
+			local tot, used = tonumber(f[2]), tonumber(f[3])
+			if mnt and tot and used and tot > 0 then
+				mounts[mnt] = {
+					total = math.floor(tot * 1024),
+					used  = math.floor(used * 1024),
+					pct   = math.floor(used * 100 / tot + 0.5),
+				}
+			end
+		end
+		if mounts["/overlay"] then
+			d.storage = mounts["/overlay"]
+			if mounts["/"] then d.storage.root = mounts["/"] end
+			if mounts["/tmp"] then d.storage.tmp = mounts["/tmp"] end
+		end
+
+		-- 温度（多 zone 取全部，前端取最大值）；保留 1 位小数，避免浮点尾巴
+		local temps = {}
+		for i = 0, 6 do
+			local t = read_file("/sys/class/thermal/thermal_zone" .. i .. "/temp")
+			if t then
+				-- 取整到 ℃：jsonc 用高精度输出，小数会出现 57.899999999999999
+				temps[#temps + 1] = math.floor((tonumber(trim(t)) or 0) / 1000 + 0.5)
+			end
+		end
+		d.thermal = temps
+
+		-- 连接跟踪
+		local cc = read_file("/proc/sys/net/netfilter/nf_conntrack_count")
+		local cm = read_file("/proc/sys/net/netfilter/nf_conntrack_max")
+		if cc then
+			d.conntrack = { count = tonumber(trim(cc)) or 0, max = tonumber(trim(cm or "")) or 0 }
+		end
+
+		-- 默认路由
+		local rt = trim(sys.exec("ip -4 route show default 2>/dev/null | head -1") or "")
+		local gw, dev = rt:match("via%s+(%S+)%s+dev%s+(%S+)")
+		if not gw then dev = rt:match("dev%s+(%S+)") end
+		d.route = { default = rt, gw = gw or "", dev = dev or "" }
+
+		-- 网口流量：累计字节 + 实时速率（与 /tmp 上次采样做差，无额外耗时）
+		pcall(function()
+			local NETSTATE = "/tmp/kp-net.state"
+			local now = os.time()
+			local cur = {}
+			for line in (read_file("/proc/net/dev") or ""):gmatch("[^\n]+") do
+				local name, rest = line:match("^%s*([^:]+):%s*(.+)$")
+				if name then
+					-- 第 1 列 rx bytes，第 9 列 tx bytes
+					local n = {}
+					for v in rest:gmatch("%d+") do n[#n + 1] = tonumber(v) end
+					if n[1] then cur[name] = { rx = n[1], tx = n[9] or 0 } end
+				end
+			end
+
+			local prev, pts, first = {}, 0, true
+			for line in (read_file(NETSTATE) or ""):gmatch("[^\n]+") do
+				if first then
+					pts, first = tonumber(line) or 0, false
+				else
+					local d2, rx, tx = line:match("^(%S+)%s+(%d+)%s+(%d+)$")
+					if d2 then prev[d2] = { rx = tonumber(rx), tx = tonumber(tx) } end
+				end
+			end
+
+			local buf = { tostring(now) }
+			for devname, v in pairs(cur) do
+				buf[#buf + 1] = devname .. " " .. v.rx .. " " .. v.tx
+			end
+			pcall(function() fs.writefile(NETSTATE, table.concat(buf, "\n")) end)
+
+			local function rate(devname)
+				local c, p = cur[devname], prev[devname]
+				if not c then return nil end
+				local dt = now - pts
+				if p and dt >= 1 and dt <= 600 then
+					c.rx_bps = math.max(0, math.floor((c.rx - p.rx) / dt))
+					c.tx_bps = math.max(0, math.floor((c.tx - p.tx) / dt))
+				end
+				return c
+			end
+
+			local updev = (d.route and d.route.dev) or ""
+			local u, lan = rate(updev), rate("br-lan")
+			d.net = {
+				dev      = updev,
+				rx_total = (u and u.rx) or 0,
+				tx_total = (u and u.tx) or 0,
+				rx_bps   = (u and u.rx_bps) or 0,
+				tx_bps   = (u and u.tx_bps) or 0,
+				lan_rx_bps = (lan and lan.rx_bps) or 0,
+				lan_tx_bps = (lan and lan.tx_bps) or 0,
+			}
+		end)
+
+		-- ARP 条目数
+		local arp = sys.exec("ip neigh show 2>/dev/null") or ""
+		local n = 0
+		for _ in arp:gmatch("[^\n]+") do n = n + 1 end
+		d.arp = n
+
+		-- 系统日志摘要（rsyslog: "<PRI> : [origin ...] msg"，级别 = PRI % 8）
+		local lg = read_file("/var/log/messages", 1024 * 512) or ""
+		local total, err, warn, info = 0, 0, 0, 0
+		local src = {}
+		for line in lg:gmatch("[^\n]+") do
+			total = total + 1
+			-- 本机格式：2026-10-20T20:50:19.3+08:00 5 netifd: cpe1 (8423): usb not ready
+			-- 即「时间 优先级 程序: 消息」，优先级后**没有**冒号
+			local ts, pri, rest = line:match("^(%S+)%s+(%d+)%s+(.*)$")
+			if not ts then
+				local p2, r2 = line:match("^<(%-?%d+)>(.*)$")
+				if p2 then ts, pri, rest = "", p2, r2 end
+			end
+			local sev = (tonumber(pri) or 6) % 8
+			if sev <= 3 then err = err + 1
+			elseif sev == 4 then warn = warn + 1
+			else info = info + 1 end
+
+			rest = (rest or line):gsub("^%[origin[^%]]*%]%s*", "")
+			local name = rest:match("^([%w_%-%.]+)%[%d+%]:") or rest:match("^([%w_%-%.]+):")
+			if name then src[name] = (src[name] or 0) + 1 end
+		end
+		local top = {}
+		for k, v in pairs(src) do top[#top + 1] = { src = k, n = v } end
+		table.sort(top, function(a, b) return a.n > b.n end)
+		while #top > 5 do table.remove(top) end
+		d.log = { total = total, err = err, warn = warn, info = info, top = top }
+
+		-- 进程摘要
+		local ptotal, puser, pzombie, rss = 0, 0, 0, 0
+		local big = {}
+		local p = io.popen("ls /proc 2>/dev/null")
+		if p then
+			for pid in p:lines() do
+				if pid:match("^%d+$") then
+					local st = proc_stat(pid)
+					if st then
+						ptotal = ptotal + 1
+						if st.state == "Z" then pzombie = pzombie + 1 end
+						if st.ppid ~= 2 then puser = puser + 1 end
+						rss = rss + st.rss
+						if st.rss >= 3 * 1024 * 1024 then
+							big[#big + 1] = { pid = tonumber(pid), cmd = st.comm, rss = st.rss }
+						end
+					end
+				end
+			end
+			p:close()
+		end
+		table.sort(big, function(a, b) return a.rss > b.rss end)
+		while #big > 5 do table.remove(big) end
+		d.proc = { total = ptotal, user = puser, zombie = pzombie, rss = rss, top_mem = big }
+
+		-- 蜂窝（主卡槽 cpe）：失败只让该字段缺省
+		pcall(function()
+			local raw = sys.exec("ubus call infocd cpestatus '{\"name\":\"cpe\"}' 2>/dev/null")
+			local okc, obj = pcall(jsonc.parse, raw)
+			if not okc or type(obj) ~= "table" or type(obj.result) ~= "table" then return end
+			local st
+			for _, e in ipairs(obj.result) do
+				if type(e.status) == "table" and tostring(e.status.name) == "cpe" then
+					st = e.status
+					break
+				end
+			end
+			if not st and type(obj.result[1]) == "table" then st = obj.result[1].status end
+			if type(st) ~= "table" then return end
+			d.cell = {
+				mode     = trim(st.mode),
+				band     = trim(st.band),
+				earfcn   = trim(st.earfcn),
+				pci      = trim(st.pci),
+				rsrp     = trim(st.rsrp),
+				rsrq     = trim(st.rsrq),
+				sinr     = trim(st.sinr),
+				isp      = trim(st.isp or st.isp_company),
+				simno    = trim(st.simno),
+				simcount = trim(st.simcount),
+			}
+		end)
+
+		-- 蜂窝概况：与固件总览对齐（运营商 / 制式 / 频段 / 信号 / 温度 / 本月流量）
+		-- 一次 ubus 调用，任一字段缺失只让该项为空，不影响整页
+		pcall(function()
+			local raw = sys.exec("ubus call infocd cpestatus '{\"name\":\"cpe\"}' 2>/dev/null") or ""
+			if raw == "" then return end
+			local function g(k)
+				local v = raw:match('"' .. k .. '"%s*:%s*"([^"]*)"')
+				return v and trim(v) or ""
+			end
+			local plmn = g("isp")
+			local company = g("sim_company") ~= "" and g("sim_company") or g("isp_company")
+
+			-- 版本号：正则取首个 "rev" 会撞到别的空字段，改用 jsonc 定位「同时有 mode + rev」的对象
+			local rev = ""
+			local okp, obj = pcall(jsonc.parse, raw)
+			if okp and type(obj) == "table" then
+				local hit
+				local function walk(t, depth)
+					if type(t) ~= "table" or hit or depth > 6 then return end
+					if t.rev ~= nil and tostring(t.rev) ~= "" and t.mode ~= nil then hit = t; return end
+					for _, v in pairs(t) do walk(v, depth + 1) end
+				end
+				walk(obj, 0)
+				if hit then rev = trim(tostring(hit.rev)) end
+			end
+			local OPMAP = {
+				["46000"] = "中国移动", ["46002"] = "中国移动", ["46004"] = "中国移动",
+				["46007"] = "中国移动", ["46008"] = "中国移动",
+				["46001"] = "中国联通", ["46006"] = "中国联通", ["46009"] = "中国联通",
+				["46010"] = "中国联通",
+				["46003"] = "中国电信", ["46005"] = "中国电信", ["46011"] = "中国电信",
+				["46012"] = "中国电信",
+				["46015"] = "中国广电", ["46020"] = "中国铁通",
+			}
+			local op = OPMAP[plmn]
+			if not op then
+				local u = string.upper(company)
+				if u:find("UNICOM", 1, true) then op = "中国联通"
+				elseif u:find("CMCC", 1, true) or u:find("MOBILE", 1, true) then op = "中国移动"
+				elseif u:find("TELECOM", 1, true) or u:find("CTCC", 1, true) then op = "中国电信"
+				elseif u:find("BROADNET", 1, true) or u:find("CBN", 1, true) then op = "中国广电"
+				else op = company end
+			end
+			d.cell = {
+				-- isp 用 PLMN：前端 ispName() 直接吃这个值
+				isp      = plmn,
+				operator = op,
+				plmn     = plmn,
+				simno    = g("simno"),
+				simcount = g("simcount"),
+				mode     = g("mode"),
+				band     = g("band"),
+				arfcn    = g("earfcn"),
+				model    = g("model"),
+				revision = rev,
+				imei     = g("imei"),
+				iccid    = g("iccid"),
+				pci      = g("pci"),
+				tac      = g("tac"),
+				rsrp     = tonumber(g("rsrp")) or 0,
+				rsrq     = tonumber(g("rsrq")) or 0,
+				sinr     = tonumber(g("sinr")) or 0,
+				cqi      = tonumber(g("CQI")) or 0,
+				temp     = tonumber(g("model_temp")) or 0,
+				mon      = tonumber(g("sim_mon")) or 0,
+				sim      = g("sim_name"),
+				online   = (g("mode") ~= "" and g("status") ~= "-1"),
+			}
+		end)
+
+		-- 在线设备（真实读取：无线关联 + 桥接 FDB + ARP，按 MAC 去重）
+		pcall(function()
+			local inv = kp_online_devices()
+			d.clients = inv.total
+			d.wifi = { total = inv.wifi, wired = inv.wired, bands = inv.radios }
+			d.devices = inv.devices
+			d.leases = inv.leases
+		end)
+
+		-- 防火墙概况（-S 统计规则数，取 INPUT 默认策略）
+		pcall(function()
+			local cnt = sys.exec("iptables-save 2>/dev/null | grep -c '^-A'") or "0"
+			local pol = trim(sys.exec("iptables -S INPUT 2>/dev/null | head -1") or "")
+			d.fw = {
+				rules = tonumber(trim(cnt)) or 0,
+				input = (pol:gsub("^%-P INPUT%s+", "")),
+			}
+		end)
+
+		-- 上行地址与 DNS（蜂窝接口优先，取不到就留空）
+		pcall(function()
+			local ifn = (d.route and d.route.dev) or "eth3"
+			local l4 = sys.exec("ip -4 addr show dev " .. ifn .. " 2>/dev/null | grep -m1 'inet '") or ""
+			local l6 = sys.exec("ip -6 addr show scope global 2>/dev/null | grep -m1 'inet6 '") or ""
+			local dns, seen = {}, {}
+			local rf = read_file("/tmp/resolv.conf.d/resolv.conf.auto")
+				or read_file("/etc/resolv.conf") or ""
+			for ip in rf:gmatch("nameserver%s+(%S+)") do
+				if not seen[ip] and #dns < 3 then
+					seen[ip] = true
+					dns[#dns + 1] = ip
+				end
+			end
+			d.ip = {
+				v4 = l4:match("inet%s+([%d%.]+)") or "",
+				v6 = l6:match("inet6%s+([%x:]+)") or "",
+				dns = table.concat(dns, ", "),
+			}
+		end)
+
+		-- 路由表（含 linkdown 标记，前端折叠）
+		pcall(function()
+			local out = sys.exec("ip -4 route show 2>/dev/null") or ""
+			local list = {}
+			for line in out:gmatch("[^\n]+") do
+				local dest, gw, dev, metric =
+					line:match("^(default)%s+via%s+(%S+)%s+dev%s+(%S+)"),
+					line:match("%smetric%s+(%d+)")
+				if dest then
+					list[#list + 1] = { dest = dest, gw = gw, dev = dev, metric = metric or "", down = false }
+				else
+					local d2, dev2 = line:match("^(%S+)%s+dev%s+(%S+)")
+					if d2 then
+						list[#list + 1] = {
+							dest = d2, gw = "", dev = dev2,
+							metric = line:match("%smetric%s+(%d+)") or "",
+							down = line:find("linkdown", 1, true) ~= nil,
+						}
+					end
+				end
+			end
+			-- default 置顶
+			table.sort(list, function(a, b)
+				if a.dest == "default" then return true end
+				if b.dest == "default" then return false end
+				return a.dest < b.dest
+			end)
+			while #list > 16 do table.remove(list) end
+			d.routes = list
+		end)
+
+		-- ARP 归组（同一 MAC 的重复条目合并，按条数排序）
+		pcall(function()
+			local macs, order = {}, {}
+			for line in (sys.exec("ip neigh show 2>/dev/null") or ""):gmatch("[^\n]+") do
+				local ip, mac = line:match("^(%S+)%s+.*lladdr%s+(%S+)")
+				if mac then
+					if not macs[mac] then
+						macs[mac] = { mac = mac, n = 0, first = ip }
+						order[#order + 1] = macs[mac]
+					end
+					macs[mac].n = macs[mac].n + 1
+				end
+			end
+			table.sort(order, function(a, b) return a.n > b.n end)
+			while #order > 4 do table.remove(order) end
+			d.arp_top = order
+		end)
+
+		-- 防火墙：链策略 + 命中 Top（用 -x 取精确计数）
+		pcall(function()
+			local out = sys.exec("iptables -L -n -v -x 2>/dev/null") or ""
+			local chains, rules, cur = {}, {}, nil
+			local total = 0
+			for line in out:gmatch("[^\n]+") do
+				local name, pol = line:match("^Chain (%S+) %(policy (%S+) ")
+				if not name then
+					-- 自定义链：Chain DOCKER (3 references)
+					local n2, refs = line:match("^Chain (%S+) %((%d+) references%)")
+					if n2 then
+						cur = { name = n2, policy = "-", refs = tonumber(refs) or 0, rules = 0 }
+						chains[#chains + 1] = cur
+					end
+				else
+					cur = { name = name, policy = pol, rules = 0 }
+					chains[#chains + 1] = cur
+				end
+				if cur and not line:match("^Chain ") then
+					local pk, by, target = line:match("^%s*(%d+)%s+(%d+)%s+(%S+)")
+					if pk then
+						cur.rules = cur.rules + 1
+						total = total + 1
+						rules[#rules + 1] = {
+							chain = cur.name, target = target,
+							pkts = tonumber(pk) or 0, bytes = tonumber(by) or 0,
+						}
+					end
+				end
+			end
+			table.sort(rules, function(a, b) return a.bytes > b.bytes end)
+			while #rules > 6 do table.remove(rules) end
+			while #chains > 8 do table.remove(chains) end
+			d.fw = d.fw or {}
+			d.fw.chains = chains
+			d.fw.top = rules
+			d.fw.total = total
+		end)
+
+		-- 系统日志：最近 12 条（含级别）
+		pcall(function()
+			local sevname = { "emerg", "alert", "crit", "err", "warn", "notice", "info", "debug" }
+			local list = {}
+			for line in lg:gmatch("[^\n]+") do
+				local ts, pri, msg = line:match("^(%S+)%s+(%d+)%s+(.*)$")
+				if not ts then
+					local p2, m2 = line:match("^<(%d+)>(.*)$")
+					if p2 then ts, pri, msg = "", p2, m2 end
+				end
+				if msg then
+					msg = msg:gsub("^%[origin[^%]]*%]%s*", "")
+					local sev = (tonumber(pri) or 6) % 8
+					list[#list + 1] = {
+						ts = ts:sub(12, 19),
+						lv = sevname[sev + 1] or "info",
+						sev = sev,
+						msg = msg:sub(1, 200),
+					}
+				end
+			end
+			local recent = {}
+			for i = math.max(1, #list - 11), #list do
+				recent[#recent + 1] = list[i]
+			end
+			d.log.recent = recent
+		end)
+
+		-- 内核日志：最近 10 条（保留相对时间戳）
+		pcall(function()
+			local out = sys.exec("dmesg 2>/dev/null | tail -24") or ""
+			local list = {}
+			for line in out:gmatch("[^\n]+") do
+				local t, body = line:match("^%[%s*([%d%.]+)%]%s*(.*)$")
+				if body then
+					local lv = "info"
+					local low = body:lower()
+					if low:find("error", 1, true) or low:find("fail", 1, true) or low:find("panic", 1, true) then
+						lv = "err"
+					elseif low:find("warn", 1, true) then
+						lv = "warn"
+					end
+					list[#list + 1] = { t = tonumber(t) or 0, lv = lv, msg = body:sub(1, 180) }
+				end
+			end
+			local recent = {}
+			for i = math.max(1, #list - 9), #list do
+				recent[#recent + 1] = list[i]
+			end
+			d.klog = recent
+		end)
+
+		-- 无线 SSID（接口名动态发现，终端数取关联表真实条目）
+		pcall(function()
+			local list = {}
+			local rn = {}
+			if d.wifi and type(d.wifi.bands) == "table" then
+				for _, r in ipairs(d.wifi.bands) do rn[r.dev] = r.n end
+			end
+			for _, ifn in ipairs(kp_wifi_devs()) do
+				local s = sys.exec("iwinfo " .. ifn .. " info 2>/dev/null") or ""
+				if s ~= "" then
+					local ssid = s:match('ESSID:%s*"(.-)"') or ""
+					local ch = s:match("Channel:%s*(%d+)") or ""
+					local mode = s:match("Mode:%s*(%S+)") or ""
+					local sig = s:match("Signal:%s*(%-?%d+)")
+					local qual = s:match("Quality:%s*(%d+)")
+					local enc = s:match("Encryption:%s*([^\n]+)") or ""
+					local n = rn[ifn] or #kp_assoc(ifn)
+					list[#list + 1] = {
+						dev = ifn, ssid = ssid, ch = ch, mode = mode, n = n,
+						sig = tonumber(sig) or 0, q = tonumber(qual) or 0,
+						enc = trim(enc),
+					}
+				end
+			end
+			d.ssids = list
+		end)
+
+		-- DHCP 租约
+		pcall(function()
+			local list = {}
+			local raw = read_file("/tmp/dhcp.leases") or ""
+			for line in raw:gmatch("[^\n]+") do
+				local exp, mac, ip, host = line:match("^(%d+)%s+(%S+)%s+(%S+)%s+(%S+)")
+				if ip then
+					list[#list + 1] = { mac = mac, ip = ip, host = (host ~= "*") and host or "" }
+				end
+			end
+			while #list > 10 do table.remove(list, 1) end
+			d.dhcp = list
+		end)
+
+		return d
+	end
+
+	local function write_json(body)
+		io.write("Status: 200 OK\r\n")
+		io.write("Content-Type: application/json; charset=utf-8\r\n")
+		io.write("Cache-Control: no-store\r\n")
+		io.write("Content-Length: " .. #body .. "\r\n\r\n")
+		io.write(body)
+		io.flush()
+	end
+
+	local function handle()
+		local path = os.getenv("PATH_INFO") or ""
+		-- 既要支持 /admin/status/overview，也要支持别名 /admin/status
+		if not (path == "/admin/status" or path:match("^/admin/status/")) then return false end
+		local qs = os.getenv("QUERY_STRING") or ""
+		-- 注意：Lua 模式没有 | 交替，必须分开匹配
+		local action = qs:match("^action=([%w_%-]+)") or qs:match("[&]action=([%w_%-]+)")
+		if action ~= "kp_status" then return false end
+
+		if not check_auth() then
+			write_json('{"code":1,"msg":"会话已过期，请重新登录"}')
+			return true
+		end
+
+		-- 3 秒缓存
+		local st = fs.stat(CACHE)
+		if st and (os.time() - (tonumber(st.mtime) or 0)) < TTL then
+			local raw = read_file(CACHE)
+			if raw and raw:match('^%s*{') then
+				write_json(raw)
+				return true
+			end
+		end
+
+		local ok, data = pcall(collect)
+		if not ok or type(data) ~= "table" then
+			write_json('{"code":1,"msg":"采集失败"}')
+			return true
+		end
+
+		local okj, body = pcall(function() return jsonc.stringify(data) end)
+		if not okj or type(body) ~= "string" then
+			write_json('{"code":1,"msg":"编码失败"}')
+			return true
+		end
+		pcall(function() fs.writefile(CACHE, body) end)
+		write_json(body)
+		return true
+	end
+
+	if handle() then
+		return
+	end
+end
+-- KP-STATUS-API v1 END ======================================================
+
+
+-- KP-QUICKSTART-PATCH v2 START ==========================================
+-- PATCH-BUILD: p10-20260927
+-- 补齐 quickstart 首页两个卡片被 Go `,omitempty` 抹掉的字段。
+-- （2026-09-27 实证：后端硬编码查 network.interface.wan，但 C2000 的真实
+--   上行是蜂窝 cpe(device eth3)；wan(eth0) 被禁用 → 零值 → 字段被省略 →
+--   前端 NaN KB/s / IPv4 "-" / DNS 空。）
+--
+-- 本块只在 8080 反代层生效，全部 pcall 包裹；任何失败都回落「原样透传」。
+-- ⚠ 必须定义成**全局函数**：挂接点在 KP-QUICKSTART-PROXY 的 do..end 作用域内，
+--   块内 local 函数在那里不可见（实测踩坑）。
+kp_qs_patch_read_file = function(p)
+		local f = io.open(p, "r")
+		if not f then return nil end
+		local v = f:read("*a")
+		f:close()
+		if type(v) ~= "string" then return nil end
+		return (v:gsub("%s+$", ""))
+	end
+
+	-- P10 / P2-2: 统一「空值」判定：nil 或 空串 都算缺失。
+	kp_qs_blank = function(v)
+		return v == nil or v == ""
+	end
+
+	-- 取"承载 IPv4 的真实上行接口名"：在候选里挑第一个 ipv4-address 非空的。
+	kp_qs_patch_pick_iface = function(js, names)
+		for _, nm in ipairs(names) do
+			local s = nil
+			local okn = pcall(function()
+				s = require("luci.sys").exec("ubus call network.interface." .. nm .. " status")
+			end)
+			if okn and type(s) == "string" and #s > 0 then
+				local o = nil
+				pcall(function() o = js.parse(s) end)
+				if type(o) == "table" then
+					local a = o["ipv4-address"]
+					if type(a) == "table" and type(a[1]) == "table"
+					   and type(a[1].address) == "string" and a[1].address ~= "" then
+						return nm, o
+					end
+				end
+			end
+		end
+		return nil, nil
+	end
+
+	kp_qs_patch_pick_iface6 = function(js, names)
+		for _, nm in ipairs(names) do
+			local s = nil
+			local okn = pcall(function()
+				s = require("luci.sys").exec("ubus call network.interface." .. nm .. " status")
+			end)
+			if okn and type(s) == "string" and #s > 0 then
+				local o = nil
+				pcall(function() o = js.parse(s) end)
+				if type(o) == "table" then
+					local a = o["ipv6-address"]
+					if type(a) == "table" and type(a[1]) == "table"
+					   and type(a[1].address) == "string" and a[1].address ~= "" then
+						return nm, o
+					end
+				end
+			end
+		end
+		return nil, nil
+	end
+
+	-- P10 / P3-4: 真实上行 device 名（用于读 /sys/class/net/<dev>/statistics/*）
+	-- 改用 luci.jsonc.parse 解析 ubus JSON（实测可用）；l3_device 优先、device 兜底。
+	-- 实测接口差异：cpe 无 device key(proto=wwan)；cpe_4/cpe_6 有 l3_device+device；
+	--              wan 无 l3_device(device=eth0)。
+	kp_qs_patch_uplink_device = function()
+		local okjs, jsp = pcall(require, "luci.jsonc")
+		local names = { "cpe_4", "cpe_6", "cpe", "wan" }
+		for _, nm in ipairs(names) do
+			local s = nil
+			local okn = pcall(function()
+				s = require("luci.sys").exec("ubus call network.interface." .. nm .. " status")
+			end)
+			if okn and type(s) == "string" and #s > 0 then
+				local d = nil
+				if okjs and type(jsp) == "table" and type(jsp.parse) == "function" then
+					local o = nil
+					pcall(function() o = jsp.parse(s) end)
+					if type(o) == "table" then
+						d = o.l3_device
+						if d == nil or d == "" then d = o.device end
+					end
+				end
+				if d == nil or d == "" then
+					d = s:match('"l3_device"%s*:%s*"([^"]+)"')
+						or s:match('"device"%s*:%s*"([^"]+)"')
+				end
+				if type(d) == "string" and d ~= "" then
+					if kp_qs_patch_read_file("/sys/class/net/" .. d .. "/statistics/rx_bytes") then
+						return d
+					end
+				end
+			end
+		end
+		return "eth0"
+	end
+
+	-- JSON 值转义（只处理字符串里可能出现的字符）
+	kp_qs_patch_jesc = function(s)
+		s = tostring(s)
+		s = s:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r')
+		return s
+	end
+
+	-- 收集设备真实网络信息（供两处共用）
+	kp_qs_patch_real_net = function(js)
+		local info = {}
+		local nm4, o4 = kp_qs_patch_pick_iface(js, { "cpe_4", "cpe", "wan", "lan" })
+		if o4 then
+			local a = o4["ipv4-address"]
+			if type(a) == "table" and type(a[1]) == "table" then
+				info.ipv4addr = a[1].address
+				if a[1].mask then info.ipv4mask = tostring(a[1].mask) end
+			end
+			if type(o4.proto) == "string" then info.proto = o4.proto end
+			local dn = o4["dns-server"]
+			if type(dn) == "table" and #dn > 0 then
+				local L = {}
+				for _, d in ipairs(dn) do
+					if type(d) == "string" and d ~= "" then L[#L + 1] = d end
+				end
+				if #L > 0 then info.dnsList = L end
+			end
+			-- gateway：优先 route 里的 default，其次 inactive.route 的 nexthop
+			local rt = o4.route
+			if type(rt) == "table" then
+				for _, r in ipairs(rt) do
+					if type(r) == "table" and tostring(r.target) == "0.0.0.0"
+					   and type(r.nexthop) == "string" then
+						info.gateway = r.nexthop
+						break
+					end
+				end
+			end
+			if not info.gateway then
+				local ir = o4.inactive and o4.inactive.route
+				if type(ir) == "table" then
+					for _, r in ipairs(ir) do
+						if type(r) == "table" and type(r.nexthop) == "string" then
+							info.gateway = r.nexthop
+							break
+						end
+					end
+				end
+			end
+			if nm4 then info.iface4 = nm4 end
+		end
+		local nm6, o6 = kp_qs_patch_pick_iface6(js, { "cpe_6", "cpe_4", "cpe", "wan" })
+		if o6 then
+			local a = o6["ipv6-address"]
+			if type(a) == "table" and type(a[1]) == "table"
+			   and type(a[1].address) == "string" then
+				info.ipv6addr = a[1].address
+			end
+		end
+		info.dev = kp_qs_patch_uplink_device()
+		info.disp = "cpe"
+		return info
+	end
+
+	-- ---- (A) /u/network/status/ 响应补齐 ----
+	kp_qs_patch_status = function(js, rbody)
+		local o = nil
+		pcall(function() o = js.parse(rbody) end)
+		if type(o) ~= "table" then return rbody end
+		local res = o.result
+		if type(res) ~= "table" then return rbody end
+
+		local n = kp_qs_patch_real_net(js)
+		-- P10 / P2-2: Lua 里 not "" == false（空串是 truthy），后端若返回空串，
+		-- 旧的 `if not res.ipv4addr` 会判 false → 静默跳过补齐。改用 kp_qs_blank。
+		if kp_qs_blank(res.ipv4addr) and not kp_qs_blank(n.ipv4addr) then
+			res.ipv4addr = n.ipv4addr
+			res.ipv4mask = n.ipv4mask or res.ipv4mask
+			res.proto = n.proto or res.proto
+			res.gateway = n.gateway or res.gateway
+			if res.defaultInterface == nil or res.defaultInterface == "wan" then
+				res.defaultInterface = n.iface4 or n.disp
+			end
+		end
+		if kp_qs_blank(res.ipv6addr) and not kp_qs_blank(n.ipv6addr) then res.ipv6addr = n.ipv6addr end
+		if kp_qs_blank(res.proto)    and not kp_qs_blank(n.proto)    then res.proto    = n.proto    end
+		if kp_qs_blank(res.gateway)  and not kp_qs_blank(n.gateway)  then res.gateway  = n.gateway  end
+		if res.dnsList == nil or res.dnsList == js.null then
+			if n.dnsList then res.dnsList = n.dnsList end
+		end
+		if res.dnsProto == nil or res.dnsProto == "" then
+			res.dnsProto = "auto"
+		end
+
+		local ok_enc, s2 = pcall(function() return js.stringify(o) end)
+		if ok_enc and type(s2) == "string" and #s2 > 0 then return s2 end
+		return rbody
+	end
+
+	-- ---- (B) /u/network/statistics/ 响应补齐 ----
+	kp_qs_patch_statistics = function(js, rbody)
+		local o = nil
+		pcall(function() o = js.parse(rbody) end)
+		if type(o) ~= "table" then return rbody end
+		local res = o.result
+		if type(res) ~= "table" then return rbody end
+		local items = res.items
+		if type(items) ~= "table" or #items == 0 then return rbody end
+
+		local dev = kp_qs_patch_uplink_device()
+		local function rd(k)
+			local v = kp_qs_patch_read_file("/sys/class/net/" .. dev .. "/statistics/" .. k)
+			return tonumber(v)
+		end
+		-- P10 / P2-1: 采样窗口从 0.3s 降到 0.15s（降低每请求阻塞），
+		-- 并统一用 WIN 变量，保证「睡眠时长」与「速率分母」一致。
+		local WIN = 0.15
+		local rx1, tx1 = rd("rx_bytes"), rd("tx_bytes")
+		local slept = false
+		pcall(function()
+			local nx = require("nixio")
+			if type(nx.nanosleep) == "function" then
+				nx.nanosleep(0, 150000000)
+				slept = true
+			end
+		end)
+		if not slept then
+			-- 兜底（仅 nixio 缺失时）：忙等 WIN 秒
+			local t0 = os.clock()
+			while os.clock() - t0 < WIN do end
+		end
+		local rx2, tx2 = rd("rx_bytes"), rd("tx_bytes")
+
+		local ds, us = 0, 0
+		if rx1 and rx2 and rx2 >= rx1 then ds = math.floor((rx2 - rx1) / WIN) end
+		if tx1 and tx2 and tx2 >= tx1 then us = math.floor((tx2 - tx1) / WIN) end
+		if ds < 0 then ds = 0 end
+		if us < 0 then us = 0 end
+
+		for i = 1, #items do
+			if type(items[i]) ~= "table" then items[i] = {} end
+			if items[i].downloadSpeed == nil then items[i].downloadSpeed = 0 end
+			if items[i].uploadSpeed == nil then items[i].uploadSpeed = 0 end
+		end
+		local last = items[#items]
+		last.downloadSpeed = ds
+		last.uploadSpeed = us
+
+		local ok_enc, s2 = pcall(function() return js.stringify(o) end)
+		if ok_enc and type(s2) == "string" and #s2 > 0 then return s2 end
+		return rbody
+	end
+
+	-- 挂接点：由 kp_qs_proxy() 调用（返回改写后的 body）
+	kp_qs_patch_dispatch = function(pi, rbody)
+		local okjs, js = pcall(require, "luci.jsonc")
+		if not okjs or type(js) ~= "table" or type(js.parse) ~= "function" then
+			return rbody
+		end
+		local out = rbody
+		pcall(function()
+			if pi:match("/u/network/status/$") then
+				out = kp_qs_patch_status(js, rbody)
+			elseif pi:match("/u/network/statistics/$") then
+				out = kp_qs_patch_statistics(js, rbody)
+			end
+		end)
+		return out
+	end
+-- KP-QUICKSTART-PATCH v2 END ============================================
+
+-- KP-QUICKSTART-PROXY v2 START ===========================================
+-- 8080 实例**没有 lua_prefix**（/etc/config/uhttpd 的 openwrt8080 段无该项，
+-- 只有 80 端 main 有），所以 /cgi-bin/luci 是普通 CGI，无法注册 SGI handler。
+-- 因此在 CGI 主体、run() 之前拦 PATH_INFO 以 /istore 开头的请求，反代到
+-- quickstart 守护进程 127.0.0.1:3038（语义对齐官方 istore_backend.lua）。
+--
+-- ⚠ 两个实测坑（2026-09-27，勿推翻）：
+--   1) uhttpd 的 cgi_prefix=/cgi-bin，**会把 SCRIPT 名剥掉**：
+--      请求 /cgi-bin/luci/istore/u/x  →  PATH_INFO = /istore/u/x
+--      （不是 /cgi-bin/luci/istore/u/x）
+--      而 3038 的 Go 路由**挂在全前缀下**：带 /cgi-bin/luci 前缀才 200，
+--      不带则 404。→ 转发时**必须把 /cgi-bin/luci 拼回**。
+--   2) 3038 靠 X-Forwarded-Token 鉴权：
+--        无 token            → {"success":-1001}
+--        带 token（任意非空） → 真实数据（version/网络状态等）
+--      所以必须从 sysauth cookie 取 sid 同时塞进 X-Forwarded-Sid 和
+--      X-Forwarded-Token。
+--   3) nixio.socket() 返回的是 **userdata**（不是 table），守卫不能写
+--      type(s)=="table"，否则直接判定失败。
+do
+	local function kp_qs_proxy()
+		-- 仅本实例（8080）生效
+		if (os.getenv("SERVER_PORT") or "") ~= "8080" then return false end
+		-- ⚠ PATH_INFO 已被 uhttpd 剥掉 /cgi-bin/luci，这里只匹配 /istore
+		local pi = os.getenv("PATH_INFO") or ""
+		if not pi:match("^/istore") then return false end
+
+		local function out(status, ctype, body)
+			io.write("Status: " .. status .. "\r\n")
+			io.write("Content-Type: " .. ctype .. "\r\n")
+			io.write("Cache-Control: no-store\r\n")
+			io.write("Content-Length: " .. #body .. "\r\n\r\n")
+			io.write(body)
+			io.flush()
+		end
+
+		local ok_nixio, nixio = pcall(require, "nixio")
+		if not ok_nixio or type(nixio) ~= "table" or type(nixio.socket) ~= "function" then
+			out("502 Bad Gateway", "application/json; charset=utf-8",
+			    '{"code":1,"msg":"nixio unavailable"}')
+			return true
+		end
+
+		local ok_sock, sock = pcall(nixio.socket, "inet", "stream")
+		-- nixio.socket() 返回 userdata，不能断言 table
+		if not ok_sock or sock == nil then
+			out("502 Bad Gateway", "application/json; charset=utf-8",
+			    '{"code":1,"msg":"socket() failed"}')
+			return true
+		end
+
+		-- ⚠ 实测本机 nixio socket 对象**无 settimeout 方法**，
+		--   必须守卫后再调，否则 pcall 里报错会污染后续 connect。
+		pcall(function()
+			if type(sock.settimeout) == "function" then
+				sock:settimeout(8)
+			elseif type(sock.setblocking) == "function" then
+				sock:setblocking(true)
+			end
+		end)
+
+		local ok_conn, connected = pcall(function()
+			return sock:connect("127.0.0.1", 3038)
+		end)
+		if not ok_conn or not connected then
+			pcall(function() sock:close() end)
+			out("502 Bad Gateway", "application/json; charset=utf-8",
+			    '{"code":1,"msg":"quickstart backend unreachable on 127.0.0.1:3038"}')
+			return true
+		end
+
+		local method = os.getenv("REQUEST_METHOD") or "GET"
+		local qs = os.getenv("QUERY_STRING") or ""
+		-- ⚠ 关键：把 /cgi-bin/luci 前缀**拼回**（3038 的路由挂在全前缀下）
+		local target = "/cgi-bin/luci" .. pi
+		if qs ~= "" then target = target .. "?" .. qs end
+
+		local body = ""
+		local clen = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
+		if clen > 0 and clen <= 1048576 then
+			local ok_r, b = pcall(function() return io.read(clen) end)
+			if ok_r and type(b) == "string" then body = b end
+		end
+
+		local cookie = os.getenv("HTTP_COOKIE") or ""
+		local sid = cookie:match("sysauth=([0-9a-fA-F]+)") or ""
+		-- 3038 用 X-Forwarded-Token 鉴权（实测非空即可拿到真实数据）
+		local hdrs = {
+			method .. " " .. target .. " HTTP/1.1",
+			"Host: 127.0.0.1:3038",
+			"X-Forwarded-Sid: " .. sid,
+			"X-Forwarded-Token: " .. sid,
+			"X-Forwarded-For: " .. (os.getenv("REMOTE_ADDR") or ""),
+			"Content-Type: " .. (os.getenv("CONTENT_TYPE") or "application/json"),
+			"Content-Length: " .. #body,
+			"Connection: close",
+			"",
+			body,
+		}
+		local ok_send, err_send = pcall(function() return sock:send(table.concat(hdrs, "\r\n")) end)
+		if not ok_send then
+			pcall(function() sock:close() end)
+			out("502 Bad Gateway", "application/json; charset=utf-8",
+			    '{"code":1,"msg":"send failed: ' .. tostring(err_send):gsub('"', "'") .. '"}')
+			return true
+		end
+
+		local chunks = {}
+		while true do
+			local ok_recv, chunk = pcall(function() return sock:recv(8192) end)
+			if not ok_recv or type(chunk) ~= "string" or #chunk == 0 then break end
+			chunks[#chunks + 1] = chunk
+		end
+		pcall(function() sock:close() end)
+		local raw = table.concat(chunks)
+
+		local head, rbody = raw:match("^(.-)\r\n\r\n(.*)$")
+		if not head then
+			out("502 Bad Gateway", "application/json; charset=utf-8",
+			    '{"code":1,"msg":"bad backend response"}')
+			return true
+		end
+
+		-- 解 chunked（对齐 istore_backend.lua 的 chunksource 语义）
+		if head:lower():find("transfer%-encoding:%s*chunked") then
+			local dec, pos = {}, 1
+			while true do
+				local nl = rbody:find("\r\n", pos, true)
+				if not nl then break end
+				local hexlen = rbody:sub(pos, nl - 1):gsub("%s", "")
+				local n = tonumber(hexlen, 16)
+				if not n or n <= 0 then break end
+				dec[#dec + 1] = rbody:sub(nl + 2, nl + 1 + n)
+				pos = nl + 2 + n + 2
+			end
+			rbody = table.concat(dec)
+		end
+
+		local ctype = head:match("[Cc]ontent%-[Tt]ype:%s*([^\r\n]+)")
+			or "application/json; charset=utf-8"
+		local code = tonumber(head:match("^HTTP/%d%.%d%s+(%d+)")) or 200
+		local reasons = {
+			[200] = "OK", [201] = "Created", [204] = "No Content",
+			[301] = "Moved Permanently", [302] = "Found", [304] = "Not Modified",
+			[400] = "Bad Request", [401] = "Unauthorized", [403] = "Forbidden",
+			[404] = "Not Found", [405] = "Method Not Allowed",
+			[500] = "Internal Server Error", [502] = "Bad Gateway",
+			[503] = "Service Unavailable",
+		}
+		-- KP-QUICKSTART-PATCH v2: 补齐被 Go `,omitempty` 抹掉的字段
+		if code == 200 and type(kp_qs_patch_dispatch) == "function" then
+			local ok_p, patched = pcall(kp_qs_patch_dispatch, pi, rbody)
+			if ok_p and type(patched) == "string" and #patched > 0 then
+				rbody = patched
+			end
+		end
+
+		out(code .. " " .. (reasons[code] or "Status"), ctype, rbody)
+		return true
+	end
+
+	if kp_qs_proxy() then
+		return
+	end
+end
+-- KP-QUICKSTART-PROXY v2 END =============================================
+
+-- KP-QUICKSTART-VIEWNS v3 START ==========================================
+-- ⚠ 为什么必须自建 viewns、为什么挂在 parser.parse 里（2026-09-27 实测定论）：
+--
+-- (1) 症状：/admin/quickstart 返回 200，但 maincontent 是空的（无 div#app），
+--     且响应在 sidebar 脚本后**被截断**（没有 </body></html>）。
+--
+-- (2) 已定论根因（2026-09-27，实测见 p4_probe_v6-v10）：
+--     **main.htm 模板自身的两个坑，与 viewns 无关** ——
+--       (A) Lua 注释里写了模板标签（尖括号百分号）→ 提前闭合 Lua 块 → 代码被当 HTML 直出；
+--       (B) 模板内 require("luci.dispatcher") → 循环 require → cacheloader 协程被打断。
+--     两者都表现为「200 静默截断」。相关规避已由私有 view/quickstart/main.htm 处理。
+--
+-- (3) ★ 关于 viewns：**不必自建**。
+--     实测（p4_probe_v4）ctx 表跨请求复用、viewns 装一次即长期有效；
+--     且真实请求里 viewns 本来就由 dispatcher 正常装配到位。
+--     下面这段保留仅作**兜底**（万一某条路径 viewns 为 nil 时避免 "attempt to
+--     index field 'viewns' (a nil value)"），正常不生效。
+do
+	local ok_tpl, tpl = pcall(require, "luci.template")
+	if ok_tpl and type(tpl) == "table" and type(tpl.Template) == "table"
+	   and tpl.context ~= nil then
+		local ok_p, parser = pcall(require, "luci.template.parser")
+		if ok_p and type(parser) == "table" and type(parser.parse) == "function" then
+			local kp_orig_parse = parser.parse
+			local kp_installed = false
+
+			local function kp_install_viewns()
+				if kp_installed then return end
+				local ctx = tpl.context
+				if type(ctx) ~= "table" then return end
+				-- 已被 dispatcher 正常装配过就不动（幂等）
+				if ctx.viewns ~= nil then kp_installed = true; return end
+
+				local ok_u, util = pcall(require, "luci.util")
+				local ok_h, http = pcall(require, "luci.http")
+				local i18n
+				pcall(function() i18n = require "luci.i18n" end)
+				if not ok_u or type(util) ~= "table" then util = {} end
+
+				local media = "/luci-static/bootstrap"
+				pcall(function()
+					media = require("luci.config").main.mediaurlbase or media
+				end)
+				local theme = media:match("([^/]+)$") or "bootstrap"
+
+				local ok_d, disp = pcall(require, "luci.dispatcher")
+
+				ctx.viewns = setmetatable({
+					write      = (ok_h and http.write) or function(s) io.write(tostring(s or "")) end,
+					include    = function(name) return tpl.Template(name):render(getfenv(2)) end,
+					translate  = (i18n and i18n.translate) or function(s) return s end,
+					translatef = (i18n and i18n.translatef) or function(s, ...) return s end,
+					export     = function(k, v)
+						if ctx.viewns[k] == nil then ctx.viewns[k] = v end
+					end,
+					striptags  = util.striptags or function(s) return s end,
+					pcdata     = util.pcdata or function(s) return tostring(s or "") end,
+					media      = media,
+					theme      = theme,
+					resource   = "/luci-static/resources",
+					ifattr     = function(...) return "" end,
+					attr       = function(...) return "" end,
+					url        = (ok_d and disp.build_url) or function(...) return "" end,
+				}, { __index = function(table, key)
+					if key == "controller" then
+						return (ok_d and disp.build_url()) or ""
+					elseif key == "token" then
+						local t = ""
+						if ok_d then
+							pcall(function()
+								t = tostring(disp.context and disp.context.authsession or "")
+							end)
+						end
+						if t == "" then
+							t = (os.getenv("HTTP_COOKIE") or "")
+								:match("sysauth=([0-9a-fA-F]+)") or ""
+						end
+						return t
+					else
+						return rawget(table, key) or _G[key]
+					end
+				end })
+				kp_installed = true
+			end
+
+			parser.parse = function(path, ...)
+				kp_install_viewns()
+				return kp_orig_parse(path, ...)
+			end
+		end
+	end
+end
+-- KP-QUICKSTART-VIEWNS v3 END ============================================
+
+luci.dispatcher.indexcache = "/tmp/luci-indexcache-bootstrap"
+luci.sgi.cgi.run()

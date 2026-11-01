@@ -1,0 +1,10 @@
+# 统一 LF,保证 shell/lua 脚本在路由器上可直接运行
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.ttf binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.eot binary

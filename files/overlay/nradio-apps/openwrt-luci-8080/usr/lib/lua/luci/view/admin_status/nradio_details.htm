@@ -1,0 +1,1127 @@
+<%# NRadio device overview 20261018-1, firmware homepage style for port 8080. -%>
+<%
+	local fs = require "nixio.fs"
+	local sys = require "luci.sys"
+	local util = require "luci.util"
+	local stat = require "luci.tools.status"
+	local http = require "luci.http"
+
+	local function trim(value)
+		local cleaned = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		return cleaned
+	end
+
+	local function first_line(value)
+		return trim((value or ""):match("([^\r\n]+)") or "")
+	end
+
+	local function read(path)
+		return fs.readfile(path) or ""
+	end
+
+	local function command(value)
+		return trim(sys.exec(value .. " 2>/dev/null") or "")
+	end
+
+	local function safe_call(callable, ...)
+		if type(callable) ~= "function" then
+			return nil
+		end
+		local ok, result = pcall(callable, ...)
+		return ok and result or nil
+	end
+
+	local function safe_table(value)
+		return type(value) == "table" and value or {}
+	end
+
+	-- ===== 在线设备：真实读取 =====
+	-- 无线取 luci.tools.status 的 assoclist（MAC 为键，不会有提示行），
+	-- 有线取 LAN 桥的邻居表与转发表，按 MAC 去重。
+	local function mac_ok(mac)
+		if type(mac) ~= "string" then return false end
+		mac = mac:lower()
+		if not mac:match("^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") then return false end
+		if mac == "00:00:00:00:00:00" then return false end
+		return (tonumber(mac:sub(1, 2), 16) or 0) % 2 == 0
+	end
+
+	-- 返回 { [mac] = 接口名 }；只看 LAN 桥，避免把上游网关算成内网设备
+	local function lan_bridge_macs()
+		local out = {}
+		local fdb = command("bridge fdb show br br-lan")
+		if fdb == "" then fdb = command("brctl showmacs br-lan") end
+		local output = command("ip neigh show dev br-lan") .. "\n" .. fdb
+		for line in output:gmatch("[^\n]+") do
+			local mac = line:match("(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+			if mac and mac_ok(mac) then
+				local low = line:lower()
+				local skip = low:match("%f[%a]self%f[%A]") or low:match("%f[%a]permanent%f[%A]")
+					or low:match("%f[%a]local%f[%A]") or low:match("%syes%s")
+				if not skip then
+					out[mac:lower()] = line:match("dev%s+(%S+)") or "br-lan"
+				end
+			end
+		end
+		return out
+	end
+
+	-- 返回 总数, 无线数, 有线数
+	local function online_clients(wifi_networks)
+		local seen, wifi_n, wired_n = {}, 0, 0
+		for _, radio in ipairs(wifi_networks) do
+			for _, wifi in ipairs(radio.networks or {}) do
+				for mac in pairs(wifi.assoclist or {}) do
+					if mac_ok(mac) and not seen[mac:lower()] then
+						seen[mac:lower()] = true
+						wifi_n = wifi_n + 1
+					end
+				end
+			end
+		end
+		for mac, dev in pairs(lan_bridge_macs()) do
+			if not seen[mac] then
+				seen[mac] = true
+				-- 出现在无线接口上的说明刚离开关联表，不重复计入有线
+				if not (dev:match("^ra") or dev:match("^wlan")) then
+					wired_n = wired_n + 1
+				end
+			end
+		end
+		return wifi_n + wired_n, wifi_n, wired_n
+	end
+
+	local function has_route(...)
+		local node = luci.dispatcher.context.tree
+		for _, name in ipairs({ ... }) do
+			node = type(node) == "table" and node.nodes and node.nodes[name]
+			if type(node) ~= "table" then return false end
+		end
+		return node.target ~= nil and not node.hidden
+	end
+
+	local function normalize_nradio_model(raw_model, raw_board, raw_compatible)
+		local combined = string.upper(table.concat({
+			tostring(raw_model or ""),
+			tostring(raw_board or ""),
+			tostring(raw_compatible or "")
+		}, " "))
+		if combined:find("HC%-WT9108") then
+			return "NRadio_C8-668"
+		elseif combined:find("HC%-WT9104") then
+			return "NRadio_C8-688"
+		elseif combined:find("HC%-WT9302") or combined:find("HCMT7987%-NAND") then
+			return "NRadio_C8-788"
+		elseif combined:find("HC%-WT9120") then
+			return "NRadio_C5800-650"
+		elseif combined:find("HC%-WT9126") then
+			return "NRadio_C5800-688"
+		elseif combined:find("HC%-WT9111") or combined:find("NRADIO%-WT9111") then
+			return "NRadio_NBCPE"
+		elseif combined:find("HC%-WT9500") then
+			return "NRadio_C2000Ultra"
+		elseif combined:find("HC%-WT9303") then
+			return "NRadio_C2000MAX"
+		elseif combined:find("UDX710") or combined:find("RG200U%-CN") then
+			return "NRadio_C2000Pro"
+		end
+		return "未知机型"
+	end
+
+	local function mib(kib)
+		return string.format("%.1f MiB", (tonumber(kib) or 0) / 1024)
+	end
+
+	local function bytes(value)
+		local number = tonumber(value) or 0
+		if number >= 1073741824 then
+			return string.format("%.2f GiB", number / 1073741824)
+		elseif number >= 1048576 then
+			return string.format("%.2f MiB", number / 1048576)
+		elseif number >= 1024 then
+			return string.format("%.2f KiB", number / 1024)
+		end
+		return string.format("%d B", number)
+	end
+
+	local function duration(value)
+		local seconds = math.floor(tonumber(value) or 0)
+		local days = math.floor(seconds / 86400)
+		local hours = math.floor((seconds % 86400) / 3600)
+		local minutes = math.floor((seconds % 3600) / 60)
+		return string.format("%d 天 %02d:%02d:%02d", days, hours, minutes, seconds % 60)
+	end
+
+	local function metric(value, unit)
+		local number = tonumber(value)
+		if not number then return "-" end
+		return tostring(number) .. (unit or "")
+	end
+
+	local function band_text(mode, band)
+		local value = trim(band)
+		if value == "" or value == "-" then return "-" end
+		if value:match("^[NBnb]") then return value:upper() end
+		local kind = trim(mode):upper()
+		local prefix = ""
+		if kind:find("NR", 1, true) or kind:find("5G", 1, true) or kind == "SA" or kind == "NSA" then
+			prefix = "N"
+		elseif kind:find("LTE", 1, true) or kind:find("4G", 1, true) then
+			prefix = "B"
+		end
+		return prefix .. value
+	end
+
+	local function collect_live_status()
+		local info = safe_table(safe_call(util.ubus, "system", "info"))
+		local runtime = safe_table(safe_call(util.ubus, "infocd", "runtime"))
+		local global = safe_table(runtime.global)
+		local memory = {}
+		for key, value in read("/proc/meminfo"):gmatch("([%w_]+):%s+(%d+)%s+kB") do
+			memory[key] = tonumber(value)
+		end
+		local total = memory.MemTotal
+		local available = memory.MemAvailable
+		if not available and memory.MemFree then
+			available = memory.MemFree + (memory.Buffers or 0) + (memory.Cached or 0)
+		end
+		if total and available then available = math.max(0, math.min(total, available)) end
+		local used = total and available and total - available
+		local percent = total and total > 0 and used and used * 100 / total
+		local swap_total, swap_free = memory.SwapTotal, memory.SwapFree
+		local swap = "-"
+		if swap_total == 0 then
+			swap = "未启用"
+		elseif swap_total and swap_free then
+			swap = "已用 " .. mib(math.max(0, swap_total - swap_free)) .. " / " .. mib(swap_total)
+		end
+		local temperature = tonumber(trim(read("/sys/class/thermal/thermal_zone0/temp")))
+		if temperature and math.abs(temperature) >= 1000 then temperature = temperature / 1000 end
+		local load = safe_table(info.load)
+		local fields = {
+			cpu_usage = metric(global.cpu_percent, "%"),
+			cpu_temperature = temperature and string.format("%.1f °C", temperature) or "-",
+			current_time = os.date("%Y-%m-%d %H:%M:%S"),
+			uptime = info.uptime and duration(info.uptime) or "-",
+			load = load[1] and string.format("%.2f / %.2f / %.2f", (tonumber(load[1]) or 0) / 65536, (tonumber(load[2]) or 0) / 65536, (tonumber(load[3]) or 0) / 65536) or "-",
+			memory_usage = percent and string.format("%.0f%%", percent) or "-",
+			memory_total = total and mib(total) or "-",
+			memory_available = (available and mib(available) or "-") .. " / " .. (memory.MemFree and mib(memory.MemFree) or "-"),
+			memory_cache = (memory.Cached and mib(memory.Cached) or "-") .. " / " .. (memory.Buffers and mib(memory.Buffers) or "-"),
+			swap = swap
+		}
+		local addresses = {}
+		for _, wan in ipairs(safe_table(runtime.wans)) do
+			if type(wan) == "table" then
+				local first = safe_table(safe_table(wan.ipaddrs)[1])
+				addresses[tostring(wan.name or "")] = first.ipaddr
+			end
+		end
+		local by_name = {}
+		for _, item in ipairs(safe_table(runtime.cpe)) do
+			if type(item) == "table" and (item.name == "cpe" or item.name == "cpe1") then
+				local state = tonumber(item.status)
+				by_name[item.name] = {
+					name = item.name,
+					label = item.name == "cpe" and "主线路" or "副线路",
+					connection = state == 0 and "已连接" or (state and "未连接" or "状态未知"),
+					up = state == 0,
+					mode = trim(item.mode),
+					band = band_text(item.mode, item.band),
+					mon = trim(item.sim_mon),
+					total_flow = trim(item.sim_flow),
+					rsrp = metric(item.rsrp, " dBm"),
+					rsrq = metric(item.rsrq, " dB"),
+					sinr = metric(item.sinr, " dB"),
+					temperature = metric(item.model_temp, " °C"),
+					operator = trim(item.sim_company) ~= "" and trim(item.sim_company) or trim(item.isp_company),
+					plmn = trim(item.isp),
+					sim_name = trim(item.sim_name),
+					ipaddr = addresses[item.name] or "-",
+					default_route = tonumber(item.gateway_if) == 1,
+					pci = trim(item.pci),
+					earfcn = trim(item.earfcn)
+				}
+			end
+		end
+		local lines = {}
+		for _, name in ipairs({ "cpe", "cpe1" }) do
+			if by_name[name] then lines[#lines + 1] = by_name[name] end
+		end
+		return {
+			ok = true, version = "20260925-1", fields = fields, lines = lines,
+			cellular_available = type(runtime.cpe) == "table"
+		}
+	end
+
+	-- KP-LIVE-CACHE v1（读）: ?refresh=1 命中 2 秒缓存直接回放，不再执行 collect_live_status()
+	-- 缓存体 = live JSON 加 _ts 前缀字段，客户端只读已知字段不受影响。
+	-- 缓存写入在 stats 构建完成后的 refresh 输出分支（见下文 KP-LIVE-CACHE v1（写））。
+	local LIVE_VERSION = "20261018-1"
+	if http.formvalue("refresh") == "1" then
+		http.header("Cache-Control", "no-store")
+		local raw = read("/tmp/kp-live-cache.json")
+		local ts = raw and tonumber(raw:match('^%s*%{"_ts":(%d+)')) or nil
+		if ts and (os.time() - ts) < 2 and raw:find('"version"', 1, true) then
+			http.write(raw)
+			return
+		end
+	end
+	local live = collect_live_status()
+	local plugin_links = safe_table(luci.dispatcher.context.nradio_8080_links)
+	local network_module = safe_table(safe_call(require, "luci.model.network"))
+	local network = safe_call(network_module.init)
+
+	local function process_state(name)
+		local pids = command("pidof " .. name)
+		if pids ~= "" then
+			return "运行中（PID " .. pids .. "）", true
+		end
+		return "未运行", false
+	end
+
+	local function interface_address(device, family, keyword)
+		local output = command("ip -" .. family .. " addr show dev " .. device)
+		return output:match("%s" .. keyword .. "%s+([^%s]+)") or "-"
+	end
+
+	local function disk(path)
+		if path == "/mnt/rootfs_2nd_data" and not read("/proc/mounts"):find(" /mnt/rootfs_2nd_data ", 1, true) then return "未挂载" end
+		local output = command("df -kP " .. path)
+		local last = ""
+		for line in output:gmatch("[^\r\n]+") do
+			last = line
+		end
+		local _, total, used, available, percent = last:match("^(%S+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%%")
+		if not total then
+			return "-"
+		end
+		return string.format("已用 %s / 总计 %s，剩余 %s（%s%%）", mib(used), mib(total), mib(available), percent)
+	end
+
+	local cpuinfo = read("/proc/cpuinfo")
+	local cpu_model = cpuinfo:match("model name%s*:%s*([^\r\n]+)") or cpuinfo:match("Hardware%s*:%s*([^\r\n]+)") or cpuinfo:match("Processor%s*:%s*([^\r\n]+)") or "ARM"
+	local cpu_cores = 0
+	for _ in cpuinfo:gmatch("processor%s*:%s*%d+") do
+		cpu_cores = cpu_cores + 1
+	end
+	local cpu_frequency = tonumber(trim(read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")))
+	local cpu_summary = string.format("%s，%d 核", cpu_model, cpu_cores)
+	if cpu_frequency then
+		cpu_summary = cpu_summary .. string.format("，%.0f MHz", cpu_frequency / 1000)
+	end
+
+	local board = safe_table(safe_call(util.ubus, "system", "board"))
+	local uname = nixio.uname() or {}
+	local release = read("/etc/openwrt_release")
+	local firmware = release:match("DISTRIB_REVISION='([^']+)") or "-"
+	local raw_model = trim(read("/tmp/sysinfo/model"))
+	local raw_board = trim(read("/tmp/sysinfo/board_name"))
+	local raw_compatible = trim(read("/proc/device-tree/compatible"):gsub("%z", " "))
+	local normalized_model = normalize_nradio_model(raw_model, raw_board, raw_compatible)
+	local model_name = normalized_model:gsub("^NRadio_", "")
+
+	local wan = network and safe_call(network.get_wannet, network) or nil
+	local wan6 = network and safe_call(network.get_wan6net, network) or nil
+	local wan_ip = wan and safe_call(wan.ipaddr, wan) or "-"
+	local wan_ifname = wan and safe_call(wan.ifname, wan) or "-"
+	local wan_gateway = wan and safe_call(wan.gwaddr, wan) or "-"
+	local wan6_ip = wan6 and safe_call(wan6.ip6addr, wan6) or "-"
+	local wan6_gateway = wan6 and safe_call(wan6.gw6addr, wan6) or "-"
+	local wan_dns = safe_table(wan and safe_call(wan.dnsaddrs, wan))
+	local wan6_dns = safe_table(wan6 and safe_call(wan6.dns6addrs, wan6))
+	local default_route = first_line(command("ip route show default"))
+	local default_route6 = first_line(command("ip -6 route show default"))
+
+	local openvpn_state, openvpn_up = process_state("openvpn")
+	local clash_state, clash_up = process_state("clash")
+	local adguard_state, adguard_up = process_state("AdGuardHome")
+	local openvpn_status = read("/var/run/openvpn.custom_config.status")
+	local openvpn_updated = openvpn_status:match("Updated,([^\r\n]+)") or "-"
+	local openvpn_read = openvpn_status:match("TUN/TAP read bytes,(%d+)")
+	local openvpn_write = openvpn_status:match("TUN/TAP write bytes,(%d+)")
+	local tun_routes = command("ip route show dev tun0")
+
+	local wifi_networks = safe_table(safe_call(stat.wifi_networks))
+	local leases4 = safe_table(safe_call(stat.dhcp_leases))
+	local leases6 = safe_table(safe_call(stat.dhcp6_leases))
+	-- 在线设备：无线关联 + LAN 桥邻居/转发表，去重后计数
+	local clients_total, clients_wifi, clients_wired = online_clients(wifi_networks)
+
+	local function kbtext(kb)
+		kb = tonumber(kb) or 0
+		if kb >= 1048576 then return string.format("%.1fG", kb / 1048576) end
+		if kb >= 1024 then return string.format("%.0fM", kb / 1024) end
+		return string.format("%dK", kb)
+	end
+
+	local function uptime_short(sec)
+		sec = math.floor(tonumber(sec) or 0)
+		local days = math.floor(sec / 86400)
+		local hours = math.floor((sec % 86400) / 3600)
+		local mins = math.floor((sec % 3600) / 60)
+		if days > 0 then return string.format("%d 天 %02d:%02d", days, hours, mins) end
+		return string.format("%02d:%02d:%02d", hours, mins, sec % 60)
+	end
+
+	local function build_stats()
+		local cpu_pct = tonumber(tostring(live.fields.cpu_usage or ""):match("([%d%.]+)")) or 0
+		local mem_pct = tonumber(tostring(live.fields.memory_usage or ""):match("([%d%.]+)")) or 0
+		local temp = tonumber(tostring(live.fields.cpu_temperature or ""):match("([%d%.]+)")) or 0
+		local cpuinfo_live = read("/proc/cpuinfo")
+		local ncpu = 0
+		for _ in cpuinfo_live:gmatch("processor%s*:") do ncpu = ncpu + 1 end
+		local load1 = tonumber(read("/proc/loadavg"):match("^([%d%.]+)")) or 0
+		local storage_total, storage_used = 0, 0
+		do
+			local t, u = command("df -kP /overlay | tail -1"):match("^%S+%s+(%d+)%s+(%d+)")
+			if t then storage_total, storage_used = tonumber(t), tonumber(u) end
+		end
+		local storage_pct = storage_total > 0 and math.floor(storage_used * 100 / storage_total + 0.5) or 0
+		local route = command("ip -4 route get 8.8.8.8")
+		local route_ip = route:match("src%s+([%d%.]+)") or ""
+		local route_dev = route:match("dev%s+(%S+)") or ""
+		local stat_wan = route_ip ~= "" and route_ip or ((wan_ip ~= "-" and wan_ip) or "-")
+		local stat_lan = (interface_address("br-lan", "4", "inet") or "-"):gsub("/.*$", "")
+		local sysinfo = safe_table(safe_call(util.ubus, "system", "info"))
+		local uptime_sec = tonumber(sysinfo.uptime) or 0
+		local ports = {}
+		local function add_port(role, dev)
+			if not fs.access("/sys/class/net/" .. dev) then return end
+			local carrier = (read("/sys/class/net/" .. dev .. "/carrier"):gsub("%s", "") == "1")
+			local speed = tonumber((read("/sys/class/net/" .. dev .. "/speed"):gsub("%s", "")))
+			if speed and speed <= 0 then speed = nil end
+			ports[#ports + 1] = { role = role, id = dev, carrier = carrier, speed = speed }
+		end
+		add_port("WAN", "eth0")
+		add_port("LAN", "eth1")
+		add_port("LAN", "eth2")
+		local temp_pct = math.max(0, math.min(100, (temp - 20) / 65 * 100))
+		return {
+			cpu_pct = cpu_pct, mem_pct = mem_pct, temp = temp, temp_pct = temp_pct,
+			cpu_load = load1, ncpu = ncpu,
+			storage_pct = storage_pct,
+			storage_text = kbtext(storage_used) .. "/" .. kbtext(storage_total),
+			clients = clients_total, wifi_clients = clients_wifi, wired_clients = clients_wired,
+			wan_ip = stat_wan, wan_dev = route_dev, lan_ip = stat_lan,
+			uptime = uptime_sec, uptime_short = uptime_short(uptime_sec),
+			current_time = os.date("%Y-%m-%d %H:%M:%S"), ports = ports
+		}
+	end
+
+	live.version = LIVE_VERSION
+	live.stats = build_stats()
+
+	-- 展示用：机型品牌 / 显示名 / 整机图
+	local brand = "NRadio"
+	local model_display = model_name
+	local dev_img = "/luci-static/router3d/ultra.png"
+	if model_name == "C2000Ultra" then
+		model_display = "C2000 Ultra"
+	elseif model_name == "C2000MAX" then
+		model_display = "C2000 MAX"
+		dev_img = "/luci-static/router3d/max.png"
+	elseif model_name:find("C8-") or model_name:find("NBCPE") then
+		model_display = model_name:gsub("^NRadio_", "")
+		dev_img = "/luci-static/router3d/max.png"
+	end
+
+	local release_desc = read("/etc/openwrt_release"):match("DISTRIB_DESCRIPTION='([^']+)'") or ""
+	local firmware_full = (release_desc ~= "" and release_desc or firmware) .. " / Linux " .. tostring(uname.release or "-")
+	local hostname = trim(read("/proc/sys/kernel/hostname"))
+	if hostname == "" then hostname = tostring(uname.nodename or "-") end
+
+	-- 无线 SSID（按 uci 中的顺序显示两个）
+	local ssid_list = {}
+	for raw in command("uci show wireless 2>/dev/null"):gmatch("[^\r\n]+") do
+		local ssid = raw:match("%.ssid='(.-)'") or raw:match('%.ssid="(.-)"')
+		if ssid and ssid ~= "" then ssid_list[#ssid_list + 1] = ssid end
+	end
+	local ssid_24 = ssid_list[1] or "--"
+	local ssid_5 = ssid_list[2] or "--"
+
+	-- 路由切换状态
+	local default_route_line = first_line(command("ip route show default"))
+	local gateway = default_route_line:match("via%s+(%S+)") or "-"
+	local phys_if = default_route_line:match("dev%s+(%S+)") or live.stats.wan_dev or "-"
+	local wan_connected = default_route_line ~= ""
+	local cell_connected = false
+	for _, item in ipairs(live.lines or {}) do
+		if item.up then cell_connected = true end
+	end
+
+
+	-- P2: WAN 累计流量计数（供实时流量图计算速率）
+	do
+		local dev = tostring(live.stats.wan_dev or "")
+		local rx, tx = 0, 0
+		for line in read("/proc/net/dev"):gmatch("[^\r\n]+") do
+			local name, rest = line:match("^%s*([^:]+):(.*)$")
+			if name and trim(name) == dev then
+				local values = {}
+				for value in rest:gmatch("%d+") do values[#values + 1] = tonumber(value) end
+				rx = values[1] or 0
+				tx = values[9] or 0
+				break
+			end
+		end
+		live.stats.wan_rx = rx
+		live.stats.wan_tx = tx
+	end
+
+	if http.formvalue("refresh") == "1" then
+		-- KP-LIVE-CACHE v1（写）: stats 构建完成，序列化 + 打 _ts 戳 + 原子落盘（tmp+rename）
+		local body = util.serialize_json(live)
+		body = body:gsub("^%{", '{"_ts":' .. tostring(os.time()) .. ',', 1)
+		http.write(body)
+		local fp = io.open("/tmp/kp-live-cache.json.tmp", "w")
+		if fp then
+			fp:write(body)
+			fp:close()
+			os.rename("/tmp/kp-live-cache.json.tmp", "/tmp/kp-live-cache.json")
+		end
+		return
+	end
+	local initial_json = util.serialize_json(live):gsub("<", "\\u003c"):gsub("&", "\\u0026"):gsub("\226\128\168", "\\u2028"):gsub("\226\128\169", "\\u2029")
+
+	-- P2: Hero 蜂窝信号派生值
+	local hero_cell = (live.lines and live.lines[1]) or nil
+	local function hero_num(value)
+		if value == nil then return nil end
+		return tonumber(tostring(value):match("([%-]?%d+%.?%d*)"))
+	end
+	local hero_rsrp = hero_num(hero_cell and hero_cell.rsrp) or 0
+	local hero_sinr = hero_num(hero_cell and hero_cell.sinr) or 0
+	local hero_rsrq = hero_num(hero_cell and hero_cell.rsrq) or 0
+	local function hero_clamp(value, lo, hi)
+		if value == nil then return 0 end
+		local pct = (value - lo) / (hi - lo) * 100
+		if pct < 0 then return 0 end
+		if pct > 100 then return 100 end
+		return pct
+	end
+	local hero_sig_pct = hero_clamp(hero_rsrp, -140, -44)
+	local hero_rsrq_pct = hero_clamp(hero_rsrq, -20, -3)
+	local hero_sinr_pct = hero_clamp(hero_sinr, -10, 30)
+	local hero_level, hero_level_text, hero_color
+	if hero_rsrp == 0 then
+		hero_level, hero_level_text, hero_color = "poor", "无信号", "#f87171"
+	elseif hero_rsrp >= -85 then
+		hero_level, hero_level_text, hero_color = "good", "信号强", "#34d399"
+	elseif hero_rsrp >= -105 then
+		hero_level, hero_level_text, hero_color = "fair", "信号中", "#fbbf24"
+	else
+		hero_level, hero_level_text, hero_color = "poor", "信号弱", "#f87171"
+	end
+	local hero_bars = math.max(1, math.min(5, math.floor(hero_sig_pct / 20 + 0.5)))
+
+	-- 运营商以 PLMN 为准（模块返回的 sim_company 多为英文串）；
+	-- PLMN 优先，其次按英文名兜底，最后原样显示。
+	local function operator_cn(plmn, raw)
+		local map = {
+			["46000"] = "中国移动", ["46002"] = "中国移动", ["46004"] = "中国移动",
+			["46007"] = "中国移动", ["46008"] = "中国移动",
+			["46001"] = "中国联通", ["46006"] = "中国联通", ["46009"] = "中国联通",
+			["46010"] = "中国联通",
+			["46003"] = "中国电信", ["46005"] = "中国电信", ["46011"] = "中国电信",
+			["46012"] = "中国电信",
+			["46015"] = "中国广电", ["46020"] = "中国铁通",
+		}
+		local p = trim(plmn)
+		if map[p] then return map[p] end
+		local u = string.upper(trim(raw))
+		if u:find("UNICOM", 1, true) then return "中国联通" end
+		if u:find("CMCC", 1, true) or u:find("MOBILE", 1, true) then return "中国移动" end
+		if u:find("TELECOM", 1, true) or u:find("CTCC", 1, true) then return "中国电信" end
+		if u:find("BROADNET", 1, true) or u:find("CBN", 1, true) then return "中国广电" end
+		return trim(raw)
+	end
+
+	local hero_operator = hero_cell and operator_cn(hero_cell.plmn, hero_cell.operator) or "无蜂窝模组"
+	if hero_operator == "" or hero_operator == "-" then hero_operator = "无蜂窝模组" end
+	local hero_status = hero_cell and hero_cell.connection or "未连接"
+	local hero_mode = hero_cell and (hero_cell.mode or "") or ""
+	local hero_band = hero_cell and (hero_cell.band or "") or ""
+	local hero_sim = hero_cell and (hero_cell.sim_name or "") or ""
+	if hero_sim == "" or hero_sim == "-" then hero_sim = "SIM 卡" end
+	local hero_pci = hero_cell and (hero_cell.pci or "") or ""
+	local hero_earfcn = hero_cell and (hero_cell.earfcn or "") or ""
+	local hero_up = hero_cell and hero_cell.up or false
+
+	-- 本月流量：模块 sim_mon 是字节，转成易读单位；0 表示读不到
+	local hero_mon_txt = ""
+	do
+		local n = tonumber(hero_cell and hero_cell.mon or "") or 0
+		if n > 0 then
+			if n >= 1073741824 then
+				hero_mon_txt = string.format("%.1f GB", n / 1073741824)
+			else
+				hero_mon_txt = string.format("%.0f MB", n / 1048576)
+			end
+		end
+	end
+
+
+	-- P3: 蜂窝/无线/终端等扩展信息（ubus infocd runtime）
+	local rt = safe_table(safe_call(util.ubus, "infocd", "runtime"))
+	local rt_cpe = safe_table(rt.cpe)[1] or {}
+	local rt_radios = safe_table(safe_table(rt.wlan).radio)
+	local radio24 = rt_radios[1] or {}
+	local radio5 = rt_radios[2] or {}
+	local function rt_trim(value) return trim(tostring(value or "")) end
+	local function rt_mask(value)
+		local v = rt_trim(value)
+		if v == "" then return "-" end
+		if #v <= 8 then return v end
+		return v:sub(1, 6) .. "****" .. v:sub(-4)
+	end
+	local ssid_24_rt = rt_trim(radio24.ssid)
+	local ssid_5_rt = rt_trim(radio5.ssid)
+	if ssid_24_rt ~= "" then ssid_24 = ssid_24_rt end
+	if ssid_5_rt ~= "" then ssid_5 = ssid_5_rt end
+	local wifi_ch_24 = rt_trim(radio24.channel)
+	local wifi_ch_5 = rt_trim(radio5.channel)
+	if wifi_ch_24 == "" then wifi_ch_24 = "-" end
+	if wifi_ch_5 == "" then wifi_ch_5 = "-" end
+	local wifi_sta_24 = tonumber(radio24.sta) or 0
+	local wifi_sta_5 = tonumber(radio5.sta) or 0
+
+	local sim_operator_rt = rt_trim(rt_cpe.sim_company)
+	if sim_operator_rt == "" then sim_operator_rt = rt_trim(rt_cpe.isp_company) end
+	if sim_operator_rt == "" then sim_operator_rt = hero_operator end
+	-- 同样以 PLMN 为准，避免出现英文运营商名
+	sim_operator_rt = operator_cn(rt_trim(rt_cpe.isp), sim_operator_rt)
+	local sim_name_rt = rt_trim(rt_cpe.sim_name)
+	if sim_name_rt == "" then sim_name_rt = "--" end
+	local sim_imei = rt_mask(rt_cpe.imei)
+	local sim_imsi = rt_mask(rt_cpe.imsi)
+	local sim_iccid = rt_mask(rt_cpe.iccid)
+	local sim_slot = rt_trim(rt_cpe.simno)
+	local sim_count = rt_trim(rt_cpe.simcount)
+	if sim_slot == "" then sim_slot = "-" end
+	if sim_count == "" then sim_count = "-" end
+	local module_model = rt_trim(rt_cpe.model)
+	local module_rev = rt_trim(rt_cpe.revision)
+	local module_temp = rt_trim(rt_cpe.model_temp)
+	if module_model == "" then module_model = "--" end
+	if module_rev == "" then module_rev = "--" end
+	if module_temp == "" then module_temp = "--" end
+	local cell_band = rt_trim(rt_cpe.band)
+	local cell_pci = rt_trim(rt_cpe.pci)
+	local cell_earfcn = rt_trim(rt_cpe.earfcn)
+	local cell_id = rt_trim(rt_cpe.cell)
+	local cell_tac = rt_trim(rt_cpe.tac)
+	local cell_cqi = rt_trim(rt_cpe.CQI)
+	local cell_band_count = tonumber(rt_cpe.band_count) or 0
+	local function rt_mhz(value)
+		local n = tonumber(rt_trim(value))
+		if not n or n <= 0 then return "--" end
+		return string.format("%.0f MHz", n / 1000)
+	end
+	local cell_dlbw = rt_mhz(rt_cpe.DLBW)
+	local cell_ulbw = rt_mhz(rt_cpe.ULBW)
+	if cell_band ~= "" and not cell_band:match("^[NnBb]") then
+		if rt_trim(rt_cpe.mode):upper():find("NR", 1, true) then cell_band = "N" .. cell_band else cell_band = "B" .. cell_band end
+	end
+	if cell_band == "" then cell_band = "--" end
+	if cell_pci == "" then cell_pci = "--" end
+	if cell_earfcn == "" then cell_earfcn = "--" end
+	if cell_id == "" then cell_id = "--" end
+	if cell_tac == "" then cell_tac = "--" end
+	if cell_cqi == "" then cell_cqi = "--" end
+
+	local hero_mode_short = hero_mode
+	if hero_mode:upper():find("NR", 1, true) then
+		if hero_mode:upper():find("SA", 1, true) then
+			hero_mode_short = "5G SA"
+		else
+			hero_mode_short = "5G NSA"
+		end
+	elseif hero_mode:upper():find("LTE", 1, true) or hero_mode:upper():find("4G", 1, true) then
+		hero_mode_short = "4G LTE"
+	end
+	if hero_mode_short == "" then hero_mode_short = "蜂窝" end
+
+	-- 终端列表：DHCP 租约 + WiFi 关联列表合并
+	local lease_by_mac = {}
+	for line in read("/tmp/dhcp.leases"):gmatch("[^\r\n]+") do
+		local _, mac, ip, hostname = line:match("^(%d+)%s+(%S+)%s+(%S+)%s+(%S+)")
+		if mac and mac ~= "00:00:00:00:00:00" then
+			lease_by_mac[mac:upper()] = { ip = ip or "-", name = (hostname and hostname ~= "*") and hostname or "" }
+		end
+	end
+	local client_rows = {}
+	local client_seen = {}
+	for _, radio in ipairs(rt_radios) do
+		local wifi_band = (radio == radio5) and "5G" or "2.4G"
+		for _, assoc in ipairs(safe_table(radio.assoclist)) do
+			local mac = rt_trim(assoc.mac):upper()
+			if mac ~= "" and not client_seen[mac] then
+				client_seen[mac] = true
+				local lease = lease_by_mac[mac]
+				local rssi = rt_trim(assoc.rssi)
+				local via = "WiFi " .. wifi_band
+				if rssi ~= "" then via = via .. " · " .. rssi .. " dBm" end
+				client_rows[#client_rows + 1] = {
+					name = (lease and lease.name ~= "" and lease.name) or mac:sub(-8),
+					ip = (lease and lease.ip) or "-",
+					mac = mac,
+					via = via
+				}
+			end
+		end
+	end
+	for mac, lease in pairs(lease_by_mac) do
+		if not client_seen[mac] and #client_rows < 12 then
+			client_seen[mac] = true
+			client_rows[#client_rows + 1] = {
+				name = lease.name ~= "" and lease.name or mac:sub(-8),
+				ip = lease.ip, mac = mac, via = "有线 / DHCP"
+			}
+		end
+	end
+
+	-- KP-SIM-CARD v1: 组装蜂窝/SIM 卡片数据（不带 local，供 kp_sim_card 局部模板读取）
+	local function cell_num(value)
+		if value == nil then return nil end
+		return tonumber(tostring(value):match("([%-]?%d+%.?%d*)"))
+	end
+	local function cell_temp(value)
+		local n = cell_num(value)
+		if n and n >= 30 and n <= 120 then return n end
+		return nil
+	end
+	local function l2_mode_short(mode)
+		local m = tostring(mode or ""):upper()
+		if m:find("NR", 1, true) then
+			if m:find("SA", 1, true) then return "5G SA" end
+			return "5G NSA"
+		end
+		if m:find("LTE", 1, true) or m:find("4G", 1, true) then return "4G LTE" end
+		return tostring(mode or "") ~= "" and tostring(mode) or "蜂窝"
+	end
+	local sim_line2 = (live.lines and live.lines[2]) or nil
+	sim_card = {
+		none = (live.lines == nil or #live.lines == 0),
+		up = hero_up,
+		identified = (not hero_up) and hero_cell ~= nil and trim(hero_cell.plmn or "") ~= "",
+		level = hero_level, level_text = hero_level_text, color = hero_color,
+		operator = hero_operator, status = hero_status,
+		mode_short = hero_mode_short, mode = hero_mode, band = hero_band,
+		sim = hero_sim, pci = hero_pci, earfcn = hero_earfcn, mon = hero_mon_txt,
+		rsrp = hero_rsrp, rsrq = hero_rsrq, sinr = hero_sinr,
+		sig_pct = hero_sig_pct, rsrq_pct = hero_rsrq_pct, sinr_pct = hero_sinr_pct,
+		bars = hero_bars,
+		temp = (hero_cell and cell_temp(hero_cell.temperature)) or cell_temp(rt_cpe.model_temp),
+		more_url = luci.dispatcher.build_url("admin", "status", "cellular"),
+		line2 = nil
+	}
+	if sim_line2 then
+		local l2_op = operator_cn(sim_line2.plmn, sim_line2.operator)
+		if l2_op == "" or l2_op == "-" then l2_op = "副线路" end
+		sim_card.line2 = {
+			operator = l2_op,
+			badge = l2_mode_short(sim_line2.mode) .. ((sim_line2.band or "") ~= "" and (" · " .. sim_line2.band) or ""),
+			connection = sim_line2.connection or "未连接",
+			up = sim_line2.up or false,
+			ipaddr = (sim_line2.ipaddr and sim_line2.ipaddr ~= "-") and sim_line2.ipaddr or "--",
+			default_route = sim_line2.default_route or false
+		}
+	end
+
+-%>
+
+<%+header%>
+
+<style type="text/css">
+/* 动效规范：系统开启「减少动态效果」时关闭动画与过渡 */
+@media (prefers-reduced-motion: reduce){
+	*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+		transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
+html.kp-idle *,html.kp-idle *::before,html.kp-idle *::after{animation-play-state:paused!important}
+:focus-visible{outline:2px solid #1f6feb;outline-offset:2px;border-radius:4px}
+</style>
+
+<link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
+<link rel="stylesheet" href="/luci-static/bootstrap/css/mwrt-home-custom.css?v=2">
+
+<div class="P" id="P">
+<%+admin_status/kp_sim_card%>
+
+	<div class="cd dv-card">
+		<div class="dv-body">
+			<div class="dv-stage">
+				<div class="dv-shot"><span class="dv-floor" aria-hidden="true"></span><img id="dv-img" src="<%=pcdata(dev_img)%>" alt="<%=pcdata(brand .. " " .. model_display)%>" onerror="this.style.display='none'"></div>
+				<div class="dv-name" id="dv-name"><span class="dv-brand"><%=pcdata(brand)%></span><%=pcdata(model_display)%></div>
+			</div>
+			<div class="dv-side">
+				<div class="dv-head"><div class="dv-sub">系统状态 · System</div><span class="dv-acts"><button type="button" class="wz-btn" id="nradio-refresh" title="刷新状态"><i class="fas fa-sync-alt"></i>刷新</button><a class="wz-btn" href="<%=luci.dispatcher.build_url("admin", "network_guide", "network")%>" title="网络设置向导"><i class="fas fa-magic"></i>设置向导</a></span></div>
+				<div class="dv-stats">
+					<div class="dv-cell mp"><span class="ck"><i class="fas fa-microchip"></i><em>CPU 负载</em></span><span class="cv2"><span data-nradio-stat="cpu_load"><%=pcdata(string.format("%.2f", live.stats.cpu_load))%></span> <small>· <span data-nradio-stat="ncpu"><%=live.stats.ncpu%></span> 核</small></span></div>
+					<div class="dv-cell mcy"><span class="ck"><i class="fas fa-hdd"></i><em>存储占用</em></span><span class="cv2"><span data-nradio-stat="storage_pct"><%=live.stats.storage_pct%></span><small>% · <span data-nradio-stat="storage_text"><%=pcdata(live.stats.storage_text)%></span></small></span><span class="dv-bar"><i data-nradio-bar="storage" style="width:<%=live.stats.storage_pct%>%;background:var(--gn)"></i></span></div>
+				</div>
+				<div class="dv-ports">
+					<% for _, port in ipairs(live.stats.ports) do %>
+					<div class="dv-port <%=port.carrier and "link" or "down"%><%=port.role == "LAN" and " lan" or ""%>">
+						<span class="pic"><i class="fas fa-ethernet"></i></span>
+						<span class="pm"><span class="prole"><%=pcdata(port.role)%></span><span class="pname"><%=pcdata(port.id)%></span></span>
+						<span class="ps"><span class="pspeed"><%=port.speed and string.format("%dM", port.speed) or "—"%></span><span class="pstat"><span class="pdot"></span><%=port.carrier and "已接入" or "未接入"%></span></span>
+					</div>
+					<% end %>
+				</div>
+				<div class="dv-meta">
+					<div class="dv-cell mb is-lead"><span class="ck"><i class="fas fa-globe"></i><em>WAN IP</em></span><span class="cv2" data-nradio-stat="wan_ip"><%=pcdata(live.stats.wan_ip)%></span></div>
+					<div class="dv-cell mcy is-lead"><span class="ck"><i class="fas fa-home"></i><em>内网网关</em></span><span class="cv2" data-nradio-stat="lan_ip"><%=pcdata(live.stats.lan_ip)%></span></div>
+					<div class="dv-cell mp is-lead is-dur"><span class="ck"><i class="fas fa-clock"></i><em>运行时间</em></span><span class="cv2" data-nradio-stat="uptime_short"><%=pcdata(live.stats.uptime_short)%></span></div>
+					<div class="dv-cell mg"><span class="ck"><i class="fas fa-network-wired"></i><em>在线设备</em></span><span class="cv2"><span data-nradio-stat="clients"><%=live.stats.clients%></span> <small>台 · 无线 <span data-nradio-stat="wifi_clients"><%=live.stats.wifi_clients%></span> / 有线 <span data-nradio-stat="wired_clients"><%=live.stats.wired_clients%></span></small></span></div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="gauges">
+		<div class="ga mp"><div class="ga-w"><svg viewBox="0 0 100 100"><circle class="ga-bg" cx="50" cy="50" r="38"/><circle class="ga-fg" data-gauge="cpu" cx="50" cy="50" r="38" stroke-dasharray="238.8" stroke-dashoffset="<%=string.format("%.1f", 238.8 * (1 - live.stats.cpu_pct / 100))%>"/></svg><div class="ga-c"><span class="ga-v"><span data-nradio-stat="cpu_pct"><%=live.stats.cpu_pct%></span>%</span><span class="ga-s">占用</span></div></div><span class="ga-n"><i class="fas fa-microchip"></i>处理器</span></div>
+		<div class="ga mg"><div class="ga-w"><svg viewBox="0 0 100 100"><circle class="ga-bg" cx="50" cy="50" r="38"/><circle class="ga-fg" data-gauge="mem" cx="50" cy="50" r="38" stroke-dasharray="238.8" stroke-dashoffset="<%=string.format("%.1f", 238.8 * (1 - live.stats.mem_pct / 100))%>"/></svg><div class="ga-c"><span class="ga-v"><span data-nradio-stat="mem_pct"><%=live.stats.mem_pct%></span>%</span><span class="ga-s">占用</span></div></div><span class="ga-n"><i class="fas fa-memory"></i>内存</span></div>
+		<div class="ga mcy"><div class="ga-w"><svg viewBox="0 0 100 100"><circle class="ga-bg" cx="50" cy="50" r="38"/><circle class="ga-fg" data-gauge="temp" cx="50" cy="50" r="38" stroke-dasharray="238.8" stroke-dashoffset="<%=string.format("%.1f", 238.8 * (1 - live.stats.temp_pct / 100))%>"/></svg><div class="ga-c"><span class="ga-v"><span data-nradio-stat="temp"><%=string.format("%.0f", live.stats.temp)%></span>℃</span><span class="ga-s">温度</span></div></div><span class="ga-n"><i class="fas fa-thermometer-half"></i>设备温度</span></div>
+	</div>
+
+<div class="home-live-note" id="nradio-refresh-status" role="status" aria-live="polite">已更新 <%=pcdata(live.stats.current_time)%> · 每 10 秒自动刷新</div>
+</div>
+
+<nav id="mwrt-bottomnav" aria-label="快捷导航">
+	<a class="mwrt-nav-active" href="<%=luci.dispatcher.build_url("admin", "status", "details")%>"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg><span>首页</span></a>
+	<a href="<%=luci.dispatcher.build_url("admin", "status", "cellular")%>"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.1a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg><span>蜂窝</span></a>
+	<a href="<%=luci.dispatcher.build_url("admin", "network", "network")%>"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>网络</span></a>
+	<a href="<%=luci.dispatcher.build_url("admin", "system", "system")%>"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>系统</span></a>
+	<a href="#" id="mwrt-nav-more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><span>更多</span></a>
+</nav>
+
+<script type="application/json" id="nradio-initial-status"><%=initial_json%></script>
+<script type="text/javascript">
+(function () {
+	'use strict';
+	document.body.classList.add('mwrt-home-page');
+	var endpoint = '<%=luci.dispatcher.build_url("admin", "status", "details")%>';
+	var VERSION = '20261018-1';
+	var button = document.getElementById('nradio-refresh');
+	var statusEl = document.getElementById('nradio-refresh-status');
+	var active = null, timer = null, lastUpdated = '', stopped = false;
+	var factoryLinks = document.querySelectorAll('.nradio-factory-link');
+	var host = window.location.hostname;
+	if (host.indexOf(':') !== -1 && host.charAt(0) !== '[') host = '[' + host + ']';
+	for (var i = 0; i < factoryLinks.length; i++) {
+		factoryLinks[i].href = 'http://' + host + factoryLinks[i].getAttribute('data-nradio-path');
+	}
+	function text(value) { return value === undefined || value === null || value === '' ? '-' : String(value); }
+	function setStat(name, value) {
+		var nodes = document.querySelectorAll('[data-nradio-stat="' + name + '"]');
+		for (var i = 0; i < nodes.length; i++) nodes[i].textContent = text(value);
+	}
+	function setGauge(name, pct) {
+		var node = document.querySelector('[data-gauge="' + name + '"]');
+		if (!node) return;
+		var value = Math.max(0, Math.min(100, Number(pct) || 0));
+		node.setAttribute('stroke-dashoffset', String(238.8 * (1 - value / 100)));
+	}
+
+	function heroNode(name) { return document.querySelector('[data-nradio-hero="' + name + '"]'); }
+	function heroNum(value) { var m = String(value == null ? '' : value).match(/-?\d+(\.\d+)?/); return m ? parseFloat(m[0]) : 0; }
+	function heroPct(value, lo, hi) { var p = (value - lo) / (hi - lo) * 100; return Math.max(0, Math.min(100, p)); }
+	function heroSet(name, value) { var n = heroNode(name); if (n) n.textContent = text(value); }
+	function opName(plmn, raw) {
+		var p = String(plmn || '').trim();
+		var map = {
+			'46000': '中国移动', '46002': '中国移动', '46004': '中国移动', '46007': '中国移动', '46008': '中国移动',
+			'46001': '中国联通', '46006': '中国联通', '46009': '中国联通', '46010': '中国联通',
+			'46003': '中国电信', '46005': '中国电信', '46011': '中国电信', '46012': '中国电信',
+			'46015': '中国广电', '46020': '中国铁通'
+		};
+		if (map[p]) return map[p];
+		var u = String(raw || '').toUpperCase();
+		if (u.indexOf('UNICOM') >= 0) return '中国联通';
+		if (u.indexOf('CMCC') >= 0 || u.indexOf('MOBILE') >= 0) return '中国移动';
+		if (u.indexOf('TELECOM') >= 0 || u.indexOf('CTCC') >= 0) return '中国电信';
+		if (u.indexOf('BROADNET') >= 0 || u.indexOf('CBN') >= 0) return '中国广电';
+		return String(raw || '');
+	}
+	function shortMode(m) {
+		var u = String(m || '').toUpperCase();
+		if (u.indexOf('NR') >= 0) return u.indexOf('SA') >= 0 ? '5G SA' : '5G NSA';
+		if (u.indexOf('LTE') >= 0 || u.indexOf('4G') >= 0) return '4G LTE';
+		return m || '蜂窝';
+	}
+	function fmtGB(v) {
+		var n = Number(v) || 0;
+		if (n <= 0) return '';
+		return n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : Math.round(n / 1048576) + ' MB';
+	}
+	function updateHero(lines) {
+		var heroEl0 = document.querySelector('.hero-sig');
+		var guide = document.querySelector('[data-nradio-guide]');
+		if (!lines || !lines.length) {
+			if (heroEl0) heroEl0.classList.add('is-none');
+			if (guide) guide.style.display = 'flex';
+			return;
+		}
+		if (heroEl0) heroEl0.classList.remove('is-none');
+		if (guide) guide.style.display = 'none';
+		var c = lines[0] || {};
+		var conn = c.connection || '未连接';
+		if (!c.up && String(c.plmn || '').trim() !== '') conn = '已识别运营商 · 未注册网络';
+		var op = opName(c.plmn, c.operator) || '无蜂窝模组';
+		if (op === '' || op === '-') op = '无蜂窝模组';
+		var sim = c.sim_name || 'SIM 卡';
+		if (sim === '' || sim === '-') sim = 'SIM 卡';
+		heroSet('op', op);
+		heroSet('status', conn);
+		// 制式合并进徽标，副标题位置改显示本月流量
+		var badge = [shortMode(c.mode), c.band || ''].filter(Boolean).join(' · ');
+		heroSet('badge', badge || '蜂窝');
+		heroSet('mode', c.mon ? ('本月 ' + fmtGB(c.mon)) : '本月 --');
+		heroSet('simname', sim);
+		var rsrp = c.rsrp ? heroNum(c.rsrp) : 0;
+		var sinr = c.sinr ? heroNum(c.sinr) : 0;
+		var rsrq = c.rsrq ? heroNum(c.rsrq) : 0;
+		heroSet('rsrp', rsrp || '--');
+		heroSet('rsrq-v', rsrq || '--');
+		heroSet('sinr-v', sinr || '--');
+		heroSet('band', c.band || '--');
+		heroSet('band-s', c.earfcn ? ('频点 ' + c.earfcn) : '--');
+		heroSet('sim', sim);
+		heroSet('pci', 'PCI ' + (c.pci || '--') + ' · 频点 ' + (c.earfcn || '--'));
+		heroSet('sl', conn + (c.mode ? (' · ' + c.mode) : '') + (c.band ? (' · ' + c.band) : ''));
+		var pct = rsrp ? heroPct(rsrp, -140, -44) : 0;
+		var ring = heroNode('ring');
+		if (ring) ring.setAttribute('stroke-dashoffset', String(238.8 * (1 - pct / 100)));
+		var color = rsrp === 0 ? '#f87171' : (rsrp >= -85 ? '#34d399' : (rsrp >= -105 ? '#fbbf24' : '#f87171'));
+		var lvText = rsrp === 0 ? '无信号' : (rsrp >= -85 ? '信号强' : (rsrp >= -105 ? '信号中' : '信号弱'));
+		var lvClass = rsrp === 0 ? 'poor' : (rsrp >= -85 ? 'good' : (rsrp >= -105 ? 'fair' : 'poor'));
+		var lvEl = heroNode('lv');
+		if (lvEl) { lvEl.className = 'sig-lv ' + lvClass; lvEl.textContent = lvText; }
+		if (ring) ring.setAttribute('stroke', color);
+		var bars = document.querySelectorAll('[data-nradio-hero="bars"] span');
+		var nbar = Math.max(1, Math.min(5, Math.round(pct / 20)));
+		for (var i = 0; i < bars.length; i++) bars[i].className = i < nbar ? 'g' : '';
+		var rqBar = heroNode('rsrq-bar');
+		if (rqBar) rqBar.style.width = heroPct(rsrq, -20, -3) + '%';
+		var snBar = heroNode('sinr-bar');
+		if (snBar) snBar.style.width = heroPct(sinr, -10, 30) + '%';
+		var heroEl = document.querySelector('.hero-sig');
+		if (heroEl) { heroEl.classList.toggle('is-up', !!c.up); heroEl.classList.toggle('is-down', !c.up); }
+		var tnum = heroNum(c.temperature);
+		var tempEl = document.querySelector('[data-nradio-temp]');
+		if (tempEl) {
+			if (tnum >= 55) {
+				tempEl.style.display = '';
+				tempEl.innerHTML = '<i class="fas fa-thermometer-half" aria-hidden="true"></i>' + Math.round(tnum) + '℃';
+			} else { tempEl.style.display = 'none'; }
+		}
+	}
+	function updateLine2(lines) {
+		var row = document.querySelector('[data-nradio-line2]');
+		if (!row) return;
+		var l2 = lines && lines[1];
+		if (!l2) { row.style.display = 'none'; return; }
+		row.style.display = '';
+		function lset(n, v) { var el = row.querySelector('[data-nradio-line2="' + n + '"]'); if (el) el.textContent = text(v); }
+		var op2 = opName(l2.plmn, l2.operator);
+		if (op2 === '' || op2 === '-') op2 = '副线路';
+		lset('op', op2);
+		lset('badge', [shortMode(l2.mode), l2.band || ''].filter(Boolean).join(' · ') || '蜂窝');
+		var conn2 = l2.connection || '未连接';
+		if (!l2.up && String(l2.plmn || '').trim() !== '') conn2 = '已识别运营商 · 未注册网络';
+		lset('status', conn2);
+		lset('ip', (l2.ipaddr && l2.ipaddr !== '-') ? l2.ipaddr : '--');
+	}
+	var chartCtx = null, chartRx = [], chartTx = [], chartLast = null, chartW = 0, chartH = 0;
+	function chartResize() {
+		var c = document.getElementById('traffic-canvas');
+		if (!c) return;
+		var dpr = window.devicePixelRatio || 1;
+		chartW = (c.parentNode && c.parentNode.clientWidth) || 320;
+		chartH = (c.parentNode && c.parentNode.clientHeight) || 100;
+		c.width = Math.max(1, Math.round(chartW * dpr));
+		c.height = Math.max(1, Math.round(chartH * dpr));
+		chartCtx = c.getContext('2d');
+		drawChart();
+	}
+	function chartInit() {
+		if (!document.getElementById('traffic-canvas')) return;
+		chartRx.length = 0;
+		chartTx.length = 0;
+		for (var zi = 0; zi < 20; zi++) { chartRx.push(0); chartTx.push(0); }
+		chartResize();
+		window.addEventListener('resize', chartResize);
+	}
+	function chartPush(st) {
+		if (!st || st.wan_rx == null) return;
+		var rx = Number(st.wan_rx) || 0, tx = Number(st.wan_tx) || 0, now = Date.now();
+		if (chartLast) {
+			var dt = Math.max(0.5, (now - chartLast.t) / 1000);
+			var drx = Math.max(0, rx - chartLast.rx), dtx = Math.max(0, tx - chartLast.tx);
+			chartRx.push(drx / 1024 / dt);
+			chartTx.push(dtx / 1024 / dt);
+			while (chartRx.length > 40) { chartRx.shift(); chartTx.shift(); }
+			var rxEl = document.getElementById('cv-rx');
+			var txEl = document.getElementById('cv-tx');
+			if (rxEl) rxEl.textContent = chartRx[chartRx.length - 1].toFixed(1);
+			if (txEl) txEl.textContent = chartTx[chartTx.length - 1].toFixed(1);
+		}
+		chartLast = { rx: rx, tx: tx, t: now };
+		drawChart();
+	}
+	function drawChart() {
+		if (!chartCtx || !chartW || !chartH) return;
+		var dpr = window.devicePixelRatio || 1;
+		chartCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		chartCtx.clearRect(0, 0, chartW, chartH);
+		chartCtx.strokeStyle = 'rgba(127,127,140,0.16)';
+		chartCtx.lineWidth = 1;
+		for (var i = 1; i < 4; i++) {
+			var y = Math.round(chartH * i / 4) + 0.5;
+			chartCtx.beginPath(); chartCtx.moveTo(0, y); chartCtx.lineTo(chartW, y); chartCtx.stroke();
+		}
+		var max = 1;
+		for (var j = 0; j < chartRx.length; j++) max = Math.max(max, chartRx[j], chartTx[j]);
+		function line(data, color) {
+			if (data.length < 2) return;
+			chartCtx.beginPath();
+			chartCtx.strokeStyle = color;
+			chartCtx.lineWidth = 2;
+			chartCtx.lineJoin = 'round';
+			chartCtx.lineCap = 'round';
+			for (var k = 0; k < data.length; k++) {
+				var x = chartW * (k / 39);
+				var yy = chartH - 4 - (data[k] / max) * (chartH - 12);
+				if (k === 0) chartCtx.moveTo(x, yy); else chartCtx.lineTo(x, yy);
+			}
+			chartCtx.stroke();
+		}
+		line(chartRx, '#34d399');
+		line(chartTx, '#fbbf24');
+	}
+
+	function render(data) {
+		var st = data.stats;
+		if (!st) return;
+		setStat('cpu_pct', Math.round(st.cpu_pct || 0));
+		setStat('mem_pct', Math.round(st.mem_pct || 0));
+		setStat('temp', Math.round(st.temp || 0));
+		setStat('cpu_load', (Number(st.cpu_load) || 0).toFixed(2));
+		setStat('ncpu', st.ncpu || 1);
+		setStat('storage_pct', st.storage_pct || 0);
+		setStat('storage_text', st.storage_text || '-');
+		setStat('clients', st.clients || 0);
+		setStat('wifi_clients', st.wifi_clients || 0);
+		setStat('wired_clients', st.wired_clients || 0);
+		setStat('wan_ip', st.wan_ip || '-');
+		setStat('lan_ip', st.lan_ip || '-');
+		setStat('uptime_short', st.uptime_short || '-');
+		setGauge('cpu', st.cpu_pct);
+		setGauge('mem', st.mem_pct);
+		setGauge('temp', st.temp_pct);
+		var bar = document.querySelector('[data-nradio-bar="storage"]');
+		if (bar) bar.style.width = Math.max(0, Math.min(100, Number(st.storage_pct) || 0)) + '%';
+		lastUpdated = text(st.current_time);
+		statusEl.textContent = '已更新 ' + lastUpdated + ' · 每 10 秒自动刷新';
+		updateHero(data.lines);
+		updateLine2(data.lines);
+		chartPush(st);
+	}
+	function schedule() {
+		if (timer !== null) window.clearTimeout(timer);
+		timer = null;
+		if (!stopped && !document.hidden && !active) timer = window.setTimeout(refresh, 10000);
+	}
+	function refresh() {
+		if (active || document.hidden || stopped) return;
+		if (timer !== null) window.clearTimeout(timer);
+		timer = null;
+		var xhr = new XMLHttpRequest();
+		active = xhr;
+		if (button) button.disabled = true;
+		statusEl.textContent = '正在刷新…';
+		function finish(message) {
+			if (active !== xhr) return;
+			active = null;
+			if (button) button.disabled = false;
+			if (message) statusEl.textContent = message + (lastUpdated ? ' · 上次更新 ' + lastUpdated : '');
+			schedule();
+		}
+		xhr.open('GET', endpoint + '?refresh=1&_=' + Date.now(), true);
+		xhr.timeout = 8000;
+		xhr.onreadystatechange = function () {
+			if (xhr.readyState !== 4 || active !== xhr) return;
+			if (xhr.status === 0) return;
+			if (xhr.status === 401 || xhr.status === 403) { finish('登录已失效，请刷新页面后重新登录'); return; }
+			var data;
+			try { data = JSON.parse(xhr.responseText); } catch (error) { data = null; }
+			if (xhr.status !== 200 || !data || data.ok !== true || data.version !== VERSION || !data.stats) { finish('刷新失败，请重试'); return; }
+			render(data);
+			finish('');
+		};
+		xhr.onerror = function () { finish('网络连接失败，保留上次数据显示'); };
+		xhr.ontimeout = function () { finish('刷新超时，保留上次数据显示'); };
+		xhr.send(null);
+	}
+	if (button) button.addEventListener('click', refresh);
+	var drawerMask = document.createElement('div');
+	drawerMask.id = 'mwrt-drawer-mask';
+	document.body.appendChild(drawerMask);
+	function closeDrawer() { document.body.classList.remove('mwrt-drawer-open'); }
+	function openDrawer() { document.body.classList.add('mwrt-drawer-open'); }
+	var moreLink = document.getElementById('mwrt-nav-more');
+	if (moreLink) moreLink.addEventListener('click', function (ev) {
+		ev.preventDefault();
+		if (document.body.classList.contains('mwrt-drawer-open')) closeDrawer(); else openDrawer();
+	});
+	drawerMask.addEventListener('click', closeDrawer);
+	document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeDrawer(); });
+	window.addEventListener('resize', function () { if (window.innerWidth > 991) closeDrawer(); });
+	document.addEventListener('visibilitychange', function () {
+		if (document.hidden) {
+			if (timer !== null) { window.clearTimeout(timer); timer = null; }
+			if (active) { var xhr = active; active = null; xhr.abort(); if (button) button.disabled = false; }
+		} else { refresh(); }
+	});
+	window.addEventListener('pagehide', function () { stopped = true; if (timer !== null) { window.clearTimeout(timer); timer = null; } if (active) { var x = active; active = null; x.abort(); } });
+	window.addEventListener('pageshow', function () { stopped = false; if (button) button.disabled = false; schedule(); });
+	try {
+		var initial = JSON.parse(document.getElementById('nradio-initial-status').textContent);
+		if (initial.ok && initial.stats) render(initial);
+	} catch (error) { }
+	chartInit();
+	schedule();
+	window.setTimeout(refresh, 1500);
+})();
+</script>
+
+<script type="text/javascript">
+//<![CDATA[
+(function () {
+	'use strict';
+	// 连点设备图片 5 下：解锁 8080 蜂窝页的隐藏 OpenClash 入口
+	var img = document.getElementById('dv-img');
+	if (!img) return;
+	var n = 0, t = null;
+	img.style.cursor = 'pointer';
+	img.addEventListener('click', function () {
+		n++;
+		if (t) window.clearTimeout(t);
+		t = window.setTimeout(function () { n = 0; }, 1500);
+		if (n >= 5) {
+			n = 0;
+			try {
+				localStorage.setItem('kp_oc_unlock', '1');
+			} catch (e) { }
+			// 直接打开主 LuCI（80 端口）的 OpenClash 页面，不回蜂窝页
+			location.href = location.protocol + '//' + location.hostname
+				+ '/cgi-bin/luci/admin/services/openclash';
+		}
+	});
+})();
+//]]>
+</script>
+
+<%+footer%>

@@ -1,0 +1,1064 @@
+<%#
+	Argon is a clean HTML5 theme for LuCI. It is based on luci-theme-bootstrap and MUI and Argon Template
+
+	luci-theme-argon
+	Copyright 2020 Jerryk <jerrykuku@gmail.com>
+
+	Have a bug? Please create an issue here on GitHub!
+	https://github.com/jerrykuku/luci-theme-argon/issues
+
+	luci-theme-bootstrap:
+	Copyright 2008 Steven Barth <steven@midlink.org>
+	Copyright 2008-2016 Jo-Philipp Wich <jow@openwrt.org>
+	Copyright 2012 David Menting <david@nut-bolt.nl>
+
+	MUI:
+	https://github.com/muicss/mui
+	
+	Argon Theme
+	https://demos.creative-tim.com/argon-dashboard/index.html
+
+	Licensed to the public under the Apache License 2.0
+-%>
+
+<%
+	local sys  = require "luci.sys"
+	local util = require "luci.util"
+	local http = require "luci.http"
+	local disp = require "luci.dispatcher"
+	local fs   = require "nixio.fs"
+	local nutil = require "nixio.util"
+	local uci = require 'luci.model.uci'.cursor()
+
+	local boardinfo = util.ubus("system", "board")
+
+	local request  = disp.context.path
+	local request2 = disp.context.request
+
+	local category = request[1]
+	local cattree  = category and disp.node(category)
+
+	local leaf = request2[#request2]
+
+	local tree = disp.node()
+	local node = disp.context.dispatched
+
+	local categories = disp.node_childs(tree)
+
+	local c = tree
+	local i, r
+	
+	-- tag all nodes leading to this page
+	for i, r in ipairs(request) do
+		if c.nodes and c.nodes[r] then
+			c = c.nodes[r]
+			c._menu_selected = true
+		end
+	end
+
+	-- send as HTML5
+	http.prepare_content("text/html")
+
+	local function nodeurl(prefix, name, query)
+		local u = url(prefix, name)
+		if query then
+			u = u .. http.build_querystring(query)
+		end
+		return pcdata(u)
+	end
+
+	local function render_tabmenu(prefix, node, level)
+		if not level then
+			level = 1
+		end
+
+		local childs = disp.node_childs(node)
+		if #childs > 0 then
+			if level > 2 then
+				write('<ul class="tabs">')
+			end
+
+			local selected_node
+			local selected_name
+			local i, v
+
+			for i, v in ipairs(childs) do
+				local nnode = node.nodes[v]
+				if nnode._menu_selected then
+					selected_node = nnode
+					selected_name = v
+				end
+
+				if level > 2 then
+					write('<li class="tabmenu-item-%s %s"><a href="%s">%s</a></li>' %{
+						v, (nnode._menu_selected or (node.leaf and v == leaf)) and 'active' or '',
+						nodeurl(prefix, v, nnode.query),
+						striptags(translate(nnode.title))
+					})
+				end
+			end
+
+			if level > 2 then
+				write('</ul>')
+			end
+
+			if selected_node then
+				render_tabmenu(prefix .. "/" .. selected_name, selected_node, level + 1)
+			end
+		end
+	end
+
+	local function render_submenu(prefix, node)
+		local childs = disp.node_childs(node)
+		if #childs > 0 then
+			write('<ul class="slide-menu">')
+
+			for i, r in ipairs(childs) do
+				local nnode = node.nodes[r]
+				local title = pcdata(striptags(translate(nnode.title)))
+
+				write('<li><a data-title="%s" href="%s">%s</a></li>' %{
+					title,
+					nodeurl(prefix, r, nnode.query),
+					title
+				})
+			end
+
+			write('</ul>')
+		end
+	end
+
+	local function render_topmenu()
+		local childs = disp.node_childs(cattree)
+		if #childs > 0 then
+			write('<ul class="nav">')
+
+			for i, r in ipairs(childs) do
+				local nnode = cattree.nodes[r]
+				local grandchildren = disp.node_childs(nnode)
+
+				if #grandchildren > 0 then
+					local title = pcdata(striptags(translate(nnode.title)))
+                                        local en_title = pcdata(striptags(string.gsub(nnode.title," ","_")))
+					write('<li class="slide"><a class="menu" data-title="%s" href="#">%s</a>' %{
+						en_title,
+						title
+					})
+
+					render_submenu(category .. "/" .. r, nnode)
+					write('</li>')
+				else
+					local title = pcdata(striptags(translate(nnode.title)))
+                                        local en_title = pcdata(striptags(nnode.title))
+					write('<li  class="slide"><a  class="menu exit" data-title="%s" href="%s">%s</a></li>' %{
+						en_title,
+						nodeurl(category, r, nnode.query),
+						title
+					})
+				end
+			end
+
+			write('</ul>')
+		end
+	end
+
+	local function render_changes()
+		-- calculate the number of unsaved changes
+		if tree.nodes[category] and tree.nodes[category].ucidata then
+			local ucichanges = 0
+			for i, j in pairs(require("luci.model.uci").cursor():changes()) do
+				for k, l in pairs(j) do
+					for m, n in pairs(l) do
+						ucichanges = ucichanges + 1;
+					end
+				end
+			end
+
+			if ucichanges > 0 then
+				write('<a class="uci_change_indicator label notice" href="%s?redir=%s">%s: %d</a>' %{
+					url(category, 'uci/changes'),
+					http.urlencode(http.formvalue('redir') or table.concat(disp.context.request, "/")),
+					translate('Unsaved Changes'),
+					ucichanges
+				})
+			end
+		end
+	end
+	
+	math.randomseed(os.time())
+
+	-- Custom settings
+	local mode = 'normal'
+	local dark_css = fs.readfile('/www/luci-static/argon/css/dark.css')
+	local bar_color = '#5e72e4'
+	local primary, dark_primary, blur_radius, blur_radius_dark, blur_opacity
+	if fs.access('/etc/config/argon') then
+		primary = uci:get_first('argon', 'global', 'primary')
+		dark_primary = uci:get_first('argon', 'global', 'dark_primary')
+		blur_radius = uci:get_first('argon', 'global', 'blur')
+		blur_radius_dark = uci:get_first('argon', 'global', 'blur_dark')
+		blur_opacity = uci:get_first('argon', 'global', 'transparency')
+		blur_opacity_dark = uci:get_first('argon', 'global', 'transparency_dark')
+		mode = uci:get_first('argon', 'global', 'mode')
+		bar_color = mode == 'dark' and dark_primary or primary
+	end
+	
+	
+-%>
+<!DOCTYPE html>
+<html lang="<%=luci.i18n.context.lang%>">
+	
+<head>
+	<meta charset="utf-8">
+	<title>
+		<%=striptags( (boardinfo.hostname or "?") .. ( (node and node.title) and ' - ' .. translate(node.title) or '')) %>
+		- LuCI</title>
+	<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport" />
+	<meta name="format-detection" content="telephone=no, email=no" />
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="mobile-web-app-capable" content="yes">
+	<meta name="x5-fullscreen" content="true">
+	<meta name="full-screen" content="yes">
+	<meta name="x5-page-mode" content="app">
+	<meta name="browsermode" content="application">
+	<meta name="msapplication-tap-highlight" content="no">
+	<meta name="msapplication-TileColor" content="<%=bar_color%>">
+
+	<meta name="application-name" content="<%=striptags( (boardinfo.hostname or "?") ) %> - LuCI">
+	<meta name="apple-mobile-web-app-title" content="<%=striptags( (boardinfo.hostname or "?") ) %> - LuCI">
+	<link rel="apple-touch-icon" sizes="60x60" href="<%=media%>/icon/apple-icon-60x60.png">
+	<link rel="apple-touch-icon" sizes="72x72" href="<%=media%>/icon/apple-icon-72x72.png">
+	<link rel="apple-touch-icon" sizes="144x144" href="<%=media%>/icon/apple-icon-144x144.png">
+	<link rel="icon" type="image/png" sizes="192x192"  href="<%=media%>/icon/android-icon-192x192.png">
+	<link rel="icon" type="image/png" sizes="32x32" href="<%=media%>/icon/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="96x96" href="<%=media%>/icon/favicon-96x96.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="<%=media%>/icon/favicon-16x16.png">
+	<link rel="manifest" href="<%=media%>/icon/manifest.json"  crossorigin="use-credentials">
+	<meta name="msapplication-TileColor" content="<%=bar_color%>">
+	<meta name="msapplication-TileImage" content="<%=media%>/icon/ms-icon-144x144.png">
+	<meta name="theme-color" content="<%=bar_color%>">
+	<link rel="stylesheet" href="<%=media%>/css/cascade.css?v=1.8.4">
+	<link rel="stylesheet" href="<%=media%>/css/mwrt-menu-custom.css?v=1">
+	<link rel="stylesheet" href="<%=media%>/css/mwrt-global-custom.css?v=20261020" media="(prefers-color-scheme: light)">
+	<link rel="stylesheet" href="<%=media%>/css/mwrt-status-custom.css?v=20261020">
+	<style title="text/css">
+	<% if mode == 'normal' then %>
+		@media (prefers-color-scheme: dark) {
+			<%=dark_css%>
+		}
+	<% elseif mode == 'dark' then %>
+		<%=dark_css%>
+	<% end -%>
+	<% if fs.access('/etc/config/argon') then %>
+	:root {
+		--primary: <%=primary%>;
+		--dark-primary: <%=dark_primary%>;
+		--blur-radius:<%=blur_radius%>px;
+		--blur-opacity:<%=blur_opacity%>;
+		--blur-radius-dark:<%=blur_radius_dark%>px;
+		--blur-opacity-dark:<%=blur_opacity_dark%>;
+	}
+	<% end -%>
+	</style>
+	<link rel="shortcut icon" href="<%=media%>/favicon.ico">
+	<% if node and node.css then %>
+	<link rel="stylesheet" href="<%=resource%>/<%=node.css%>">
+	<% end -%>
+	<% if css then %>
+	<style title="text/css"><%=css %></style>
+	<% end -%>
+	<script src="<%=resource%>/cbi.js?v=1.8.4"></script>
+	<script src="<%=resource%>/xhr.js?v=1.8.4"></script>
+	<script src="<%=media%>/js/jquery.min.js?v=3.5.1"></script>
+	<script src="<%=media%>/js/color_calc-argon.js?v=1.8.4"></script>
+</head>
+
+<body
+	class="<%- if node then %><%= striptags( node.title ) %><%- end %> <% if luci.dispatcher.context.authsession then %>logged-in<% end %> lang_<%=luci.i18n.context.lang%> <%=mode %>  ">
+
+	<div class="main">
+		<div class="main-left">
+			<div class="sidenav-header d-flex align-items-center">
+				<a class="brand" href="#"><%=boardinfo.hostname or "?"%></a>
+			</div>
+			<% render_topmenu() %>
+		</div>
+		<div class="main-right">
+			<header class="bg-primary">
+				<div class="fill">
+					<div class="container">
+						<a class="showSide"></a>
+						<a class="brand" href="#"><%=boardinfo.hostname or "?"%></a>
+						<div class="pull-right">
+							<% render_changes() %>
+							<span id="xhr_poll_status" style="display:none"
+								onclick="XHR.running() ? XHR.halt() : XHR.run()">
+								<span class="label success" id="xhr_poll_status_on"><span
+										class="mobile-hide"><%:Auto Refresh%></span> <%:on%></span>
+								<span class="label" id="xhr_poll_status_off" style="display:none"><span
+										class="mobile-hide"><%:Auto Refresh%></span> <%:off%></span>
+							</span>
+						</div>
+					</div>
+				</div>
+			</header>
+			<div class="darkMask"></div>
+			<div id="maincontent">
+				<div class="container">
+					<%- if luci.sys.process.info("uid") == 0 and luci.sys.user.getuser("root") and not luci.sys.user.getpasswd("root") then -%>
+					<div class="alert-message warning">
+						<h4><%:No password set!%></h4>
+						<p><%:There is no password set on this router. Please configure a root password to protect the web interface and enable SSH.%>
+						</p>
+						<div class="right"><a class="btn"
+								href="<%=url("admin/system/admin")%>"><%:Go to password configuration...%></a></div>
+					</div>
+					<%- end -%>
+
+					<noscript>
+						<div class="alert-message warning">
+							<h4><%:JavaScript required!%></h4>
+							<p><%:You must enable JavaScript in your browser or LuCI will not work properly.%></p>
+						</div>
+					</noscript>
+
+					<% if category then render_tabmenu(category, cattree) end %>
+
+	<script>
+		// thanks for Jo-Philipp Wich <jow@openwrt.org>
+		var luciLocation = <%= luci.http.write_json(luci.dispatcher.context.path) %>;
+	</script>
+
+	<script src="<%=media%>/js/menu-argon.js?v=1.8.4"></script>
+
+	<script src="<%=media%>/js/sidebar-argon.js?v=1.8.4"></script>
+
+<script>
+// Mwrt 侧栏增强：合并重复菜单 + 折叠开关 + 菜单整理
+(function () {
+	function onReady(callback) {
+		if (document.readyState !== 'loading') callback();
+		else document.addEventListener('DOMContentLoaded', callback);
+	}
+	onReady(function () {
+		var sidebar = document.querySelector('.main-left');
+		if (!sidebar) return;
+		var nav = sidebar.querySelector('ul.nav');
+		if (nav) {
+			var slides = Array.prototype.slice.call(nav.children).filter(function (el) {
+				return el.classList && el.classList.contains('slide');
+			});
+			var serviceGroups = slides.filter(function (li) {
+				var a = li.querySelector(':scope > a.menu');
+				return a && a.textContent.trim() === '服务';
+			});
+			if (serviceGroups.length > 1) {
+				var first = serviceGroups[0];
+				var second = serviceGroups[1];
+				var firstMenu = first.querySelector(':scope > ul.slide-menu');
+				var secondMenu = second.querySelector(':scope > ul.slide-menu');
+				if (firstMenu && secondMenu) {
+					var exists = {};
+					Array.prototype.slice.call(firstMenu.querySelectorAll('a')).forEach(function (a) {
+						exists[a.getAttribute('href')] = true;
+					});
+					var label = document.createElement('li');
+					label.className = 'mwrt-menu-group-label';
+					label.innerHTML = '<span>面板 / 外部应用</span>';
+					firstMenu.appendChild(label);
+					Array.prototype.slice.call(secondMenu.children).forEach(function (li) {
+						var a = li.querySelector('a');
+						if (a && exists[a.getAttribute('href')]) return;
+						firstMenu.appendChild(li);
+					});
+				}
+				second.parentNode.removeChild(second);
+			}
+			Array.prototype.slice.call(nav.querySelectorAll('a')).forEach(function (a) {
+				var text = a.textContent.trim();
+				var href = a.getAttribute('href') || '';
+				if (text === '备份/升级') {
+					if (href.indexOf('/system/reset') >= 0) a.textContent = '恢复出厂';
+					else if (href.indexOf('/system/flashops') >= 0) a.textContent = '备份/刷机';
+				}
+			});
+			// 网络诊断：8080 后端缺少 CBI model（/usr/lib/lua/luci/cbi.lua:53 admin_network/diagnostics），
+			// 当前访问会 500，先隐藏菜单项，待自建诊断页或补 model 后恢复。
+			Array.prototype.slice.call(nav.querySelectorAll('a')).forEach(function (a) {
+				var href = a.getAttribute('href') || '';
+				if (href.indexOf('/network/diagnostics') >= 0) {
+					var li = a.closest('li');
+					if (li) li.style.display = 'none';
+				}
+			});
+
+			// 方案 A（严格对齐固件）：状态菜单保持扁平，
+			// 概览/蜂窝状态/设备状态/短信 由 CGI 注入时给定 title 与 order，
+			// 这里只做定位，不再搬动节点、也不重排路由表与防火墙。
+			var statusSlide = null, homeSlide = null;
+			Array.prototype.slice.call(nav.children).forEach(function (li) {
+				var a = li.querySelector(':scope > a.menu');
+				if (!a) return;
+				if (a.textContent.trim() === '状态') statusSlide = li;
+				if (a.textContent.trim() === '首页') homeSlide = li;
+			});
+			if (statusSlide) {
+				var statusMenu = statusSlide.querySelector(':scope > ul.slide-menu');
+				if (statusMenu) {
+					var cellLinks = [];
+					Array.prototype.slice.call(statusMenu.children).forEach(function (li) {
+						var a = li.querySelector('a');
+						if (!a) return;
+						var href = a.getAttribute('href') || '';
+						// 方案 A（严格对齐固件）：状态菜单保持扁平，
+						// 概览/蜂窝/设备/短信 的标题与顺序由 CGI 注入时给定，
+						// 这里不再搬动，也不调整路由表与防火墙的相对位置。
+					});
+					if (cellLinks.length) {
+						var cellSlide = document.createElement('li');
+						cellSlide.className = 'slide';
+						var cellA = document.createElement('a');
+						cellA.className = 'menu';
+						cellA.href = '#';
+						cellA.setAttribute('data-title', 'Modem');
+						cellA.textContent = '蜂窝';
+						var cellMenu = document.createElement('ul');
+						cellMenu.className = 'slide-menu';
+						cellLinks.forEach(function (li) { cellMenu.appendChild(li); });
+						cellSlide.appendChild(cellA);
+						cellSlide.appendChild(cellMenu);
+						if (homeSlide && homeSlide.parentNode === nav) nav.insertBefore(cellSlide, homeSlide.nextSibling);
+						else nav.insertBefore(cellSlide, nav.firstChild);
+						cellA.addEventListener('click', function (ev) {
+							ev.preventDefault();
+							cellA.classList.toggle('active');
+							cellMenu.classList.toggle('active');
+						});
+						if (/\/admin\/status\/(cellular|device|sms)/.test(location.pathname)) {
+							cellA.classList.add('active');
+							cellMenu.classList.add('active');
+						}
+					}
+				}
+			}
+		}
+
+		// 退出项移出滚动菜单，固定为侧栏底部 footer（避免 sticky 遮挡菜单）
+		var navForFoot = sidebar.querySelector('ul.nav');
+		if (navForFoot) {
+			var logoutLi = null;
+			Array.prototype.slice.call(navForFoot.children).forEach(function (li) {
+				var a = li.querySelector(':scope > a');
+				if (!a) return;
+				var title = a.getAttribute('data-title') || '';
+				var href = a.getAttribute('href') || '';
+				if (/logout/i.test(title) || /\/logout/.test(href) || a.textContent.trim() === '退出') logoutLi = li;
+			});
+			if (logoutLi) {
+				var foot = sidebar.querySelector('.mwrt-sidebar-foot');
+				if (!foot) {
+					foot = document.createElement('div');
+					foot.className = 'mwrt-sidebar-foot';
+					sidebar.appendChild(foot);
+				}
+				foot.appendChild(logoutLi);
+			}
+		}
+
+		if (!document.getElementById('mwrt-sb-toggle')) {
+			var toggle = document.createElement('button');
+			toggle.id = 'mwrt-sb-toggle';
+			toggle.type = 'button';
+			toggle.title = '折叠/展开菜单';
+			toggle.setAttribute('aria-label', '折叠/展开菜单');
+			toggle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+			document.body.appendChild(toggle);
+			try {
+				if (localStorage.getItem('mwrt_sb_collapsed') === '1') document.body.classList.add('mwrt-sb-collapsed');
+			} catch (e) {}
+			function positionToggle() {
+				if (!sidebar) return;
+				var rect = sidebar.getBoundingClientRect();
+				var width = rect.width || parseFloat(getComputedStyle(sidebar).width) || 0;
+				if (!width) return;
+				toggle.style.left = Math.max(0, Math.round(rect.left + width)) + 'px';
+			}
+			positionToggle();
+			window.requestAnimationFrame(positionToggle);
+			window.addEventListener('resize', positionToggle);
+			window.addEventListener('orientationchange', positionToggle);
+			document.addEventListener('transitionend', function (e) {
+				if (e.target === sidebar) positionToggle();
+			}, true);
+			if (typeof ResizeObserver !== 'undefined') {
+				try { new ResizeObserver(positionToggle).observe(sidebar); } catch (e) {}
+			}
+			toggle.addEventListener('click', function () {
+				var collapsed = document.body.classList.toggle('mwrt-sb-collapsed');
+				try { localStorage.setItem('mwrt_sb_collapsed', collapsed ? '1' : '0'); } catch (e) {}
+				window.setTimeout(function () {
+					positionToggle();
+					window.dispatchEvent(new Event('resize'));
+				}, 300);
+			});
+			window.setTimeout(positionToggle, 400);
+		}
+
+		// ===== 状态 → 总览页面增强（对齐固件仪表盘风格） =====
+		if (document.body.classList.contains('node-status-overview')) {
+			document.body.classList.add('mwrt-overview-page');
+			var ovContainer = document.querySelector('#maincontent > .container');
+			var ovFields = ovContainer ? Array.prototype.slice.call(ovContainer.querySelectorAll(':scope > fieldset.cbi-section')) : [];
+			function escOv(s) {
+				return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+			}
+			function rowValue(label) {
+				var rows = ovContainer ? ovContainer.querySelectorAll('fieldset.cbi-section table tr') : [];
+				for (var i = 0; i < rows.length; i++) {
+					var tds = rows[i].querySelectorAll('td');
+					if (tds.length >= 2 && tds[0].textContent.trim().indexOf(label) >= 0) return tds[1].textContent.trim();
+				}
+				return '';
+			}
+			var ovHost = rowValue('主机名') || rowValue('Hostname');
+			var ovModel = rowValue('型号') || rowValue('Model');
+			var ovFw = rowValue('固件版本') || rowValue('Firmware');
+			var ovKernel = rowValue('内核版本') || rowValue('Kernel');
+			if (ovContainer && !document.querySelector('.mwrt-ov-hero')) {
+				var ovHero = document.createElement('div');
+				ovHero.className = 'mwrt-ov-hero';
+				ovHero.innerHTML =
+					'<div class="oh-main">' +
+						'<div class="oh-k">DEVICE OVERVIEW · 状态总览</div>' +
+						'<div class="oh-name">' + escOv(ovHost || 'nradio.in') + '</div>' +
+						'<div class="oh-chips">' +
+							'<span class="oh-chip"><i class="oh-dot"></i>型号 ' + escOv(ovModel || '--') + '</span>' +
+							'<span class="oh-chip"><i class="oh-dot"></i>固件 ' + escOv(ovFw || '--') + '</span>' +
+							'<span class="oh-chip"><i class="oh-dot"></i>内核 ' + escOv(ovKernel || '--') + '</span>' +
+							'<span class="oh-chip"><i class="oh-dot"></i>运行时间 <b id="mwrt-oh-uptime">--</b></span>' +
+							'<span class="oh-chip"><i class="oh-dot"></i>负载 <b id="mwrt-oh-load">--</b></span>' +
+						'</div>' +
+					'</div>' +
+					'<img class="oh-img" src="/luci-static/router3d/ultra.png" alt="" onerror="this.style.display=\'none\'">';
+				var ovH2 = ovContainer.querySelector(':scope > h2');
+				if (ovH2) { ovH2.style.display = 'none'; ovContainer.insertBefore(ovHero, ovH2); }
+				else ovContainer.insertBefore(ovHero, ovContainer.firstChild);
+			}
+			ovFields.forEach(function (fs) {
+				fs.classList.add('mwrt-ov-card');
+				var legend = fs.querySelector(':scope > legend');
+				var title = fs.querySelector(':scope > .panel-title');
+				var name = (legend ? legend.textContent : (title ? title.textContent : '')).trim();
+				if (/dhcp|leases|租约|wireless|无线|associat|关联|站点|homebox|网络/i.test(name)) fs.classList.add('mwrt-ov-wide');
+				if (title && !title.querySelector('.mwrt-ov-lic')) {
+					var lic = document.createElement('i');
+					lic.className = 'mwrt-ov-lic';
+					title.insertBefore(lic, title.firstChild);
+				}
+			});
+			function enhanceOvBar(id) {
+				var cell = document.getElementById(id);
+				if (!cell || cell.querySelector('.mwrt-ov-bar')) return;
+				var text = cell.textContent.trim();
+				var m = text.match(/([\d.]+\s*[kKM]?B?)\s*\/\s*([\d.]+\s*[kKM]?B?)\s*\((\d+)%\)/);
+				if (!m) return;
+				cell.innerHTML = '<div class="mwrt-ov-bar"><i style="width:' + m[3] + '%"></i></div><span class="mwrt-ov-bar-t">' + escOv(text) + '</span>';
+			}
+			function refreshOv() {
+				['memtotal', 'memfree', 'membuff', 'swaptotal', 'swapfree', 'conns'].forEach(enhanceOvBar);
+				ovFields.forEach(function (fs) {
+					var ttl = fs.querySelector(':scope > .panel-title');
+					var nm = ttl ? ttl.textContent.trim() : '';
+					if (/DHCPv6/i.test(nm)) fs.style.display = (fs.textContent.indexOf('没有已分配的租约') >= 0) ? 'none' : '';
+				});
+				['wan4_i', 'wan6_i', 'dsl_i'].forEach(function (id) {
+					var cell = document.getElementById(id);
+					if (!cell) return;
+					var sms = cell.querySelectorAll('small');
+					for (var si = 0; si < sms.length; si++) sms[si].style.display = sms[si].textContent.trim() === '?' ? 'none' : '';
+				});
+				var u = document.getElementById('uptime'), l = document.getElementById('loadavg');
+				var ue = document.getElementById('mwrt-oh-uptime'), le = document.getElementById('mwrt-oh-load');
+				if (ue) ue.textContent = u && u.textContent.trim() !== '-' ? u.textContent.trim() : '--';
+				if (le) le.textContent = l && l.textContent.trim() !== '-' ? l.textContent.trim() : '--';
+			}
+			refreshOv();
+			var ovTimer = window.setInterval(refreshOv, 1200);
+			window.addEventListener('beforeunload', function () { window.clearInterval(ovTimer); });
+		}
+
+		// 内部页面：隐藏缺失/破图图标（无线信号图等）
+		function hideBrokenImgs() {
+			var imgs = document.querySelectorAll('#maincontent img');
+			for (var i = 0; i < imgs.length; i++) {
+				var im = imgs[i];
+				if (im.complete && im.naturalWidth === 0) im.style.display = 'none';
+			}
+		}
+		hideBrokenImgs();
+		window.setTimeout(hideBrokenImgs, 1500);
+		window.setInterval(hideBrokenImgs, 4000);
+
+		// ===== 状态页健康条（KP-STATUS-API v1） =====
+		// 数据来自 /admin/status/*?action=kp_status（3 秒缓存，7 页共用）
+		(function initStatusBar() {
+			if (location.pathname.indexOf('/admin/status/') < 0) return;
+
+			// header.htm 在 #maincontent 之前输出，必须等 DOM 就绪再找节点
+			function start() {
+			// 状态子页已并入总览：侧栏里只保留「概览」
+			if (document.querySelector('.dash, .d2')) {
+				var navLinks = document.querySelectorAll('.main-left .nav a.menu');
+				for (var n = 0; n < navLinks.length; n++) {
+					var href = navLinks[n].getAttribute('href') || '';
+					if (href.indexOf('/admin/status/') >= 0 && href.indexOf('/admin/status/overview') < 0) {
+						var li = navLinks[n].closest ? navLinks[n].closest('li') : null;
+						if (li) li.style.display = 'none';
+					}
+				}
+				return;
+			}
+			var cont = document.querySelector('#maincontent > .container');
+			if (!cont) return;
+			var h2 = cont.querySelector(':scope > h2');
+			if (!h2) return;
+			if (document.getElementById('st-health')) return;
+
+			var box = document.createElement('div');
+			box.className = 'st-health';
+			box.id = 'st-health';
+			box.style.display = 'none';
+			if (h2.nextSibling) cont.insertBefore(box, h2.nextSibling);
+			else cont.appendChild(box);
+
+			var timer = null, inflight = false;
+
+			function num(v) { return Number(v) || 0; }
+			function mb(bytes) { return (num(bytes) / 1048576); }
+			function fmtPct(v) { return (v >= 100 ? 100 : v).toFixed(0) + '%'; }
+			function fmtMiB(bytes) { return (num(bytes) / 1048576).toFixed(0) + ' MiB'; }
+
+			function pick() {
+				var d = null;
+				try { d = arguments[0]; } catch (e) { return ''; }
+				return d;
+			}
+
+			function render(d) {
+				if (!d || d.code !== 0) { box.style.display = 'none'; return; }
+
+				var loadPct = num(d.ncpu) > 0 ? num((d.load || [])[0]) / num(d.ncpu) * 100 : 0;
+				var memPct = num((d.mem || {}).total) > 0
+					? (num(d.mem.total) - num(d.mem.available)) / num(d.mem.total) * 100 : 0;
+				var stPct = num((d.storage || {}).pct);
+				var temp = 0;
+				(d.thermal || []).forEach(function (t) { if (num(t) > temp) temp = num(t); });
+				var ctPct = num((d.conntrack || {}).max) > 0
+					? num(d.conntrack.count) / num(d.conntrack.max) * 100 : 0;
+				var lg = d.log || {};
+				var bad = num(lg.err) + num(lg.warn);
+
+				function lvl(v, warn, crit) {
+					return (v >= crit) ? 'is-bad' : (v >= warn ? 'is-warn' : '');
+				}
+				function chip(label, value, cls, title, sm) {
+					return '<span class="st-item ' + cls + (sm ? ' st-sm' : '') + '" title="' + (title || '') + '">'
+						+ label + ' <b>' + value + '</b></span>';
+				}
+
+				var cLoad = lvl(loadPct, 60, 85);
+				var cMem = lvl(memPct, 70, 85);
+				var cSt = lvl(stPct, 80, 90);
+				var cTemp = lvl(temp, 70, 80);
+				var cCt = lvl(ctPct, 60, 85);
+				var cLog = lvl(bad, 1, 10);
+
+				var worst = '';
+				var worstLink = '';
+				if (cLoad === 'is-bad' || cMem === 'is-bad' || cSt === 'is-bad' || cTemp === 'is-bad'
+					|| cCt === 'is-bad' || cLog === 'is-bad') {
+					worst = 'is-bad';
+				} else if (cLoad || cMem || cSt || cTemp || cCt || cLog) {
+					worst = 'is-warn';
+				}
+				if (worst === 'is-bad' || worst === 'is-warn') {
+					if (cLog) worstLink = '/cgi-bin/luci/admin/status/syslog';
+					else if (cMem === 'is-bad') worstLink = '/cgi-bin/luci/admin/status/processes';
+					else worstLink = '/cgi-bin/luci/admin/status/realtime/load';
+				}
+
+				var verdict = worst === 'is-bad' ? '需要处理' : (worst === 'is-warn' ? '有异常' : '运行正常');
+				var dotColor = worst === 'is-bad' ? '#d64545' : (worst === 'is-warn' ? '#f0a020' : '#22a06b');
+
+				var html = '<span class="st-verdict"><i class="st-dot" style="background:' + dotColor + '"></i>'
+					+ verdict + '</span><span class="st-sep">|</span>'
+					+ chip('负载', fmtPct(loadPct), cLoad, '1 分钟负载 ' + num((d.load || [])[0]).toFixed(2) + ' / ' + num(d.ncpu) + ' 核')
+					+ chip('内存', fmtPct(memPct), cMem, '可用 ' + fmtMiB((d.mem || {}).available) + ' / 共 ' + fmtMiB((d.mem || {}).total))
+					+ chip('存储', fmtPct(stPct), cSt, '已用 ' + fmtMiB((d.storage || {}).used) + ' / 共 ' + fmtMiB((d.storage || {}).total), true)
+					+ chip('温度', temp > 0 ? temp.toFixed(1) + '℃' : '--', cTemp, '多个温区取最高值', true)
+					+ chip('连接', fmtPct(ctPct), cCt, num((d.conntrack || {}).count) + ' / ' + num((d.conntrack || {}).max), true)
+					+ chip('异常', String(bad), cLog, '日志错误 ' + num(lg.err) + ' 条，警告 ' + num(lg.warn) + ' 条');
+
+				html += '<span class="st-sp"></span>';
+				if (worstLink) {
+					html += '<a class="st-link" href="' + worstLink + '">去查看</a>';
+				}
+				box.innerHTML = html;
+				box.className = 'st-health ' + worst;
+				box.style.display = '';
+			}
+
+			function load() {
+				if (inflight || document.hidden) return;
+				inflight = true;
+				fetch(location.pathname + '?action=kp_status&t=' + Date.now(), {
+					credentials: 'same-origin',
+					headers: { 'Accept': 'application/json' }
+				}).then(function (r) { return r.json(); }).then(function (d) {
+					inflight = false;
+					render(d);
+				}).catch(function () {
+					inflight = false;
+					box.style.display = 'none';
+				});
+			}
+
+			load();
+			timer = window.setInterval(load, 30000);
+			document.addEventListener('visibilitychange', function () {
+				if (!document.hidden) load();
+			});
+			window.addEventListener('beforeunload', function () {
+				if (timer) window.clearInterval(timer);
+			});
+			}
+
+			if (document.readyState === 'loading') {
+				document.addEventListener('DOMContentLoaded', start);
+			} else {
+				start();
+			}
+		})();
+
+		// ===== 软件包页面重构：概览卡片 / 存储条 / 表格 / 实时过滤 =====
+		(function initPkgPage() {
+			if (location.pathname.indexOf('/admin/system/packages') < 0) return;
+			document.body.classList.add('mwrt-pkg-page');
+			var cont = document.querySelector('#maincontent > .container');
+			if (!cont) return;
+			var map = cont.querySelector('.cbi-map');
+			var table = cont.querySelector('.cbi-section-table');
+			var rows = table ? table.querySelectorAll('.cbi-section-table-row') : [];
+			var installed = rows.length;
+			var bodyText = cont.textContent || '';
+			var freePct = '', freeSize = '';
+			var mm = bodyText.match(/空闲空间[:：]?\s*(\d+)%\s*\(([^)]+)\)/);
+			if (mm) { freePct = mm[1]; freeSize = mm[2].trim(); }
+			var sourceSynced = bodyText.indexOf('无可用软件列表') < 0;
+			if (!cont.querySelector('.mwrt-pkg-stats')) {
+				var stats = document.createElement('div');
+				stats.className = 'mwrt-pkg-stats';
+				stats.innerHTML =
+					'<div class="pkg-stat"><span class="pkg-stat-ic pkg-ic-box"></span><div><div class="pkg-stat-k">已安装软件包</div><div class="pkg-stat-v">' + installed + ' <small>个</small></div></div></div>' +
+					'<div class="pkg-stat"><span class="pkg-stat-ic pkg-ic-disk"></span><div><div class="pkg-stat-k">空闲空间</div><div class="pkg-stat-v">' + (freePct ? freePct + '%' : '--') + ' <small>' + (freeSize || '') + '</small></div></div></div>' +
+					'<div class="pkg-stat"><span class="pkg-stat-ic pkg-ic-cloud"></span><div><div class="pkg-stat-k">软件源</div><div class="pkg-stat-v">' + (sourceSynced ? '可用' : '未同步') + '</div></div></div>';
+				if (map) cont.insertBefore(stats, map); else cont.appendChild(stats);
+			}
+			var storRow = null, srcRow = null;
+			Array.prototype.slice.call(cont.querySelectorAll('.cbi-value')).forEach(function (v) {
+				var tx = (v.textContent || '').trim();
+				if (tx.indexOf('空闲空间') >= 0) storRow = v;
+				else if (tx.indexOf('无可用软件列表') >= 0) srcRow = v;
+			});
+			if (storRow) {
+				storRow.classList.add('mwrt-pkg-storage-row');
+				var pct = freePct ? parseInt(freePct, 10) : 0;
+				var used = 100 - pct;
+				storRow.innerHTML = '<div class="mwrt-pkg-storage"><div class="pkg-stor-hd"><span>存储空间</span><b>已用 ' + used + '%</b></div><div class="pkg-stor-bar"><i style="width:' + used + '%"></i></div><div class="pkg-stor-ft"><span>空闲 ' + pct + '%</span><span>' + (freeSize || '') + ' 可用</span></div></div>';
+			}
+			if (srcRow) {
+				var btn = srcRow.querySelector('input[name="update"]');
+				srcRow.classList.add('mwrt-pkg-source-row');
+				srcRow.innerHTML = '<span class="mwrt-pkg-source"><i></i>软件源列表未同步</span>' + (btn ? btn.outerHTML : '');
+			}
+			Array.prototype.slice.call(cont.querySelectorAll('.cbi-value')).forEach(function (v) {
+				if (!v.querySelector('.cbi-value-title')) return;
+				v.classList.add('mwrt-pkg-field-row');
+				var inp = v.querySelector('input[type="text"]');
+				if (inp && inp.name === 'url') inp.placeholder = '输入软件包 URL';
+				if (inp && inp.name === 'query') inp.placeholder = '输入名称实时过滤';
+			});
+			if (table && !table.parentNode.classList.contains('mwrt-pkg-table-wrap')) {
+				var wrap = document.createElement('div');
+				wrap.className = 'mwrt-pkg-table-wrap';
+				table.parentNode.insertBefore(wrap, table);
+				wrap.appendChild(table);
+				var th = table.querySelector('.cbi-section-table-titles th');
+				if (th && th.textContent.trim() === '') th.textContent = '操作';
+			}
+			var q = cont.querySelector('input[name="query"]');
+			if (q && table) {
+				q.addEventListener('input', function () {
+					var val = q.value.trim().toLowerCase();
+					Array.prototype.slice.call(table.querySelectorAll('.cbi-section-table-row')).forEach(function (tr) {
+						tr.style.display = (!val || tr.textContent.toLowerCase().indexOf(val) >= 0) ? '' : 'none';
+					});
+				});
+			}
+		})();
+
+		// ===== 无线概况：Wi-Fi 快速设置（SSID / 加密 / 密码） =====
+		(function initWirelessQuick() {
+			var path = location.pathname;
+			if (!/\/admin\/network\/wireless\/?$/.test(path)) return;
+			var cont = document.querySelector('#maincontent > .container');
+			if (!cont || cont.querySelector('.mwrt-wifi-quick')) return;
+			var h2 = cont.querySelector('h2');
+			if (h2 && h2.parentNode !== cont) cont.insertBefore(h2, cont.firstChild);
+			var tabs = cont.querySelector('ul.tabs, ul.cbi-tabmenu');
+			if (!tabs) return;
+			var aps = [];
+			Array.prototype.slice.call(tabs.querySelectorAll('li > a')).forEach(function (a) {
+				var href = a.getAttribute('href') || '';
+				var m = href.match(/\/admin\/network\/wireless\/([^\/?#]+)/);
+				if (!m) return;
+				var text = (a.textContent || '').replace(/\s+/g, ' ').trim();
+				if (!/Master/i.test(text) && text.indexOf('接入点') < 0) return;
+				var sm = text.match(/"([^"]+)"/);
+				aps.push({ iface: m[1], ssid: sm ? sm[1] : '?', edit: href, radio: m[1].split('.')[0], section: '' });
+			});
+			if (!aps.length) return;
+			aps.sort(function (a, b) {
+				var ra = a.radio === 'radio0' ? 0 : 1, rb = b.radio === 'radio0' ? 0 : 1;
+				return ra - rb || a.iface.localeCompare(b.iface);
+			});
+			function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+			function band(r) { return r === 'radio0' ? '2.4G' : (r === 'radio1' ? '5G' : 'Wi-Fi'); }
+			function token() {
+				var m = document.cookie.match(/(?:^|;\s*)sysauth=([0-9a-fA-F]+)/);
+				return m ? m[1] : '';
+			}
+			var quick = document.createElement('div');
+			quick.className = 'mwrt-wifi-quick';
+			quick.innerHTML = '<div class="wq-head"><div><div class="wq-k">WI-FI QUICK SETTINGS</div><h3>Wi-Fi 名称与密码</h3><p>直接修改 SSID、加密方式和密码，保存后立即应用；完整网络管理保留在「高级无线配置」。</p></div><span class="wq-count">' + aps.length + ' 个网络</span></div>' +
+				aps.map(function (ap) {
+					var tg = document.getElementById(ap.iface + '-iw-toggle');
+					var on = !tg || tg.value !== '启用';
+					return '<div class="wq-row" data-iface="' + esc(ap.iface) + '" data-edit="' + esc(ap.edit) + '">' +
+						'<span class="wq-band">' + band(ap.radio) + '</span>' +
+						'<div class="wq-info"><div class="wq-ssid">' + esc(ap.ssid) + '</div>' +
+						'<div class="wq-meta">' + esc(ap.radio) + ' · 接入点 · <span class="wq-state ' + (on ? 'on' : 'off') + '"><i></i>' + (on ? '已启用' : '已停用') + '</span></div></div>' +
+						'<div class="wq-actions"><button type="button" class="wq-btn wq-btn-primary wq-edit">修改 Wi-Fi</button><a class="wq-btn wq-btn-link" href="' + esc(ap.edit) + '" target="_blank" rel="noopener">高级设置</a></div>' +
+						'</div>';
+				}).join('');
+			if (h2 && h2.parentNode === cont) cont.insertBefore(quick, h2.nextSibling);
+			else cont.insertBefore(quick, cont.firstChild);
+			var advBar = document.createElement('div');
+			advBar.className = 'mwrt-wifi-adv-bar';
+			advBar.innerHTML = '<button type="button" class="wq-adv-toggle">高级无线配置<span>网络管理 / 搜索 / 添加 / 启用停用 / 关联终端</span></button>';
+			quick.parentNode.insertBefore(advBar, quick.nextSibling);
+			var adv = document.createElement('div');
+			adv.className = 'mwrt-wifi-advanced';
+			var moved = false;
+			Array.prototype.slice.call(cont.children).forEach(function (n) {
+				if (n === h2 || n === quick || n === advBar || n === adv) return;
+				if (n.tagName === 'SCRIPT' || n.tagName === 'NOSCRIPT') return;
+				adv.appendChild(n); moved = true;
+			});
+			if (moved) advBar.parentNode.insertBefore(adv, advBar.nextSibling);
+			else advBar.style.display = 'none';
+			var advToggle = advBar.querySelector('.wq-adv-toggle');
+			advToggle.addEventListener('click', function () {
+				var open = adv.classList.toggle('open');
+				advToggle.classList.toggle('open', open);
+			});
+
+			// 读取真实 UCI SSID / section（tabs 文本可能是 hostapd 旧名称）
+			aps.forEach(function (ap) {
+				try {
+					fetch(ap.edit, { credentials: 'same-origin' }).then(function (r) { return r.text(); }).then(function (html) {
+						var doc = new DOMParser().parseFromString(html, 'text/html');
+						var el = doc.querySelector('form[name="cbi"] input[name$=".ssid"]');
+						if (!el) return;
+						var m = (el.getAttribute('name') || '').match(/^cbid\.wireless\.([^.]+)\.ssid$/);
+						if (m) ap.section = m[1];
+						if (el.value) {
+							ap.ssid = el.value;
+							var row = quick.querySelector('.wq-row[data-iface="' + ap.iface + '"]');
+							if (row) { var s = row.querySelector('.wq-ssid'); if (s) s.textContent = el.value; }
+						}
+					}).catch(function () {});
+				} catch (e) {}
+			});
+
+			// 状态刷新并隐藏已停用网络（顶部只保留启用中的 Wi-Fi）
+			function refresh() {
+				var rows = Array.prototype.slice.call(quick.querySelectorAll('.wq-row'));
+				var visible = 0;
+				rows.forEach(function (row) {
+					var tg = document.getElementById(row.getAttribute('data-iface') + '-iw-toggle');
+					if (!tg) { visible++; return; }
+					var on = tg.value !== '启用';
+					row.style.display = on ? '' : 'none';
+					if (on) visible++;
+					var st = row.querySelector('.wq-state');
+					if (st) { st.className = 'wq-state ' + (on ? 'on' : 'off'); if (st.lastChild) st.lastChild.nodeValue = on ? '已启用' : '已停用'; }
+				});
+				if (visible === 0) rows.forEach(function (r) { r.style.display = ''; });
+				var count = quick.querySelector('.wq-count');
+				if (count) count.textContent = (visible || rows.length) + ' 个网络';
+			}
+			window.setInterval(refresh, 1500);
+			window.setTimeout(refresh, 900);
+
+			// 弹窗：通过实例私有 CGI 直接写 UCI 并应用，不依赖 8080 的受限无线表单
+			var modal = null;
+			function ensureModal() {
+				if (modal) return modal;
+				modal = document.createElement('div');
+				modal.className = 'mwrt-wifi-modal';
+				modal.innerHTML = '<div class="wq-mask"></div>' +
+					'<div class="wq-dialog" role="dialog" aria-modal="true">' +
+					'<div class="wq-dlg-head"><div><div class="wq-k">WI-FI QUICK SETTINGS</div><h3 class="wq-dlg-title">修改 Wi-Fi</h3><div class="wq-dlg-sub"></div></div><button type="button" class="wq-close" aria-label="关闭">×</button></div>' +
+					'<div class="wq-loading">正在读取当前无线配置…</div>' +
+					'<div class="wq-body" hidden>' +
+					'<label class="wq-field"><span>Wi-Fi 名称（SSID）</span><input type="text" class="wq-input wq-ssid-input" maxlength="32" autocomplete="off"></label>' +
+					'<label class="wq-field"><span>加密方式</span><select class="wq-input wq-enc-select"></select></label>' +
+					'<label class="wq-field"><span>Wi-Fi 密码</span><div class="wq-pass-wrap"><input type="password" class="wq-input wq-pass-input" autocomplete="new-password" placeholder="至少 8 位"><button type="button" class="wq-eye">显示</button></div></label>' +
+					'<div class="wq-note">保存并应用后无线会重启，已连接的设备需要重新连接。</div>' +
+					'<div class="wq-error" hidden></div>' +
+					'</div>' +
+					'<div class="wq-foot"><a class="wq-full" target="_blank" rel="noopener">完整高级设置</a><div class="wq-foot-actions"><button type="button" class="wq-cancel">取消</button><button type="button" class="wq-save">保存并应用</button></div></div>' +
+					'</div>';
+				document.body.appendChild(modal);
+				modal.querySelector('.wq-mask').addEventListener('click', closeModal);
+				modal.querySelector('.wq-close').addEventListener('click', closeModal);
+				modal.querySelector('.wq-cancel').addEventListener('click', closeModal);
+				modal.querySelector('.wq-eye').addEventListener('click', function () {
+					var p = modal.querySelector('.wq-pass-input');
+					p.type = p.type === 'password' ? 'text' : 'password';
+					this.textContent = p.type === 'password' ? '显示' : '隐藏';
+				});
+				modal.querySelector('.wq-enc-select').addEventListener('change', syncPass);
+				modal.querySelector('.wq-save').addEventListener('click', saveWifi);
+				return modal;
+			}
+			function closeModal() {
+				if (!modal) return;
+				modal.classList.remove('open');
+			}
+			function syncPass() {
+				var enc = modal.querySelector('.wq-enc-select').value;
+				var p = modal.querySelector('.wq-pass-input');
+				var none = enc === 'none';
+				p.disabled = none;
+				p.placeholder = none ? '开放网络无需密码' : '至少 8 位';
+			}
+			function showError(msg) {
+				var e = modal.querySelector('.wq-error');
+				e.className = 'wq-error';
+				e.textContent = msg; e.hidden = false;
+			}
+			function showOk(msg) {
+				var e = modal.querySelector('.wq-error');
+				e.className = 'wq-error ok';
+				e.textContent = msg; e.hidden = false;
+			}
+			function fillOptions(cur) {
+				var sel = modal.querySelector('.wq-enc-select');
+				var opts = [
+					['psk2', 'WPA2-PSK（推荐）'],
+					['sae-mixed', 'WPA2/WPA3 混合'],
+					['sae', 'WPA3-SAE'],
+					['psk', 'WPA-PSK（旧设备）'],
+					['psk-mixed', 'WPA/WPA2 混合'],
+					['none', '开放网络（无密码）']
+				];
+				var has = false;
+				for (var i = 0; i < opts.length; i++) if (opts[i][0] === cur) has = true;
+				if (!has && cur) opts.unshift([cur, cur]);
+				sel.innerHTML = '';
+				opts.forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; sel.appendChild(op); });
+				sel.value = cur || 'psk2';
+			}
+			function openModal(row) {
+				ensureModal();
+				var ap = null;
+				for (var i = 0; i < aps.length; i++) if (aps[i].iface === row.getAttribute('data-iface')) ap = aps[i];
+				if (!ap) return;
+				modal.classList.add('open');
+				modal.querySelector('.wq-dlg-title').textContent = '修改 Wi-Fi';
+				modal.querySelector('.wq-dlg-sub').textContent = ap.iface + ' · ' + ap.ssid;
+				modal.querySelector('.wq-full').href = ap.edit;
+				modal.querySelector('.wq-loading').hidden = false;
+				modal.querySelector('.wq-body').hidden = true;
+				modal.querySelector('.wq-error').hidden = true;
+				var save = modal.querySelector('.wq-save'); save.disabled = false; save.textContent = '保存并应用';
+				if (!ap.section) { modal.querySelector('.wq-loading').hidden = true; showError('无线配置读取中，请稍后重试，或打开完整高级设置。'); return; }
+				fetch('/cgi-bin/mwrt-wifi?section=' + encodeURIComponent(ap.section) + '&token=' + encodeURIComponent(token()), { credentials: 'same-origin' })
+					.then(function (r) { return r.json(); })
+					.then(function (d) {
+						if (!d.ok) throw new Error(d.error || '读取失败');
+						modal.querySelector('.wq-ssid-input').value = d.ssid || '';
+						modal.querySelector('.wq-pass-input').value = d.key || '';
+						fillOptions(d.encryption || 'none');
+						syncPass();
+						modal.querySelector('.wq-dlg-sub').textContent = ap.iface + ' · ' + (d.ssid || ap.ssid);
+						modal.querySelector('.wq-loading').hidden = true;
+						modal.querySelector('.wq-body').hidden = false;
+					}).catch(function (e) {
+						modal.querySelector('.wq-loading').hidden = true;
+						showError('读取无线配置失败：' + e.message);
+					});
+			}
+			function saveWifi() {
+				var ssid = modal.querySelector('.wq-ssid-input').value.trim();
+				var enc = modal.querySelector('.wq-enc-select').value;
+				var pass = modal.querySelector('.wq-pass-input').value;
+				var row = null;
+				var sub = modal.querySelector('.wq-dlg-sub').textContent.split(' · ')[0];
+				for (var i = 0; i < aps.length; i++) if (aps[i].iface === sub) row = aps[i];
+				var err = modal.querySelector('.wq-error'); err.hidden = true;
+				if (!ssid) { showError('Wi-Fi 名称不能为空'); return; }
+				if (enc !== 'none' && pass.length < 8) { showError('Wi-Fi 密码至少需要 8 位'); return; }
+				if (!row || !row.section) { showError('无线配置尚未加载完成，请稍后重试'); return; }
+				var btn = modal.querySelector('.wq-save'); btn.disabled = true; btn.textContent = '保存中…';
+				var body = 'token=' + encodeURIComponent(token()) +
+					'&section=' + encodeURIComponent(row.section) +
+					'&ssid=' + encodeURIComponent(ssid) +
+					'&encryption=' + encodeURIComponent(enc) +
+					'&key=' + encodeURIComponent(pass) + '&apply=1';
+				fetch('/cgi-bin/mwrt-wifi', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body })
+					.then(function (r) { return r.json(); })
+					.then(function (d) {
+						if (!d.ok) throw new Error(d.error || '保存失败');
+						showOk(d.changed ? '已保存，正在应用新配置…' : '配置未变化，正在刷新…');
+						window.setTimeout(function () { window.location.reload(); }, 900);
+					}).catch(function (e) {
+						btn.disabled = false; btn.textContent = '保存并应用';
+						showError('保存失败：' + e.message);
+					});
+			}
+			quick.addEventListener('click', function (ev) {
+				var btn = ev.target.closest ? ev.target.closest('.wq-edit') : null;
+				if (!btn) return;
+				var row = btn.closest('.wq-row');
+				if (row) openModal(row);
+			});
+		})();
+
+		// 内部页面：Tab 在页面标题之前时，把标题移到 Tab 上方（接口/无线等页面）
+		(function fixPageTitleOrder() {
+			var cont = document.querySelector('#maincontent > .container');
+			if (!cont) return;
+			var first = null;
+			for (var i = 0; i < cont.children.length; i++) {
+				if (cont.children[i].offsetHeight > 0) { first = cont.children[i]; break; }
+			}
+			if (!first || !first.matches('ul.tabs, .cbi-tabmenu')) return;
+			var h2 = cont.querySelector('h2');
+			if (h2 && h2 !== first) cont.insertBefore(h2, first);
+		})();
+	});
+})();
+</script>

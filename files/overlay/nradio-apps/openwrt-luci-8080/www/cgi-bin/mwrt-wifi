@@ -1,0 +1,167 @@
+#!/usr/bin/lua
+-- ============================================================
+-- Mwrt 8080 Wi-Fi quick settings endpoint
+--   GET  /cgi-bin/mwrt-wifi?section=wlan0                 -> 当前 SSID / 加密 / 密码
+--   POST /cgi-bin/mwrt-wifi  section=wlan0&ssid=...&encryption=psk2&key=...&apply=1
+-- 只允许已登录的 root 会话，且要求 X-Requested-With（防 CSRF 表单）。
+-- 只修改 /etc/config/wireless 中已存在的 wifi-iface，不触碰共享 LuCI 模板。
+-- ============================================================
+
+local jsonc = require "luci.jsonc"
+local sys = require "luci.sys"
+local uci = require "luci.model.uci".cursor()
+
+local function respond(status, obj)
+	local phrase = "Bad Request"
+	if status == 200 then phrase = "OK"
+	elseif status == 401 then phrase = "Unauthorized"
+	elseif status == 403 then phrase = "Forbidden"
+	elseif status == 404 then phrase = "Not Found" end
+	io.write("Status: " .. tostring(status) .. " " .. phrase .. "\r\n")
+	io.write("Content-Type: application/json; charset=utf-8\r\n")
+	io.write("Cache-Control: no-store\r\n\r\n")
+	io.write(jsonc.stringify(obj) or "{}")
+	io.flush()
+	os.exit(0)
+end
+
+local function fail(status, msg)
+	respond(status or 400, { ok = false, error = msg or "参数错误" })
+end
+
+local function split_json_objs(s)
+	local out, depth, start = {}, 0, nil
+	for i = 1, #s do
+		local c = s:sub(i, i)
+		if c == "{" then
+			if depth == 0 then start = i end
+			depth = depth + 1
+		elseif c == "}" then
+			depth = depth - 1
+			if depth == 0 and start then
+				out[#out + 1] = s:sub(start, i)
+				start = nil
+			end
+		end
+	end
+	return out
+end
+
+local function check_auth(tok)
+	if not tok or not tok:match("^[0-9a-fA-F]+$") or #tok < 16 then return false end
+	local raw = sys.exec("ubus call session list 2>/dev/null") or ""
+	if raw == "" then return false end
+	for _, chunk in ipairs(split_json_objs(raw)) do
+		local ok, obj = pcall(jsonc.parse, chunk)
+		if ok and type(obj) == "table" and tostring(obj.ubus_rpc_session or "") == tok then
+			local data = obj.data or {}
+			local user = tostring(data.user or data.username or "")
+			if user == "root" then return true end
+		end
+	end
+	return false
+end
+
+local function urldecode(s)
+	s = tostring(s or ""):gsub("+", " ")
+	return (s:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
+end
+
+local function parse_params()
+	local p = {}
+	local method = (os.getenv("REQUEST_METHOD") or "GET"):upper()
+	local raw = ""
+	if method == "POST" then
+		local len = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
+		if len > 0 then raw = io.read(len) or "" end
+	else
+		raw = os.getenv("QUERY_STRING") or ""
+	end
+	for k, v in tostring(raw):gmatch("([^&=]+)=([^&]*)") do
+		p[urldecode(k)] = urldecode(v)
+	end
+	return p, method
+end
+
+local p, method = parse_params()
+local tok = tostring(p.token or "")
+if tok == "" then
+	local cookie = os.getenv("HTTP_COOKIE") or ""
+	tok = cookie:match("sysauth=([0-9a-fA-F]+)") or ""
+end
+if not check_auth(tok) then
+	fail(401, "未登录或登录已过期，请刷新页面重新登录")
+end
+local section = tostring(p.section or "")
+if not section:match("^[%w_]+$") then fail(400, "section 参数不合法") end
+
+local stype = uci:get("wireless", section, ".type")
+if not stype and uci.get_all then
+	local sec = uci:get_all("wireless", section)
+	if type(sec) == "table" then stype = sec[".type"] end
+end
+if stype ~= "wifi-iface" then
+	fail(404, "无线接口不存在")
+end
+
+if method == "GET" then
+	respond(200, {
+		ok = true,
+		section = section,
+		ssid = uci:get("wireless", section, "ssid") or "",
+		encryption = uci:get("wireless", section, "encryption") or "none",
+		key = uci:get("wireless", section, "key") or "",
+		disabled = uci:get("wireless", section, "disabled") or "0",
+		device = uci:get("wireless", section, "device") or "",
+	})
+end
+
+local ssid = tostring(p.ssid or "")
+local enc = tostring(p.encryption or "none")
+local key = tostring(p.key or "")
+local apply = tostring(p.apply or "0")
+
+if #ssid < 1 or #ssid > 32 then fail(400, "Wi-Fi 名称需为 1–32 个字符") end
+if ssid:find("[%z\r\n]") then fail(400, "Wi-Fi 名称包含非法字符") end
+local allowed = {
+	none = true, psk = true, psk2 = true, ["psk-mixed"] = true,
+	sae = true, ["sae-mixed"] = true,
+}
+if not allowed[enc] then fail(400, "不支持的加密方式") end
+if enc ~= "none" then
+	if #key < 8 or #key > 63 then fail(400, "Wi-Fi 密码需为 8–63 个字符") end
+	if key:find("[%z\r\n]") then fail(400, "Wi-Fi 密码包含非法字符") end
+end
+
+local changed = false
+if (uci:get("wireless", section, "ssid") or "") ~= ssid then changed = true end
+if (uci:get("wireless", section, "encryption") or "none") ~= enc then changed = true end
+if enc == "none" then
+	if uci:get("wireless", section, "key") ~= nil then
+		uci:delete("wireless", section, "key")
+		changed = true
+	end
+else
+	if (uci:get("wireless", section, "key") or "") ~= key then changed = true end
+end
+
+uci:set("wireless", section, "ssid", ssid)
+uci:set("wireless", section, "encryption", enc)
+if enc ~= "none" then uci:set("wireless", section, "key", key) end
+uci:commit("wireless")
+
+local applied = false
+if apply == "1" and changed then
+	-- 后台重载无线，先返回响应，避免浏览器因 Wi-Fi 重连而收不到结果
+	os.execute("nohup /sbin/wifi reload >/dev/null 2>&1 &")
+	applied = true
+end
+
+respond(200, {
+	ok = true,
+	section = section,
+	ssid = ssid,
+	encryption = enc,
+	changed = changed,
+	applied = applied,
+})

@@ -1,0 +1,82 @@
+/* Mwrt 主题 — 首页 / 网络设置向导（quickstart SPA）对齐 */
+:root{
+  --card-bg-color:#ffffff;
+  --card-box-shadow:0 1px 2px rgba(16,24,40,.04);
+  --border-color:#e7eaee;
+  --card-txt-color:#16202c;
+  --app-container_title-color:#16202c;
+  --tit-color:#16202c;
+  --btn-border-color:#d8e4e4;
+  --btn-border-hover-color:#388087;
+  --tag-bg-color:#f2f8f8;
+  --flow-bg-color:#ffffff;
+  --flow-span-color:#667085;
+  --item-label_key-span-color:#667085;
+  --item-label_value-span-color:#16202c;
+  --popup-bg-color:#ffffff;
+  --app-container_status-label_bg:#f2f8f8;
+  --app-container_status-label_block:#2f6e74;
+  --item_btn-border:1px solid #388087;
+  --item_btn-color:#2f6e74;
+  --primary:#388087;
+  --primary-color:#388087;
+  --background-color:#f4f5f7;
+  --font-color:#344054;
+  --SystemUpdateBanner-bg-color:#f2f8f8;
+  --SystemUpdateBanner-border-color:#cfe4e2;
+  --breadcrumbs-tit-color:#2f6e74;
+  --breadcrumbs-tit-color1:#5a6b80;
+}
+#app{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif!important;color:#1f2d3d!important}
+#app a{color:#2f6e74}
+#app a:hover{color:#388087}
+#app .page-container>div:first-child{display:none!important}
+#app .page-container>div:first-child a{color:#667085!important;font-size:.82rem!important;letter-spacing:.02em}
+#app .page-container>div:first-child .model_btn{color:#388087!important}
+#app .card-container{gap:16px!important}
+#app .feature-card{border:1px solid #e7eaee!important;border-radius:12px!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important;background:#fff!important;padding:18px 16px 20px!important;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease!important}
+#app .feature-card:hover{transform:translateY(-3px)!important;border-color:#bdd9d7!important;box-shadow:0 16px 30px -20px rgba(56,128,135,.6)!important}
+#app .feature-card .header .icon-wrapper{border-radius:12px!important;box-shadow:0 8px 16px -10px rgba(16,24,40,.35)!important}
+#app .feature-card .title{font-weight:700!important;color:#16202c!important;font-size:16px!important}
+#app .feature-card .subtitle{color:#667085!important;line-height:1.6!important;font-size:13px!important}
+#app .feature-card .footer .badge,#app .feature-card .extra.badge{background:#eef7f6!important;color:#2f6e74!important;border:1px solid #d8e9e7!important;border-radius:6px!important;font-size:12px!important}
+#app .network_container,#app .reusable-card,#app .app-container{background:#fff!important;border:1px solid #e7eaee!important;border-radius:12px!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important}
+#app .card-header{padding:0 0 10px!important;margin-bottom:12px!important;border-bottom:1px solid #f2f4f7!important}
+#app .card-header .title,#app .title_box .display_flex span{color:#16202c!important;font-weight:600!important}
+#app .card-body{color:#344054!important}
+#app .network_tag{color:#667085!important;font-size:.78rem!important}
+#app .network_container .title_box{border-bottom:1px solid #f2f4f7!important;padding-bottom:10px!important}
+#app .network_container .speed_item div{font-weight:600!important}
+#app .network_container .echart{border-radius:10px!important}
+#app .item_container{display:flex!important;flex-wrap:wrap!important;gap:12px!important}
+#app .item_container .item{background:#f8fbfb!important;border:1px solid #e7eaee!important;border-radius:10px!important;transition:transform .2s ease,background .2s ease,border-color .2s ease!important}
+#app .item_container .item:hover{background:#eef7f6!important;border-color:#bdd9d7!important;transform:translateY(-2px)}
+#app .item_container .item span{color:#2f6e74!important;font-weight:600!important}
+#app .grid-container{display:flex!important;flex-wrap:wrap!important;gap:16px!important}
+#app .grid-container .grid-item{flex:1 1 340px!important;max-width:100%!important}
+#app .grid-container .grid-item .reusable-card{height:100%!important}
+#app .grid-container .reusable-card{background:#fff!important;border:1px solid #e7eaee!important;border-radius:12px!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important}
+#app .system>.reusable-card{background:#fff!important;border:1px solid #e7eaee!important;border-radius:12px!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important}
+#app .system .card-header .title{color:#16202c!important}
+#app .tabs_box_g .tab{color:#667085!important}
+#app .tabs_box_g .tab.active{color:#388087!important;border-color:#388087!important}
+#app .table-header{background:#f7f9fb!important;color:#475467!important;font-weight:600!important}
+#app .table-row{border-bottom:1px solid #f0f1f3!important}
+#app .table-row:hover{background:#f7fafa!important}
+#app .btn-primary,#app .primary-btn{background:linear-gradient(135deg,#3d8c93,#388087)!important;border-color:#2f6e74!important;color:#fff!important;border-radius:.4rem!important}
+#app .btn,#app .module-settings__btn--secondary{background:#eef1f4!important;border-color:#dbe1e6!important;color:#344054!important;border-radius:.4rem!important}
+#app .cbi-value-title{color:#475467!important}
+#app .modal{border-radius:12px!important;border:1px solid #e7eaee!important;box-shadow:0 24px 60px -30px rgba(16,24,40,.45)!important}
+#app .modal-header{border-bottom:1px solid #eef1f4!important;color:#16202c!important}
+/* 网络设置向导 */
+#app #page .title{color:#16202c!important;font-weight:700!important}
+#app #page .desc{color:#667085!important}
+#app .network-containers{justify-content:flex-start!important}
+#app .network-containers .network-container_item{background:#fff!important;border:1px solid #e7eaee!important;border-radius:12px!important;box-shadow:0 1px 2px rgba(16,24,40,.04)!important;overflow:hidden!important;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease!important;margin:0 12px 12px 0!important}
+#app .network-containers .network-container_item:hover{border-color:#bdd9d7!important;transform:translateY(-3px)!important;box-shadow:0 16px 30px -20px rgba(56,128,135,.6)!important}
+#app .network-container_item .cover{border-radius:10px 10px 0 0!important;overflow:hidden!important;filter:saturate(.8) brightness(1.02)}
+#app .network-container_item .title{color:#16202c!important;font-weight:600!important}
+#app .network-container_item .desc{color:#667085!important}
+#app #page .info a{color:#2f6e74!important}
+/* 隐藏快速入口的 iStoreOS 官网外链（属于外部站点） */
+#app .page-container>div:first-child a[href*="istoreos"]{display:none!important}

@@ -1,0 +1,539 @@
+<%
+-- KP-WIZARD v1 · 网络设置向导（8080 实例私有视图）
+-- 解决三个真痛点：Wi-Fi 快速配置 / SIM 流量卡切换 / OpenClash 快速订阅
+-- 数据与动作都在本视图内闭环：
+--   GET  ?action=refresh    → 聚合状态 JSON（sim + oc + wifi）
+--   GET  ?action=oc_log     → OpenClash 订阅更新进度（过滤 clash 运行日志）
+--   POST ?action=sim_switch → 切换 SIM（cpesel.sim.cur=N + mode=1，重启 cpesel/wanchk）
+--   POST ?action=sim_mode   → 自动/手动切换模式（cpesel.sim.mode）
+--   POST ?action=oc_sub     → 保存订阅地址并后台执行 openclash.sh
+--   Wi-Fi 读写走既有 /cgi-bin/mwrt-wifi（同 cookie 鉴权）
+local sys = require "luci.sys"
+local util = require "luci.util"
+local http = require "luci.http"
+local jsonc = require "luci.jsonc"
+local uci = require "luci.model.uci".cursor()
+local fs = require "nixio.fs"
+
+local function trim(s) return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
+local function ubus_json(obj, method, params)
+	local cmd = "ubus call " .. obj .. " " .. method .. (params and (" '" .. params .. "'") or "")
+	local raw = sys.exec(cmd .. " 2>/dev/null") or ""
+	local ok, t = pcall(jsonc.parse, raw)
+	if ok and type(t) == "table" then return t end
+	return nil
+end
+-- CSRF 防护：uhttpd CGI 不透传 X-Requested-With，改用 Origin/Referer 同源校验；
+-- 无 Origin/Referer 的客户端（curl 等）放行，仍受 dispatcher 会话鉴权约束。
+local function same_origin()
+	local host = (os.getenv("HTTP_HOST") or ""):lower()
+	local src = (os.getenv("HTTP_ORIGIN") or ""):lower()
+	if src == "" then src = (os.getenv("HTTP_REFERER") or ""):lower() end
+	if src == "" then return nil end
+	-- Origin 头不带路径与结尾斜杠（http://h:p），Referer 带路径（http://h:p/x），统一取 host 部分比较
+	local src_host = src:match("^[a-z][a-z0-9+.%-]*://([^/]+)")
+	return src_host ~= nil and src_host == host
+end
+local function is_xhr()
+	if (os.getenv("HTTP_X_REQUESTED_WITH") or "") == "XMLHttpRequest" then return true end
+	return same_origin() ~= false
+end
+local function ps_raw() return sys.exec("ps w 2>/dev/null") or "" end
+local function oc_running() return ps_raw():find("/etc/openclash/clash %-d", 1, true) ~= nil or ps_raw():find("/etc/openclash/clash -d", 1, true) ~= nil end
+local function oc_updating() return ps_raw():find("/usr/share/openclash/openclash.sh", 1, true) ~= nil end
+
+local PLMN = {
+	["46000"] = "中国移动", ["46002"] = "中国移动", ["46004"] = "中国移动", ["46007"] = "中国移动", ["46008"] = "中国移动",
+	["46001"] = "中国联通", ["46006"] = "中国联通", ["46009"] = "中国联通", ["46010"] = "中国联通",
+	["46003"] = "中国电信", ["46005"] = "中国电信", ["46011"] = "中国电信", ["46012"] = "中国电信",
+	["46015"] = "中国广电", ["46020"] = "中国铁通"
+}
+local function operator_cn(plmn, raw)
+	local p = trim(plmn)
+	if PLMN[p] then return PLMN[p] end
+	local u = string.upper(trim(raw))
+	if u:find("UNICOM", 1, true) then return "中国联通" end
+	if u:find("CMCC", 1, true) or u:find("MOBILE", 1, true) then return "中国移动" end
+	if u:find("TELECOM", 1, true) or u:find("CTCC", 1, true) then return "中国电信" end
+	if u:find("BROADNET", 1, true) or u:find("CBN", 1, true) then return "中国广电" end
+	return trim(raw)
+end
+
+-- ---- 状态采集 ----
+local function sim_state()
+	local sel = uci:get_all("cpesel", "sim") or {}
+	local max = tonumber(sel.max) or 0
+	local cur = tonumber(sel.cur) or 1
+	local mode = tonumber(sel.mode) or 0
+	local stype = {}
+	local idx = 0
+	for v in tostring(sel.stype or ""):gmatch("[^,]+") do
+		idx = idx + 1
+		stype[idx] = trim(v)
+	end
+	local slots = {}
+	for i = 1, math.max(max, #stype, cur) do
+		slots[#slots + 1] = {
+			n = i,
+			stype = stype[i] or "0",
+			label = (stype[i] == "4") and "云 SIM" or "实体卡"
+		}
+	end
+	-- 蜂窝实时状态（infocd runtime：cpe / cpe1 两行）
+	local rt = ubus_json("infocd", "runtime")
+	local lines = {}
+	if type(rt) == "table" and type(rt.cpe) == "table" then
+		for _, item in ipairs(rt.cpe) do
+			if type(item) == "table" and (item.name == "cpe" or item.name == "cpe1") then
+				local st = tonumber(item.status)
+				lines[#lines + 1] = {
+					name = item.name,
+					up = (st == 0),
+					gateway = (tonumber(item.gateway_if) == 1),
+					operator = operator_cn(item.isp, item.sim_company),
+					sim_name = trim(item.sim_name),
+					rsrp = trim(item.rsrp)
+				}
+			end
+		end
+	end
+	return { cur = cur, mode = mode, max = max, slots = slots, lines = lines, ok = true }
+end
+
+local function oc_state()
+	local cfg_path = trim(uci:get("openclash", "config", "config_path") or "")
+	local name = cfg_path:match("([^/]+)%.yaml$") or cfg_path:match("([^/]+)$") or ""
+	local addr = ""
+	local sec_name = ""
+	uci:foreach("openclash", "config_subscribe", function(s)
+		if addr == "" then
+			addr = trim(s.address or "")
+			sec_name = trim(s.name or "")
+		end
+	end)
+	return {
+		ok = true, running = oc_running(), updating = oc_updating(),
+		config = name, config_path = cfg_path, address = addr, sub_name = sec_name
+	}
+end
+
+local function wifi_state()
+	local out = {}
+	local bands = { wlan0 = "2.4G", wlan1 = "5G", wlan2 = "6G" }
+	for sec, band in pairs(bands) do
+		local t = uci:get("wireless", sec, ".type") or (uci:get_all("wireless", sec) or {})[".type"]
+		if t == "wifi-iface" then
+			out[#out + 1] = {
+				section = sec,
+				band = band,
+				ssid = uci:get("wireless", sec, "ssid") or "",
+				encryption = uci:get("wireless", sec, "encryption") or "none",
+				key = uci:get("wireless", sec, "key") or "",
+				disabled = (uci:get("wireless", sec, "disabled") or "0") == "1"
+			}
+		end
+	end
+	table.sort(out, function(a, b) return a.band < b.band end)
+	return out
+end
+
+local function build_state()
+	return { ok = true, sim = sim_state(), oc = oc_state(), wifi = wifi_state() }
+end
+
+-- ---- 动作分发 ----
+local action = trim(http.formvalue("action") or "")
+if action ~= "" then
+	http.header("Cache-Control", "no-store")
+	if action == "refresh" or action == "oc_log" or action == "sim_status" then
+		if action == "oc_log" then
+			-- 订阅更新日志：clash 运行日志行以 time= 开头，过滤后取最后 14 行
+			local raw = sys.exec("tail -n 400 /tmp/openclash.log 2>/dev/null") or ""
+			local keep = {}
+			for line in raw:gmatch("[^\r\n]+") do
+				if not line:match("^%s*time=") then keep[#keep + 1] = line end
+			end
+			local tail = {}
+			for i = math.max(1, #keep - 13), #keep do tail[#tail + 1] = keep[i] end
+			http.write_json({ ok = true, updating = oc_updating(), running = oc_running(), lines = tail })
+			return
+		end
+		http.write_json(build_state())
+		return
+	end
+	-- 以下均为写操作：必须 XHR（防 CSRF 表单直投）
+	if not is_xhr() then
+		http.status(403, "Forbidden")
+		http.write_json({ ok = false, error = "非法请求来源" })
+		return
+	end
+	if action == "sim_switch" then
+		local st = sim_state()
+		local want = tonumber(http.formvalue("sim") or "")
+		if not want or want < 1 or want > math.max(st.max, #st.slots) then
+			http.write_json({ ok = false, error = "卡号不合法" })
+			return
+		end
+		local changed = (want ~= st.cur)
+		if changed then
+			uci:set("cpesel", "sim", "cur", tostring(want))
+			-- 手动选卡后固定使用该卡（与厂商 App 行为一致；自动策略用 sim_mode 单独控制）
+			uci:set("cpesel", "sim", "mode", "1")
+			uci:commit("cpesel")
+			os.execute("( /etc/init.d/cpesel restart >/dev/null 2>&1; /etc/init.d/wanchk restart >/dev/null 2>&1 ) &")
+		end
+		http.write_json({ ok = true, changed = changed, cur = want, mode = 1 })
+		return
+	end
+	if action == "sim_mode" then
+		local m = tonumber(http.formvalue("mode") or "")
+		if m ~= 0 and m ~= 1 then
+			http.write_json({ ok = false, error = "模式不合法" })
+			return
+		end
+		uci:set("cpesel", "sim", "mode", tostring(m))
+		uci:commit("cpesel")
+		os.execute("( /etc/init.d/cpesel restart >/dev/null 2>&1 ) &")
+		http.write_json({ ok = true, mode = m })
+		return
+	end
+	if action == "oc_sub" then
+		local url = trim(http.formvalue("url") or "")
+		if url == "" or #url > 512 or not url:match("^https?://%S+$") or url:find("[%s\"']") then
+			http.write_json({ ok = false, error = "订阅地址不合法（需 http/https 链接）" })
+			return
+		end
+		local st = oc_state()
+		local name = st.config
+		if name == "" or not name:match("^[%w%._%-]+$") then
+			http.write_json({ ok = false, error = "未找到当前 Clash 配置文件名" })
+			return
+		end
+		-- 找到 name 匹配的订阅段，否则用第一段并补 name
+		local target = nil
+		uci:foreach("openclash", "config_subscribe", function(s)
+			if not target and trim(s.name or "") == name then target = s[".name"] end
+		end)
+		if not target then
+			uci:foreach("openclash", "config_subscribe", function(s)
+				if not target then target = s[".name"] end
+			end)
+		end
+		if not target then
+			target = uci:add("openclash", "config_subscribe")
+		end
+		uci:set("openclash", target, "name", name)
+		uci:set("openclash", target, "address", url)
+		uci:commit("openclash")
+		os.execute(string.format("nohup /usr/share/openclash/openclash.sh '%s' >/dev/null 2>&1 &", name))
+		http.write_json({ ok = true, config = name, address = url })
+		return
+	end
+	http.status(400, "Bad Request")
+	http.write_json({ ok = false, error = "未知 action" })
+	return
+end
+
+-- ---- 初始渲染数据 ----
+local state = build_state()
+local state_json = (jsonc.stringify(state) or "{}"):gsub("<", "\\u003c")
+local vendor_url = luci.dispatcher.build_url("admin", "network_guide", "pppoe")
+local home_url = luci.dispatcher.build_url("admin", "status", "details")
+-%>
+<%+header%>
+<style type="text/css">
+:root{--wz-bg:#0b0d14;--wz-c1:#11141f;--wz-c2:#161a28;--wz-bd:rgba(255,255,255,.09);--wz-t1:#e8eaf2;--wz-t2:#9aa1b5;--wz-ac:#7c5cfc;--wz-ac2:#22d3ee;--wz-gn:#34d399;--wz-rd:#f87171;--wz-yl:#fbbf24}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+body{background:var(--wz-bg)}
+.P{max-width:860px;margin:0 auto;padding:14px 0 40px;display:flex;flex-direction:column;gap:14px}
+.wz-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 2px 0}
+.wz-head h1{font-size:20px;font-weight:800;color:var(--wz-t1);margin:0;letter-spacing:.3px}
+.wz-head .wz-back{margin-left:auto;font-size:12px;color:var(--wz-t2);text-decoration:none;display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border:1px solid var(--wz-bd);border-radius:999px;background:rgba(255,255,255,.03)}
+.wz-head .wz-back:hover{color:#c7b9ff;border-color:rgba(124,92,252,.38)}
+.wz-sub{font-size:12px;color:var(--wz-t2);margin:-6px 2px 0}
+.wz-card{background:linear-gradient(150deg,rgba(124,92,252,.10),rgba(34,211,238,.05) 55%),var(--wz-c1);border:1px solid var(--wz-bd);border-radius:16px;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.wz-card h2{margin:0;font-size:15px;font-weight:700;color:var(--wz-t1);display:flex;align-items:center;gap:9px}
+.wz-card h2 .wz-no{width:22px;height:22px;border-radius:8px;background:linear-gradient(135deg,#7c5cfc,#22d3ee);color:#fff;font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.wz-card h2 .wz-chip{margin-left:auto;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid var(--wz-bd);color:var(--wz-t2);background:rgba(255,255,255,.04)}
+.wz-card h2 .wz-chip.on{color:#6ee7b7;border-color:rgba(52,211,153,.3);background:rgba(52,211,153,.10)}
+.wz-card h2 .wz-chip.off{color:#fca5a5;border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.08)}
+.wz-tip{font-size:12px;color:var(--wz-t2);line-height:1.5;margin:0}
+.wz-tip b{color:var(--wz-yl);font-weight:600}
+/* WiFi 行 */
+.wz-row{display:grid;grid-template-columns:64px 1fr 1fr auto;gap:10px;align-items:center;background:var(--wz-c2);border:1px solid var(--wz-bd);border-radius:12px;padding:11px 12px}
+.wz-row .wz-band{font-size:12px;font-weight:700;color:var(--wz-ac2)}
+.wz-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.wz-field label{font-size:11px;color:var(--wz-t2)}
+.wz-field .wz-in-wrap{position:relative;display:flex;align-items:center}
+.wz-input{width:100%;box-sizing:border-box;background:rgba(255,255,255,.05);border:1px solid var(--wz-bd);border-radius:9px;color:var(--wz-t1);font-size:13px;padding:8px 10px;outline:none;transition:border-color .18s}
+.wz-input:focus{border-color:rgba(124,92,252,.55)}
+.wz-input.mono{font-family:ui-monospace,Consolas,monospace}
+.wz-eye{position:absolute;right:8px;background:none;border:0;color:var(--wz-t2);cursor:pointer;font-size:12px;padding:2px}
+.wz-eye:hover{color:var(--wz-t1)}
+.wz-select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.05);border:1px solid var(--wz-bd);border-radius:9px;color:var(--wz-t1);font-size:12px;padding:8px 26px 8px 10px;outline:none;cursor:pointer}
+.wz-btn{border:0;cursor:pointer;font-family:inherit;font-weight:700;font-size:12px;color:#fff;background:linear-gradient(135deg,#7c5cfc,#6366f1);border-radius:9px;padding:9px 16px;white-space:nowrap;transition:opacity .18s,transform .05s}
+.wz-btn:hover{opacity:.9}
+.wz-btn:active{transform:translateY(1px)}
+.wz-btn:disabled{opacity:.5;cursor:not-allowed}
+.wz-btn.ghost{background:rgba(255,255,255,.06);border:1px solid var(--wz-bd);color:var(--wz-t1);font-weight:600}
+.wz-btn.danger{background:rgba(248,113,113,.16);border:1px solid rgba(248,113,113,.35);color:#fca5a5}
+/* SIM */
+.wz-sim-now{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--wz-c2);border:1px solid var(--wz-bd);border-radius:12px;padding:11px 12px;font-size:12px;color:var(--wz-t2)}
+.wz-sim-now b{color:var(--wz-t1);font-weight:700}
+.wz-dot{width:8px;height:8px;border-radius:50%;background:var(--wz-gn);flex:0 0 auto;box-shadow:0 0 0 3px rgba(52,211,153,.15)}
+.wz-dot.off{background:var(--wz-rd);box-shadow:0 0 0 3px rgba(248,113,113,.15)}
+.wz-slots{display:flex;gap:8px;flex-wrap:wrap}
+.wz-slot{position:relative;flex:1 1 150px;background:var(--wz-c2);border:1px solid var(--wz-bd);border-radius:12px;padding:11px 12px;text-align:left;cursor:pointer;color:var(--wz-t1);font-family:inherit;transition:border-color .18s,background .18s}
+.wz-slot:hover{border-color:rgba(124,92,252,.5)}
+.wz-slot:disabled{opacity:.55;cursor:not-allowed}
+.wz-slot .t{font-size:13px;font-weight:700;display:flex;align-items:center;gap:7px}
+.wz-slot .t i{color:var(--wz-ac2);font-size:12px}
+.wz-slot .s{font-size:11px;color:var(--wz-t2);margin-top:3px}
+.wz-slot.cur{border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.07)}
+.wz-slot.cur::after{content:"当前";position:absolute;top:8px;right:8px;font-size:10px;font-weight:700;color:#6ee7b7;border:1px solid rgba(52,211,153,.35);border-radius:999px;padding:1px 7px}
+.wz-switch{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--wz-t2)}
+.wz-toggle{position:relative;width:38px;height:21px;border-radius:999px;background:rgba(255,255,255,.12);border:0;cursor:pointer;transition:background .18s;flex:0 0 auto}
+.wz-toggle::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;transition:left .18s}
+.wz-toggle.on{background:var(--wz-gn)}
+.wz-toggle.on::after{left:19px}
+/* OpenClash */
+.wz-oc-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
+.wz-log{background:#0a0c12;border:1px solid var(--wz-bd);border-radius:12px;padding:10px 12px;font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.7;color:#8fa3b8;max-height:190px;overflow:auto;white-space:pre-wrap;word-break:break-all;display:none}
+.wz-log .ok{color:#6ee7b7}.wz-log .err{color:#fca5a5}
+.wz-foot{font-size:11px;color:var(--wz-t2);text-align:center;padding-top:2px}
+.wz-foot a{color:#c7b9ff;text-decoration:none}
+.wz-foot a:hover{text-decoration:underline}
+@media (max-width:640px){
+	.wz-row{grid-template-columns:1fr 1fr}
+	.wz-row .wz-band{grid-column:1/-1}
+	.wz-row .wz-act{grid-column:1/-1;justify-self:stretch}
+	.wz-oc-row{grid-template-columns:1fr}
+}
+</style>
+
+<div class="P">
+<div class="wz-head">
+	<h1><i class="fas fa-magic" style="color:var(--wz-ac);margin-right:6px" aria-hidden="true"></i>网络设置向导</h1>
+	<a class="wz-back" href="<%=pcdata(home_url)%>"><i class="fas fa-home" aria-hidden="true"></i>返回首页</a>
+</div>
+<div class="wz-sub">三步搞定最常用的网络配置 · 改动即时生效，出问题可随时回到本页调整</div>
+
+<div class="wz-card" id="card-wifi">
+	<h2><span class="wz-no">1</span>Wi-Fi 快速配置</h2>
+	<p class="wz-tip">修改 Wi-Fi 名称或密码后点击「保存」。<b>若你正通过 Wi-Fi 管理路由器，保存后会短暂断开约 10 秒</b>，属正常现象。</p>
+	<div id="wifi-rows"></div>
+</div>
+
+<div class="wz-card" id="card-sim">
+	<h2><span class="wz-no">2</span>SIM 流量卡切换<span class="wz-chip" id="sim-chip">读取中…</span></h2>
+	<div class="wz-sim-now" id="sim-now"><span class="wz-dot" id="sim-dot"></span><span id="sim-now-txt">正在读取蜂窝状态…</span></div>
+	<div class="wz-slots" id="sim-slots"></div>
+	<div class="wz-switch">
+		<button type="button" class="wz-toggle" id="sim-auto" role="switch" aria-checked="false" title="信号差时自动切卡"></button>
+		<span id="sim-auto-txt">信号差时自动切换</span>
+		<span style="margin-left:auto" class="wz-tip">切换后蜂窝会断线 <b>10–30 秒</b>，自动按信号阈值选卡需开启上面的开关</span>
+	</div>
+</div>
+
+<div class="wz-card" id="card-oc">
+	<h2><span class="wz-no">3</span>OpenClash 快速订阅<span class="wz-chip" id="oc-chip">读取中…</span></h2>
+	<p class="wz-tip">粘贴机场订阅链接（Clash 格式），保存后自动下载并校验配置，成功后自动重启代理。当前配置：<b id="oc-cfg" style="color:var(--wz-t1)">-</b></p>
+	<div class="wz-oc-row">
+		<div class="wz-field">
+			<label>订阅链接</label>
+			<input class="wz-input mono" type="url" id="oc-url" placeholder="https://example.com/api/subscribe?token=..." autocomplete="off" spellcheck="false">
+		</div>
+		<button type="button" class="wz-btn" id="oc-go"><i class="fas fa-cloud-download-alt" aria-hidden="true"></i> 保存并更新</button>
+	</div>
+	<div class="wz-log" id="oc-log" aria-live="polite"></div>
+</div>
+
+<div class="wz-foot">
+	需要 PPPoE 宽带拨号 / 静态 IP 等传统上网设置？<a href="<%=pcdata(vendor_url)%>">打开原厂上网向导</a>
+</div>
+</div>
+
+<script type="application/json" id="kp-wiz-state"><%=state_json%></script>
+<script type="text/javascript">
+(function () {
+	'use strict';
+	var S = {};
+	try { S = JSON.parse(document.getElementById('kp-wiz-state').textContent); } catch (e) { S = {}; }
+	var $ = function (id) { return document.getElementById(id); };
+	function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+	function xhr(url, opts, onok, onerr) {
+		opts = opts || {};
+		opts.headers = Object.assign({ 'X-Requested-With': 'XMLHttpRequest' }, opts.headers || {});
+		fetch(url, opts).then(function (r) { return r.json(); }).then(onok).catch(function (e) { onerr && onerr(e); });
+	}
+	var base = location.pathname.split('?')[0];
+
+	/* ---------- 1. Wi-Fi ---------- */
+	var ENC_LABEL = { 'psk2': 'WPA2', 'sae-mixed': 'WPA2/WPA3', 'psk-mixed': 'WPA/WPA2', 'psk': 'WPA', 'sae': 'WPA3', 'none': '开放' };
+	function encOptions(cur) {
+		return ['psk2', 'sae-mixed', 'psk-mixed', 'none'].map(function (v) {
+			return '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + (ENC_LABEL[v] || v) + '</option>';
+		}).join('');
+	}
+	function renderWifi(list) {
+		var host = $('wifi-rows');
+		host.innerHTML = '';
+		(list || []).forEach(function (w) {
+			var div = document.createElement('div');
+			div.className = 'wz-row';
+			div.innerHTML =
+				'<div class="wz-band">' + esc(w.band) + '</div>' +
+				'<div class="wz-field"><label>Wi-Fi 名称</label><div class="wz-in-wrap"><input class="wz-input wz-ssid" maxlength="32" value="' + esc(w.ssid) + '"></div></div>' +
+				'<div class="wz-field"><label>加密 / 密码</label><div class="wz-in-wrap"><select class="wz-select wz-enc">' + encOptions(w.encryption) + '</select>' +
+				'<input class="wz-input wz-key mono" type="password" maxlength="63" placeholder="8–63 位" value="' + esc(w.key) + '" style="margin-left:6px">' +
+				'<button type="button" class="wz-eye" title="显示密码"><i class="fas fa-eye"></i></button></div></div>' +
+				'<button type="button" class="wz-btn wz-act">保存</button>';
+			host.appendChild(div);
+			var encSel = div.querySelector('.wz-enc'), keyIn = div.querySelector('.wz-key');
+			function syncKey() { keyIn.style.display = encSel.value === 'none' ? 'none' : ''; }
+			encSel.addEventListener('change', syncKey); syncKey();
+			div.querySelector('.wz-eye').addEventListener('click', function () {
+				keyIn.type = keyIn.type === 'password' ? 'text' : 'password';
+				this.innerHTML = keyIn.type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+			});
+			div.querySelector('.wz-act').addEventListener('click', function () {
+				var btn = this, ssid = div.querySelector('.wz-ssid').value.trim(), enc = encSel.value, key = keyIn.value;
+				if (!ssid) { alert('Wi-Fi 名称不能为空'); return; }
+				if (enc !== 'none' && (key.length < 8 || key.length > 63)) { alert('Wi-Fi 密码需为 8–63 个字符'); return; }
+				if (!window.confirm('确认修改 ' + w.band + ' Wi-Fi？\n保存后无线将重启，通过 Wi-Fi 连接的设备会短暂掉线。')) return;
+				btn.disabled = true; btn.textContent = '保存中…';
+				var body = new URLSearchParams({ section: w.section, ssid: ssid, encryption: enc, key: enc === 'none' ? '' : key, apply: '1' });
+				xhr('/cgi-bin/mwrt-wifi', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() },
+					function (d) {
+						btn.disabled = false; btn.textContent = '保存';
+						window.alert(d && d.ok ? (d.applied ? '已保存，Wi-Fi 正在重启，请稍等约 10 秒后重连。' : '已保存（配置未变化）。') : ('保存失败：' + ((d && d.error) || '未知错误')));
+					},
+					function () { btn.disabled = false; btn.textContent = '保存'; window.alert('请求失败，请重试'); });
+			});
+		});
+	}
+	renderWifi(S.wifi);
+
+	/* ---------- 2. SIM ---------- */
+	var simTimer = null;
+	function renderSim(st) {
+		if (!st || !st.ok) return;
+		var chip = $('sim-chip');
+		var cur = st.cur, mode = st.mode;
+		var lines = st.lines || [];
+		var main = null;
+		for (var i = 0; i < lines.length; i++) { if (lines[i].gateway) main = lines[i]; }
+		if (!main && lines[0]) main = lines[0];
+		chip.textContent = (main && main.up) ? '已连接' : '未连接';
+		chip.className = 'wz-chip ' + ((main && main.up) ? 'on' : 'off');
+		var dot = $('sim-dot'); dot.className = 'wz-dot' + ((main && main.up) ? '' : ' off');
+		var txt = '使用卡 ' + cur + '（' + ((st.slots[cur - 1] || {}).label || '卡槽') + '）';
+		if (main && main.up) {
+			txt = '<b>' + esc(main.operator || '蜂窝') + '</b> · ' + esc(main.sim_name || ('卡 ' + cur)) + ' · RSRP ' + esc(main.rsrp || '--') + ' dBm · 在线';
+		} else {
+			txt += ' · 蜂窝未连接';
+		}
+		txt += ' · ' + (mode === 0 ? '自动选卡' : '手动固定');
+		$('sim-now-txt').innerHTML = txt;
+		var host = $('sim-slots'); host.innerHTML = '';
+		(st.slots || []).forEach(function (sl) {
+			var b = document.createElement('button');
+			b.type = 'button'; b.className = 'wz-slot' + (sl.n === cur ? ' cur' : '');
+			b.innerHTML = '<div class="t"><i class="fas fa-sim-card" aria-hidden="true"></i>卡 ' + sl.n + '</div><div class="s">' + esc(sl.label) + (sl.n === cur ? ' · 使用中' : '') + '</div>';
+			b.disabled = (sl.n === cur);
+			b.addEventListener('click', function () {
+				if (!window.confirm('切换到卡 ' + sl.n + '？\n切换期间蜂窝会断线 10–30 秒，使用蜂窝上网的设备会短暂掉线。')) return;
+				switchSim(sl.n, b);
+			});
+			host.appendChild(b);
+		});
+		var tgl = $('sim-auto');
+		tgl.classList.toggle('on', mode === 0);
+		tgl.setAttribute('aria-checked', mode === 0 ? 'true' : 'false');
+		$('sim-auto-txt').textContent = mode === 0 ? '信号差时自动切换：开' : '信号差时自动切换：关';
+	}
+	function switchSim(n, btn) {
+		if (btn) { btn.disabled = true; }
+		xhr(base + '?action=sim_switch', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: 'sim=' + encodeURIComponent(n)
+		}, function (d) {
+			if (!d || !d.ok) { window.alert('切换失败：' + ((d && d.error) || '未知错误')); pollSim(3); return; }
+			window.alert('切换指令已下发，蜂窝正在重连（10–30 秒），页面将自动刷新状态。');
+			pollSim(12);
+		}, function () { if (btn) btn.disabled = false; window.alert('请求失败，请重试'); });
+	}
+	function pollSim(times) {
+		if (simTimer) window.clearTimeout(simTimer);
+		if (!times) return;
+		xhr(base + '?action=sim_status', {}, function (d) {
+			renderSim(d && d.sim ? Object.assign({}, d.sim, { ok: d.ok }) : null);
+			simTimer = window.setTimeout(function () { pollSim(times - 1); }, 4000);
+		}, function () { simTimer = window.setTimeout(function () { pollSim(times - 1); }, 4000); });
+	}
+	$('sim-auto').addEventListener('click', function () {
+		var to = this.classList.contains('on') ? 1 : 0;
+		var tip = this;
+		tip.disabled = true;
+		xhr(base + '?action=sim_mode', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: 'mode=' + to
+		}, function (d) { tip.disabled = false; if (d && d.ok) renderSim({ ok: true, cur: (S.sim || {}).cur, mode: d.mode, max: (S.sim || {}).max, slots: (S.sim || {}).slots, lines: (S.sim || {}).lines }); }, function () { tip.disabled = false; });
+	});
+	renderSim(S.sim);
+
+	/* ---------- 3. OpenClash ---------- */
+	var ocTimer = null, ocTicks = 0;
+	function renderOc(st) {
+		if (!st || !st.ok) return;
+		var chip = $('oc-chip');
+		chip.textContent = st.updating ? '更新中…' : (st.running ? '运行中' : '已停止');
+		chip.className = 'wz-chip ' + (st.updating ? '' : (st.running ? 'on' : 'off'));
+		if (st.config) $('oc-cfg').textContent = st.config;
+		if (st.address && !$('oc-url').value) $('oc-url').value = st.address;
+	}
+	function pollOcLog(done) {
+		xhr(base + '?action=oc_log', {}, function (d) {
+			if (!d || !d.ok) return;
+			var box = $('oc-log');
+			box.style.display = 'block';
+			box.innerHTML = (d.lines || []).map(function (l) {
+				var cls = /失败|错误|error|warn/i.test(l) ? 'err' : (/成功|完成|restart|start/i.test(l) ? 'ok' : '');
+				return '<div class="' + cls + '">' + esc(l) + '</div>';
+			}).join('') || '<div>暂无日志</div>';
+			box.scrollTop = box.scrollHeight;
+			done(d);
+		});
+	}
+	$('oc-go').addEventListener('click', function () {
+		var btn = this, url = $('oc-url').value.trim();
+		if (!/^https?:\/\//i.test(url)) { window.alert('请输入以 http:// 或 https:// 开头的订阅链接'); return; }
+		btn.disabled = true; btn.textContent = '提交中…';
+		xhr(base + '?action=oc_sub', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: 'url=' + encodeURIComponent(url)
+		}, function (d) {
+			btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-download-alt" aria-hidden="true"></i> 保存并更新';
+			if (!d || !d.ok) { window.alert('保存失败：' + ((d && d.error) || '未知错误')); return; }
+			$('oc-cfg').textContent = d.config || '-';
+			window.alert('订阅已保存，开始后台更新配置，完成后 OpenClash 会自动重启生效。');
+			ocTicks = 0;
+			if (ocTimer) window.clearInterval(ocTimer);
+			ocTimer = window.setInterval(function () {
+				ocTicks++;
+				pollOcLog(function (d) {
+					if ((!d.updating && ocTicks > 1) || ocTicks > 48) {
+						window.clearInterval(ocTimer); ocTimer = null;
+						xhr(base + '?action=refresh', {}, function (s) { renderOc(s && s.oc); });
+					}
+				});
+			}, 2500);
+		}, function () { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-download-alt" aria-hidden="true"></i> 保存并更新'; window.alert('请求失败，请重试'); });
+	});
+	renderOc(S.oc);
+})();
+</script>
+<%+footer%>
