@@ -2,133 +2,158 @@
  MYOS 仪表盘首页 — manper 移植版
  上游: 561410590/immortalwrt-by-MYOS :: luci-theme-c2000max-ui
    dashboard.html (DOM 片段) + dashboard.js (C2000Dashboard.mount/update)
- 差异: 原版由 ucode + rpcd(c2000max.ui/qmodem) 供数;此处用 Lua + ubus 供数,
-       模组/SIM/温度等需厂商服务的适配项留空,卡片显示 "—"(模板自身设计)。
+
+ 数据: 原版走 rpcd c2000max.ui / qmodem;本机改用厂商 ubus 适配:
+   infocd cpestatus  → 模组(RSRP/SINR/频段/运营商/SIM/温度/型号/固件)
+   infocd runtime    → 整机温度 / CPU / 内存
+   network.interface → 上行接口
+   UCI wireless      → SSID(本机无 network.wireless ubus 对象)
+   /proc/net/arp     → 在线设备数
+ 自动刷新: 同一模板带 ?state=1 时只输出 JSON,前端每 10s 拉取并 update。
 -%>
-<%+header%>
 <%
 	local fs    = require "nixio.fs"
 	local util  = require "luci.util"
 	local jsonc = require "luci.jsonc"
 	local sys   = require "luci.sys"
+	local http  = require "luci.http"
 
-	local boardinfo = util.ubus("system", "board") or {}
 	local APP = "/overlay/nradio-apps/openwrt-luci-8080"
+	local boardinfo = util.ubus("system", "board") or {}
+
+	-- ==================== 数据装配 ====================
+	local function build_state()
+		local state = {}
+		local ok_sys, sysinfo = pcall(util.ubus, "system", "info")
+		state.system = (ok_sys and sysinfo) or {}
+		local ok_net, netdump = pcall(util.ubus, "network.interface", "dump")
+		state.network = (ok_net and netdump) or {}
+
+		-- 无线: 本固件无 network.wireless ubus 对象, 从 UCI 合成
+		local uci = require "luci.model.uci".cursor()
+		local wireless = {}
+		uci:foreach("wireless", "wifi-device", function(dev)
+			local rname = dev[".name"] or ""
+			local radio = { up = (dev.disabled ~= "1"), interfaces = {} }
+			uci:foreach("wireless", "wifi-iface", function(ifc)
+				if ifc.device == rname then
+					radio.interfaces[#radio.interfaces + 1] = {
+						config = { ssid = ifc.ssid, disabled = ifc.disabled }
+					}
+				end
+			end)
+			wireless[rname] = radio
+		end)
+		state.wireless = wireless
+
+		local cnt = fs.readfile("/proc/sys/net/netfilter/nf_conntrack_count")
+		state.sessions = { count = cnt and (cnt:gsub("%s", "")) or nil }
+
+		-- 在线设备: ARP 表有效 MAC 去重
+		local seen, clients = {}, 0
+		for _, l in ipairs(util.split(sys.exec("cat /proc/net/arp 2>/dev/null") or "")) do
+			local mac = l:match("%s+0x%x+%s+0x%x+%s+([0-9a-fA-F:]+)%s")
+			if mac and mac ~= "00:00:00:00:00:00" and not seen[mac:lower()] then
+				seen[mac:lower()] = true
+				clients = clients + 1
+			end
+		end
+		state.clients = { available = true, count = clients }
+
+		-- 厂商接口
+		local function ubus_call(obj, method, args)
+			local cmd = "ubus call " .. obj .. " " .. method
+			if args then cmd = cmd .. " '" .. args .. "'" end
+			local raw = sys.exec(cmd .. " 2>/dev/null") or ""
+			local ok, data = pcall(jsonc.parse, raw)
+			return (ok and type(data) == "table") and data or nil
+		end
+
+		local cell
+		for _, slot in ipairs({ "1", "2" }) do
+			local r = ubus_call("infocd", "cpestatus", '{"name":"' .. slot .. '"}')
+			local st = r and r.result and r.result[1] and r.result[1].status
+			if st and st.rsrp and st.rsrp ~= "" then cell = st break end
+			cell = cell or st
+		end
+		local rt = ubus_call("infocd", "runtime")
+		local g = rt and rt.global or {}
+
+		state.identity = { model = boardinfo.model or "NRadio C2000" }
+
+		if cell then
+			local entries = {}
+			local function add(k, v)
+				if v ~= nil and v ~= "" then entries[#entries + 1] = { key = k, value = tostring(v) } end
+			end
+			add("network_mode", cell.mode)
+			add("rsrp", cell.rsrp)
+			add("sinr", cell.sinr)
+			add("rsrq", cell.rsrq)
+			add("band", cell.band)
+			add("NR_BAND", cell.band)
+			add("ISP", cell.isp_company)
+			add("MCC", (cell.imsi or ""):sub(1, 3))
+			add("MNC", (cell.imsi or ""):sub(4, 5))
+			add("PCI", cell.pci)
+			add("Cell ID", cell.cell)
+			-- 模组温度用官方 model_temp(模组上报), 非整机 device_temp
+			add("temperature", cell.model_temp or g.device_temp)
+			add("name", cell.model)
+			add("revision", cell.firmware or cell.revision)
+			state.modemBase = { entries = entries, receivedAt = os.time() * 1000, section = "1" }
+
+			local slot_key = "internal"
+			if tostring(cell.simno) == "1" then slot_key = "external1"
+			elseif tostring(cell.simno) == "2" then slot_key = "external2" end
+			state.sim = {
+				carrier = cell.sim_company or cell.isp_company,
+				sim_label = cell.sim_name,
+				sim_name = cell.sim_name,
+				current_slot = slot_key,
+				slot = tonumber(cell.simno),
+				iccid = cell.iccid,
+				flow_total = tonumber(cell.sim_flow),
+				flow_month = tonumber(cell.sim_mon),
+			}
+		end
+
+		-- 整机温度(设备温度卡)
+		local sensors = {}
+		if tonumber(g.device_temp) then
+			sensors.cpu_sensor = true
+			sensors.cpu_temp = tonumber(g.device_temp) * 1000
+		end
+		if tonumber(g.wifi_temp) then
+			sensors.wifi_temps = { { milli_c = tonumber(g.wifi_temp) * 1000 } }
+		end
+		if not sensors.cpu_sensor then
+			local cput = fs.readfile("/sys/class/thermal/thermal_zone0/temp")
+			if cput then
+				local mv = tonumber(cput) or 0
+				sensors.cpu_sensor = true
+				sensors.cpu_temp = mv > 1000 and mv or mv * 1000
+			end
+		end
+		state.sensors = sensors
+
+		return state
+	end
+
+	local state = build_state()
+
+	-- ==================== JSON 轮询端点 ====================
+	if http.formvalue("state") == "1" then
+		http.prepare_content("application/json")
+		http.write(jsonc.stringify(state))
+		return
+	end
+-%>
+<%+header%>
+<%
 	local raw = fs.readfile(APP .. "/www/luci-static/c2000max-ui/dashboard.html") or ""
-	-- 相对资源改绝对路径(原版 max.js 在客户端做同样处理)
 	raw = raw:gsub('src="assets/', 'src="/luci-static/c2000max-ui/assets/')
 	write('<div class="c2000-dashboard-root">' .. raw .. '</div>')
-
-	-- 数据装配(Lua 侧, 对应 max.js 的 rpc 调用)
-	local state = {}
-	local ok_sys, sysinfo = pcall(util.ubus, "system", "info")
-	state.system = (ok_sys and sysinfo) or {}
-	local ok_net, netdump = pcall(util.ubus, "network.interface", "dump")
-	state.network = (ok_net and netdump) or {}
-
-	-- 无线: 本固件无 network.wireless ubus 对象, 从 UCI 合成 data.js 期望的形状
-	-- { radioX: { up=true, interfaces=[{ config={ ssid=... } }] } }
-	local uci = require "luci.model.uci".cursor()
-	local wireless = {}
-	uci:foreach("wireless", "wifi-device", function(dev)
-		local rname = dev[".name"] or ""
-		local radio = { up = (dev.disabled ~= "1"), interfaces = {} }
-		uci:foreach("wireless", "wifi-iface", function(ifc)
-			if ifc.device == rname then
-				radio.interfaces[#radio.interfaces + 1] = {
-					config = { ssid = ifc.ssid, disabled = ifc.disabled }
-				}
-			end
-		end)
-		wireless[rname] = radio
-	end)
-	state.wireless = wireless
-
-	local cnt = fs.readfile("/proc/sys/net/netfilter/nf_conntrack_count")
-	state.sessions = { count = cnt and (cnt:gsub("%s", "")) or nil }
-
-	-- 已连接设备: ARP 表中有效 MAC 去重
-	local seen, clients = {}, 0
-	for _, l in ipairs(util.split(sys.exec("cat /proc/net/arp 2>/dev/null") or "")) do
-		local mac = l:match("%s+0x%x+%s+0x%x+%s+([0-9a-fA-F:]+)%s")
-		if mac and mac ~= "00:00:00:00:00:00" and not seen[mac:lower()] then
-			seen[mac:lower()] = true
-			clients = clients + 1
-		end
-	end
-	state.clients = { available = true, count = clients }
-
-	-- === 厂商数据适配层(infocd / atsdcpe), 对应上游 c2000max.ui + qmodem ===
-	local function ubus_call(obj, method, args)
-		local cmd = "ubus call " .. obj .. " " .. method
-		if args then cmd = cmd .. " '" .. args .. "'" end
-		local raw = sys.exec(cmd .. " 2>/dev/null") or ""
-		local ok, data = pcall(jsonc.parse, raw)
-		return (ok and type(data) == "table") and data or nil
-	end
-
-	-- 蜂窝状态(取第一个可用卡槽)
-	local cell
-	for _, slot in ipairs({ "1", "2" }) do
-		local r = ubus_call("infocd", "cpestatus", '{"name":"' .. slot .. '"}')
-		local st = r and r.result and r.result[1] and r.result[1].status
-		if st and st.rsrp and st.rsrp ~= "" then cell = st break end
-		cell = cell or (r and r.result and r.result[1] and r.result[1].status) or cell
-	end
-
-	-- 运行时: CPU/内存/温度
-	local rt = ubus_call("infocd", "runtime")
-	local g = rt and rt.global or {}
-
-	if cell then
-		local entries = {}
-		local function add(k, v) if v ~= nil and v ~= "" then entries[#entries + 1] = { key = k, value = tostring(v) } end end
-		add("network_mode", cell.mode)
-		add("rsrp", cell.rsrp)
-		add("sinr", cell.sinr)
-		add("rsrq", cell.rsrq)
-		add("band", cell.band)
-		add("NR_BAND", cell.band)
-		add("ISP", cell.isp_company)
-		add("MCC", (cell.imsi or ""):sub(1, 3))
-		add("MNC", (cell.imsi or ""):sub(4, 5))
-		add("PCI", cell.pci)
-		add("Cell ID", cell.cell)
-		add("temperature", g.device_temp)
-		-- 模组卡片: name→型号, revision→固件版本
-		add("name", cell.model)
-		add("revision", cell.firmware or cell.revision)
-		state.modemBase = { entries = entries, receivedAt = os.time() * 1000, section = "1" }
-		state.sim = {
-			carrier = cell.isp_company,
-			sim_label = cell.sim_company,
-			sim_name = cell.sim_company,
-		}
-		state.identity = { model = boardinfo.model or "NRadio C2000" }
-	else
-		state.identity = { model = boardinfo.model or "NRadio C2000" }
-	end
-	if g.device_temp then state.modem = { temperature = g.device_temp } end
-
-	-- 温度: 厂商 runtime 优先, 退回 thermal 区
-	local sensors = {}
-	if tonumber(g.device_temp) then
-		sensors.cpu_sensor = true
-		sensors.cpu_temp = tonumber(g.device_temp) * 1000
-	end
-	if tonumber(g.wifi_temp) then
-		sensors.wifi_temps = { { milli_c = tonumber(g.wifi_temp) * 1000 } }
-	end
-	if not sensors.cpu_sensor then
-		local cput = fs.readfile("/sys/class/thermal/thermal_zone0/temp")
-		if cput then
-			local mv = tonumber(cput) or 0
-			sensors.cpu_sensor = true
-			sensors.cpu_temp = mv > 1000 and mv or mv * 1000
-		end
-	end
-	state.sensors = sensors
-
 	write('<script>window.__MYOS_STATE__=' .. jsonc.stringify(state) .. ';</script>')
 %>
 <script>
@@ -141,6 +166,18 @@
 		return '/cgi-bin/luci/' + parts.join('/');
 	});
 	dashboard.update(window.__MYOS_STATE__ || {});
+
+	/* 每 10s 拉取一次状态(与上游 poll.add(refresh,10) 一致) */
+	var url = '/cgi-bin/luci/admin/status/details?state=1';
+	function refresh() {
+		if (document.hidden) return;
+		fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.ok ? r.json() : null; })
+			.then(function (s) { if (s) dashboard.update(s); })
+			.catch(function () {});
+	}
+	setInterval(refresh, 10000);
+	document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
 })();
 </script>
 <%+footer%>
