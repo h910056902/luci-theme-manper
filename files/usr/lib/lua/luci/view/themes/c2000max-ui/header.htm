@@ -68,6 +68,113 @@
 	if admin then
 		menutree.children.admin = menu_tree(admin, "admin", 0)
 	end
+
+	-- ===== 服务端预渲染菜单(骨架) =====
+	-- 原因: 慢页面(如防火墙, 服务端 27s)时 uhttpd 先吐外壳, menu.js 要等脚本加载,
+	--       期间侧栏空白 → 观感上「菜单消失」。这里先渲染同结构骨架,
+	--       menu.js 就绪后会 replaceChildren 覆盖为带搜索/音色的完整版。
+	-- 图标映射与上游 menu.js 的 icons/iconTones 保持一致。
+	local ICON_BY_NAME = {
+		status = "grid", system = "settings", modem = "radio", services = "layers",
+		network = "globe", statistics = "chart", vpn = "shield", nas = "storage",
+		store = "package", istore = "package", software = "package", opkg = "package",
+		package = "package", packagemanager = "package", logout = "logout",
+		embedded = "sim", simcard = "sim", cpesel = "sim", qmodem = "radio", qmodemnext = "radio",
+		atwebserver = "terminal", ttyd = "terminal", terminal = "terminal",
+		fancontrol = "fan", firewall = "shield", openclash = "shield", passwall = "shield",
+		passwall2 = "shield", wireguard = "shield", openvpn = "shield", zerotier = "shield",
+		tailscale = "shield", ddns = "cloud", nros = "cloud", myosnros = "cloud",
+		myosupdate = "refresh", update = "refresh", flash = "upload", backup = "download",
+		wireless = "wifi", interfaces = "globe", dhcp = "globe", routes = "globe",
+		clients = "people", devices = "people", processes = "activity", realtime = "chart",
+		wrtbwmon = "chart", traffic = "chart", logs = "terminal", leds = "signal",
+	}
+	local ICON_TONES = {
+		home = "network", grid = "network", globe = "network", settings = "system",
+		radio = "device", layers = "device", device = "device", chart = "signal",
+		package = "device", plug = "device", shield = "network", storage = "device",
+		terminal = "system", fan = "signal", sim = "device", cloud = "network",
+		refresh = "signal", wifi = "network", people = "network", activity = "signal",
+		upload = "system", download = "network", signal = "signal",
+	}
+	-- 有 menu- 前缀变体的图标
+	local MENU_PREFIXED = {
+		shield = true, package = true, plug = true, storage = true,
+		terminal = true, fan = true, sim = true, cloud = true,
+	}
+
+	local function icon_for(key, title, grouped)
+		local name = (key or ""):lower():gsub("[-_]", "")
+		local ic = ICON_BY_NAME[name]
+		if ic then return ic end
+		local label = name .. " " .. (title or ""):lower()
+		if label:find("istore") or label:find("软件包") or label:find("软件商店") then return "package" end
+		if label:find("sim") or label:find("切卡") or label:find("内置卡") then return "sim" end
+		if label:find("fan") or label:find("风扇") then return "fan" end
+		if label:find("atweb") or label:find("ttyd") or label:find("terminal") or label:find("终端") then return "terminal" end
+		if label:find("qmodem") or label:find("modem") or label:find("模组") then return "radio" end
+		if label:find("openclash") or label:find("passwall") or label:find("vpn") or label:find("防火墙") or label:find("firewall") then return "shield" end
+		if label:find("ddns") or label:find("nros") or label:find("云控") or label:find("远程控制") then return "cloud" end
+		if label:find("固件更新") or label:find("在线升级") then return "refresh" end
+		if label:find("无线") or label:find("wireless") or label:find("wifi") then return "wifi" end
+		if label:find("流量") or label:find("带宽") or label:find("traffic") then return "chart" end
+		if label:find("日志") or label:find("log") then return "terminal" end
+		return grouped and "layers" or "plug"
+	end
+
+	local function icon_svg(ic)
+		local id = MENU_PREFIXED[ic] and ("menu-" .. ic) or ic
+		local tone = ICON_TONES[ic]
+		write('<svg class="icon' .. (tone and (" icon-tone-" .. tone) or "") .. '" aria-hidden="true"><use href="#' .. id .. '"/></svg>')
+	end
+
+	local function url_of(parts)
+		return "/cgi-bin/luci/" .. table.concat(parts, "/")
+	end
+
+	local function node_active(parts)
+		local want = table.concat(parts, "/")
+		return reqpath == want or reqpath:sub(1, #want + 1) == want .. "/"
+	end
+
+	local function render_skeleton(node_tbl, parts, depth, key)
+		local kids = {}
+		for _, cn in ipairs(disp.node_childs(node_tbl) or {}) do
+			local ch = node_tbl.nodes[cn]
+			if ch and not ch.hidden and ch.title then
+				kids[#kids + 1] = { name = cn, node = ch }
+			end
+		end
+		local title = util.striptags(tr(node_tbl.title) or "")
+		if #kids == 0 then
+			local cls = "menu-link" .. (depth == 0 and " menu-root-link" or "")
+			local act = node_active(parts) and " active" or ""
+			write('<a class="' .. cls .. act .. '" href="' .. url_of(parts) .. '" data-menu-item="true" data-path="' .. table.concat(parts, "/") .. '">')
+			icon_svg(icon_for(key or "", title, false))
+			write("<span>" .. util.pcdata(title) .. "</span></a>")
+			return
+		end
+		local open = ""
+		for _, ch in ipairs(kids) do
+			local cp = {}
+			for _, v in ipairs(parts) do cp[#cp + 1] = v end
+			cp[#cp + 1] = ch.name
+			if node_active(cp) then open = ' open' end
+		end
+		write('<details class="menu-group" data-menu-item="true" data-title="' .. util.pcdata(title) .. '" data-path="' .. table.concat(parts, "/") .. '"' .. open .. '>')
+		write('<summary class="menu-category">')
+		icon_svg(icon_for(key or "", title, true))
+		write("<span>" .. util.pcdata(title) .. "</span>")
+		icon_svg("chevron")
+		write('</summary><div class="menu-children">')
+		for _, ch in ipairs(kids) do
+			local cp = {}
+			for _, v in ipairs(parts) do cp[#cp + 1] = v end
+			cp[#cp + 1] = ch.name
+			render_skeleton(ch.node, cp, depth + 1, ch.name)
+		end
+		write("</div></details>")
+	end
 	local menutree_json = jsonc.stringify(menutree) or "{}"
 -%>
 <!doctype html>
@@ -114,7 +221,19 @@ window.L = {
 <aside class="sidebar" id="sidebar" aria-label="完整菜单">
   <div class="sidebar-heading"><div><strong>MYOS</strong><small><%=util.pcdata(model)%></small></div><button class="icon-button" id="close-menu" aria-label="关闭菜单"><svg class="icon"><use href="#close"/></svg></button></div>
   <label class="menu-search"><svg class="icon"><use href="#search"/></svg><input id="menu-search" type="search" placeholder="搜索菜单或插件" aria-label="搜索菜单或插件" autocomplete="off"></label>
-  <nav class="navigation" id="menu-tree" aria-label="分类与插件"></nav>
+  <nav class="navigation" id="menu-tree" aria-label="分类与插件"><%
+    write('<a class="nav-home nav-item" href="' .. homeurl .. '" data-preview-panel="home">')
+    icon_svg("home")
+    write("<span>首页</span></a>")
+    if admin then
+      for _, cn in ipairs(disp.node_childs(admin) or {}) do
+        local ch = admin.nodes[cn]
+        if ch and not ch.hidden and ch.title then
+          render_skeleton(ch, {"admin", cn}, 0, cn)
+        end
+      end
+    end
+  %></nav>
   <p class="menu-empty" hidden>未找到匹配的菜单或插件</p>
   <div class="sidebar-footer"><span><i></i> <%=util.pcdata(fwdesc ~= "" and fwdesc or "MYOS")%></span><small id="menu-source">LuCI · <%=util.pcdata(model)%></small></div>
 </aside>
