@@ -126,6 +126,9 @@ install_deps() { # install_deps <源目录> <清单输出文件>
 	msg "安装固件侧 Lua 依赖(覆盖前自动备份到 ${APP_ROOT}/.manper-backup-*)"
 	cp -a "${src_root}/luci/." "/usr/lib/lua/luci/" || return 1
 	[ -d "${src_root}/cloudd" ] && cp -a "${src_root}/cloudd" "/usr/lib/lua/" || true
+	# rpcd ACL 等宿主侧扩展文件
+	local share_src="${src_root%/usr/lib/lua}/usr/share"
+	[ -d "${share_src}" ] && cp -a "${share_src}/." "/usr/share/" 2>/dev/null
 	# 备份被覆盖的原文件
 	local bk="${APP_ROOT}/.manper-backup.$(date +%Y%m%d-%H%M%S)"
 	mkdir -p "${bk}"
@@ -179,8 +182,21 @@ do_install() {
 		msg "符号链接: 重建 ${n_ok} 个,跳过 ${n_skip} 个"
 	fi
 
-	# 3. 固件侧 Lua 依赖(nradio.lua / cloudd / nradio 控制器)
+	# 3. 固件侧 Lua 依赖(nradio.lua / cloudd / nradio 控制器 / argon-config)
 	install_deps "${SRC}/files/usr/lib/lua" "${APP_ROOT}/.manper-manifest" || return 1
+
+	# 3b. /etc/config/argon 默认配置(仅在缺失时写入,不覆盖用户设置)
+	if [ ! -e "/etc/config/argon" ] && [ -f "${SRC}/files/etc/config.argon.default" ]; then
+		cp "${SRC}/files/etc/config.argon.default" "/etc/config/argon"
+		msg "已写入 /etc/config/argon 默认配置(argon-config 可修改)"
+	fi
+
+	# 3c. 宿主机 /www/luci-static/argon 兼容链接
+	#     主题模板通过该路径读取 dark.css;同时让 80 端口原 LuCI 也能选用 argon
+	if [ ! -e "/www/luci-static/argon" ]; then
+		ln -s "${APP_DIR}/www/luci-static/argon" "/www/luci-static/argon" 2>/dev/null \
+			&& msg "已创建宿主链接 /www/luci-static/argon -> 实例目录"
+	fi
 
 	# 4. 权限: cgi-bin 可执行;历史备份脚本去掉执行位(避免被当作 CGI 直接调用)
 	chmod +x "${APP_DIR}/www/cgi-bin/luci" "${APP_DIR}/www/cgi-bin/mwrt-svc" "${APP_DIR}/www/cgi-bin/mwrt-wifi" 2>/dev/null
@@ -205,7 +221,7 @@ do_install() {
 	uci commit uhttpd
 
 	# 6. 清理实例调度缓存并重启 uhttpd
-	rm -f /tmp/luci-indexcache-bootstrap* 2>/dev/null
+	rm -f /tmp/luci-indexcache-bootstrap* /tmp/luci-indexcache-argon* 2>/dev/null
 	if [ -x "/etc/init.d/uhttpd" ]; then
 		/etc/init.d/uhttpd enable >/dev/null 2>&1
 		/etc/init.d/uhttpd restart >/dev/null 2>&1 || /etc/init.d/uhttpd start >/dev/null 2>&1
@@ -239,7 +255,7 @@ do_vendor_controllers() {
 		*) msg "已取消"; return 0;;
 	esac
 	install_deps "${SRC}/vendor-reference/usr/lib/lua" "${APP_ROOT}/.manper-manifest-vendor" || return 1
-	rm -f /tmp/luci-indexcache-bootstrap* 2>/dev/null
+	rm -f /tmp/luci-indexcache-bootstrap* /tmp/luci-indexcache-argon* 2>/dev/null
 	/etc/init.d/uhttpd restart >/dev/null 2>&1
 	msg "参考控制器安装完成"
 	cleanup_source
@@ -269,7 +285,7 @@ do_uninstall() {
 				cp -a "${bk}/${rel}" "/usr/lib/lua/${rel}"
 			elif [ -e "/usr/lib/lua/${rel}" ]; then
 				case "${rel}" in
-					controller/nradio/*|controller/nradio_adv/*|cloudd/*) rm -f "/usr/lib/lua/${rel}" ;;
+					controller/nradio/*|controller/nradio_adv/*|cloudd/*|controller/argon-config.lua|model/cbi/argon-config.lua|view/argon-config/*|i18n/argon-config.*.lmo) rm -f "/usr/lib/lua/${rel}" ;;
 				esac
 			fi
 		done < "${manifest}"
@@ -277,7 +293,11 @@ do_uninstall() {
 	done
 	rm -rf "${APP_ROOT}"/.manper-backup* 2>/dev/null
 	# 仅清空(不删)我们创建、且卸载后仍为空的厂商目录
-	rmdir /usr/lib/lua/cloudd /usr/lib/lua/luci/controller/nradio /usr/lib/lua/luci/controller/nradio_adv 2>/dev/null
+	rmdir /usr/lib/lua/cloudd /usr/lib/lua/luci/controller/nradio /usr/lib/lua/luci/controller/nradio_adv /usr/lib/lua/luci/view/argon-config 2>/dev/null
+	# 移除宿主机 /www/luci-static/argon 兼容链接(仅当指向本实例)
+	if [ -L "/www/luci-static/argon" ] && [ "$(readlink /www/luci-static/argon 2>/dev/null)" = "${APP_DIR}/www/luci-static/argon" ]; then
+		rm -f "/www/luci-static/argon"
+	fi
 
 	# 2. 移除 8080 实例目录(留一份 .removed 备份以防万一)
 	if [ -d "${APP_DIR}" ]; then

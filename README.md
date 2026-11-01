@@ -99,10 +99,12 @@ luci-theme-manper/
 ├── manper.sh                  # 一键部署脚本（安装/更新/卸载/状态）
 ├── files/                     # 部署到目标路由器的文件（按目标路径镜像存放）
 │   ├── overlay/nradio-apps/openwrt-luci-8080/
-│   │   ├── www/               # 8080 实例站点：cgi-bin 调度器、luci-static、fontawesome、logo
+│   │   ├── www/               # 8080 实例站点：cgi-bin 调度器、luci-static/argon(定制层)、router3d、fontawesome
 │   │   │   └── luci-static/symlinks.list   # 符号链接清单，部署时自动重建
-│   │   └── usr/lib/lua/luci/view/          # 实例私有视图（登录页/首页/蜂窝/Docker 等）
-│   └── usr/lib/lua/           # 固件侧 Lua 依赖（nradio.lua、cloudd、nradio 控制器）
+│   │   └── usr/lib/lua/luci/view/          # 实例私有视图（登录页/首页/蜂窝/Docker/themes/argon 模板）
+│   ├── usr/lib/lua/           # 固件侧依赖（nradio.lua、cloudd、nradio 控制器、argon-config 0.9）
+│   ├── usr/share/rpcd/acl.d/  # argon-config rpcd ACL
+│   └── etc/config.argon.default  # /etc/config/argon 默认配置（仅缺失时写入）
 ├── vendor-reference/          # nradio 固件侧参考控制器（admin/ 等，高级选项手动安装）
 ├── res/                       # README 预览图
 └── README.md
@@ -114,9 +116,21 @@ luci-theme-manper/
 
 ## 🛠️ 技术说明
 
+- **Argon 底层迁移（2026-11）**：主题底层已迁移至 [luci-theme-argon v2.4.3](https://github.com/jerrykuku/luci-theme-argon)（Lua 模板的最新版本，argon 3.x 为 ucode 模板、与 Lua LuCI 不兼容），并集成 **luci-app-argon-config 0.9**（CBI 版，适配老式 Lua LuCI）——8080 界面「系统 → Argon 主题设置」可配置主色调/透明度/毛玻璃/暗色模式。样式保持 manper 定制外观不变：`cascade.css`/`dark.css`/`mwrt-*` 定制层原样保留，2.4.3 的 cascade 备存于 `css/cascade-2.4.3.css` 供后续渐进切换
 - 8080 实例 = 独立 uhttpd 节点（`/etc/config/uhttpd` 中的 `openwrt8080` 段）+ 独立 docroot + 定制版 Lua CGI dispatcher（构建自己的菜单树，复用宿主机 Lua LuCI 运行时与控制器）
-- 私有视图层覆盖了登录页、首页、蜂窝、Docker、终端等页面；静态资源自带 bootstrap/router3d/fontawesome，其余通过 `symlinks.list` 链接宿主机资源
+- 私有视图层覆盖了登录页、首页、蜂窝、Docker、终端等页面；静态资源自带 argon(定制层)/router3d/fontawesome，其余通过 `symlinks.list` 链接宿主机资源
 - 源路由器为 OpenWrt 25.12-SNAPSHOT（mediatek/filogic, aarch64），但本项目是纯 Lua/静态资源，与 CPU 架构无关
+
+## 🔙 回滚
+
+部署脚本安装时自动把旧实例备份为 `/overlay/nradio-apps/openwrt-luci-8080.bak-<时间戳>`。
+若需手动回退到迁移前（老 bootstrap 底层）：
+
+```sh
+cp -a /overlay/nradio-apps/openwrt-luci-8080.bak-<时间戳>/. /overlay/nradio-apps/openwrt-luci-8080/
+rm -f /tmp/luci-indexcache-argon* /tmp/luci-indexcache-bootstrap*
+/etc/init.d/uhttpd restart
+```
 
 ## 🗂️ 引用与致谢
 

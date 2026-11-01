@@ -22,7 +22,7 @@ require "luci.sgi.cgi"
 do
 	local ok_n, fs = pcall(require, "nixio.fs")
 	if ok_n and fs then
-		local cache = "/tmp/luci-indexcache-bootstrap"
+		local cache = "/tmp/luci-indexcache-argon"
 		local cst = fs.stat(cache)
 		if cst then
 			local cmt = tonumber(cst.mtime) or 0
@@ -54,7 +54,8 @@ function parser.parse(path, ...)
 		-- So official view upgrades are followed automatically by removing
 		-- the same-named private file (prevents stale private view shadowing
 		-- the official new one -> white screen).
-		local kp_whitelist = name:match("^themes/bootstrap/")
+		local kp_whitelist = name:match("^themes/argon/")
+			or name:match("^themes/bootstrap/")
 			or name == "admin_status/nradio_details.htm"
 			or name == "admin_status/kp_sim_card.htm"
 			or name == "admin_status/kp_wizard.htm"
@@ -212,8 +213,10 @@ local function inject_plugin_menu(tree, admin)
 	end
 end
 
+-- argon 迁移(2026-11): 默认主题由 bootstrap(老 argon 1.8.4 分支)切换为 argon
+-- (基于 luci-theme-argon v2.4.3 底层 + manper 定制层)。保留 bootstrap 作为回退。
 local function set_bootstrap_theme(node)
-	node.mediaurlbase = "/luci-static/bootstrap"
+	node.mediaurlbase = "/luci-static/argon"
 	for _, child in pairs(node.nodes or {}) do
 		if type(child) == "table" then set_bootstrap_theme(child) end
 	end
@@ -399,8 +402,8 @@ end
 
 function luci.dispatcher.httpdispatch(request, prefix)
 	local config = require "luci.config"
-	config.main.mediaurlbase = "/luci-static/bootstrap"
-	config.themes = { Bootstrap = "/luci-static/bootstrap" }
+	config.main.mediaurlbase = "/luci-static/argon"
+	config.themes = { Argon = "/luci-static/argon", Bootstrap = "/luci-static/bootstrap" }
 	return original_httpdispatch(request, prefix)
 end
 
@@ -4313,11 +4316,11 @@ do
 				pcall(function() i18n = require "luci.i18n" end)
 				if not ok_u or type(util) ~= "table" then util = {} end
 
-				local media = "/luci-static/bootstrap"
+				local media = "/luci-static/argon"
 				pcall(function()
 					media = require("luci.config").main.mediaurlbase or media
 				end)
-				local theme = media:match("([^/]+)$") or "bootstrap"
+				local theme = media:match("([^/]+)$") or "argon"
 
 				local ok_d, disp = pcall(require, "luci.dispatcher")
 
@@ -4368,5 +4371,5 @@ do
 end
 -- KP-QUICKSTART-VIEWNS v3 END ============================================
 
-luci.dispatcher.indexcache = "/tmp/luci-indexcache-bootstrap"
+luci.dispatcher.indexcache = "/tmp/luci-indexcache-argon"
 luci.sgi.cgi.run()
