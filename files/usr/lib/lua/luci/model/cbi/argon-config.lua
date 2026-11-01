@@ -24,7 +24,10 @@ if nxfs.access('/etc/config/argon') then
 	blur_opacity_dark = uci:get_first('argon', 'global', 'transparency_dark')
 	mode = uci:get_first('argon', 'global', 'mode')
 	bing_background = uci:get_first('argon', 'global', 'bing_background')
+	-- manper 双主题: manper 定制层 | orig 原版 argon
+	ui_theme = uci:get_first('argon', 'global', 'ui_theme')
 end
+ui_theme = ui_theme or 'manper'
 
 function glob(...)
     local iter, code, msg = nxfs.glob(...)
@@ -65,7 +68,7 @@ o.rmempty = false
 o = s:option(ListValue, 'ui_theme', translate('UI Theme (8080)'))
 o:value('manper', 'manper 定制风格(星空登录/驾驶舱首页)')
 o:value('orig', 'Argon 原版(vanilla luci-theme-argon)')
-o.default = 'manper'
+o.default = ui_theme
 o.rmempty = false
 o.description = translate('Switch the 8080 UI between manper customized theme and vanilla luci-theme-argon. Takes effect immediately after saving.')
 
@@ -122,7 +125,10 @@ function br.handle(self, state, data)
     if (state == FORM_VALID and data.blur ~= nil and data.blur_dark ~= nil and data.transparency ~= nil and data.transparency_dark ~= nil and data.mode ~= nil) then
         nxfs.writefile('/tmp/aaa', data)
         for key, value in pairs(data) do
-            uci:set('argon','@global[0]',key,value)
+            -- 跳过按钮字段,避免把按钮文案写成 uci 选项(如 option save '保存更改')
+            if key ~= 'save' and key ~= 'upload' then
+                uci:set('argon','@global[0]',key,value)
+            end
         end 
         uci:commit('argon')
     end

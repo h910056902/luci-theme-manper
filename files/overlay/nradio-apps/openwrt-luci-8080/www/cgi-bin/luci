@@ -38,7 +38,8 @@ end
 do
 	local ok_n, fs = pcall(require, "nixio.fs")
 	if ok_n and fs then
-			local cache = "/tmp/luci-indexcache-argon"
+			-- 缓存按主题分键: 切换 ui_theme 后自然走另一份缓存,不依赖 mtime 比较
+		local cache = "/tmp/luci-indexcache-" .. active_theme
 			local cst = fs.stat(cache)
 			if cst then
 				local cmt = tonumber(cst.mtime) or 0
@@ -4397,5 +4398,5 @@ do
 end
 -- KP-QUICKSTART-VIEWNS v3 END ============================================
 
-luci.dispatcher.indexcache = "/tmp/luci-indexcache-argon"
+luci.dispatcher.indexcache = "/tmp/luci-indexcache-" .. active_theme
 luci.sgi.cgi.run()
