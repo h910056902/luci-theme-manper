@@ -14,6 +14,28 @@
 <script src="<%=media%>/menu.js?v=1.0.17"></script>
 <script src="<%=media%>/shell.js?v=1.0.17"></script>
 <script>
+/* manper: 子页面补齐 —— LuCI 旧控件里依赖 luci.js 的占位内容 */
+(function () {
+	'use strict';
+	// 1) 「正在收集数据…」= LuCI localtime 组件等待 JS 填充, 这里用浏览器时间补上
+	function paintLocalTime() {
+		var nodes = document.querySelectorAll('#maincontent .cbi-value-field, #maincontent .cbi-value');
+		var now = new Date();
+		var text = now.toLocaleString('zh-CN', { hour12: false });
+		nodes.forEach(function (n) {
+			if (/正在收集数据/.test(n.textContent)) n.textContent = text;
+		});
+	}
+	paintLocalTime();
+	document.addEventListener('DOMContentLoaded', paintLocalTime);
+
+	// 2) 旧式「应用/保存/重置」按钮补上 MYOS 按钮语义
+	document.querySelectorAll('.cbi-button-save').forEach(function (b) { b.classList.add('ui-button'); });
+	document.querySelectorAll('.cbi-button-apply').forEach(function (b) { b.classList.add('ui-button','primary'); });
+	document.querySelectorAll('.cbi-button-reset').forEach(function (b) { b.classList.add('ui-button','ghost'); });
+})();
+</script>
+<script>
 /* manper: 注入服务端菜单树 → menu.js 用上游图标映射/搜索/分组渲染 */
 (function () {
 	if (window.C2000Menu && window.__MYOS_MENU__) {

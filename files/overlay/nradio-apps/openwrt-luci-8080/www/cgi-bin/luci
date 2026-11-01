@@ -256,7 +256,14 @@ function luci.dispatcher.createtree()
 	if active_theme == "myos" then
 		local m_admin = tree.nodes and tree.nodes.admin
 		if m_admin then
-			m_admin.sysauth_template = "themes/c2000max-ui/sysauth"
+			-- 登录页随主题: 主题模板缺失时自动回退原厂登录页(登录是生命线,不能 500)
+			local ok_fs, lfs = pcall(require, "nixio.fs")
+			local theme_login = "/usr/lib/lua/luci/view/themes/c2000max-ui/sysauth.htm"
+			local priv_login = private_viewdir .. "/themes/c2000max-ui/sysauth.htm"
+			local has_login = ok_fs and lfs and (lfs.access(theme_login) or lfs.access(priv_login))
+			m_admin.sysauth_template = has_login
+				and "themes/c2000max-ui/sysauth"
+				or "sysauth"
 			m_admin.nodes = m_admin.nodes or {}
 			local m_status = m_admin.nodes.status
 			if m_status then

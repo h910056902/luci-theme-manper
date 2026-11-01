@@ -1,0 +1,162 @@
+/* manper 子页面补丁层 — 让 LuCI 旧式控件统一到 MYOS UI 风格
+   加载顺序: 在上游 luci-components.css / luci-adapter.css 之后, 只做补齐与覆写。 */
+
+/* ---------- 勾选框: 原生方块 → MYOS 开关 ---------- */
+.c2000-ui input[type="checkbox"] {
+	appearance: none;
+	-webkit-appearance: none;
+	position: relative;
+	display: inline-block;
+	width: 44px;
+	height: 24px;
+	margin: 0 8px 0 0;
+	border: 1px solid var(--control-border, #cfd8e3);
+	border-radius: 999px;
+	background: var(--surface-soft, #eef2f7);
+	cursor: pointer;
+	vertical-align: middle;
+	transition: background .18s ease, border-color .18s ease;
+	flex: none;
+}
+.c2000-ui input[type="checkbox"]::after {
+	content: "";
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: #fff;
+	box-shadow: 0 1px 3px rgba(16, 24, 40, .28);
+	transition: transform .18s ease;
+}
+.c2000-ui input[type="checkbox"]:checked {
+	background: var(--accent, #2f6df6);
+	border-color: var(--accent, #2f6df6);
+}
+.c2000-ui input[type="checkbox"]:checked::after {
+	transform: translateX(20px);
+}
+.c2000-ui input[type="checkbox"]:focus-visible {
+	outline: 2px solid var(--accent, #2f6df6);
+	outline-offset: 2px;
+}
+.c2000-ui input[type="checkbox"]:disabled {
+	opacity: .5;
+	cursor: not-allowed;
+}
+
+/* 单选: 圆形, 不做开关 */
+.c2000-ui input[type="radio"] {
+	appearance: none;
+	-webkit-appearance: none;
+	width: 20px;
+	height: 20px;
+	border: 2px solid var(--control-border, #cfd8e3);
+	border-radius: 50%;
+	background: var(--surface, #fff);
+	cursor: pointer;
+	vertical-align: middle;
+	margin: 0 8px 0 0;
+	position: relative;
+}
+.c2000-ui input[type="radio"]:checked {
+	border-color: var(--accent, #2f6df6);
+}
+.c2000-ui input[type="radio"]:checked::after {
+	content: "";
+	position: absolute;
+	inset: 3px;
+	border-radius: 50%;
+	background: var(--accent, #2f6df6);
+}
+
+/* ---------- CBI 值行: 标签左对齐 + 分隔线更轻 ---------- */
+.c2000-ui .cbi-value {
+	padding: 10px 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 16px;
+	align-items: center;
+}
+.c2000-ui .cbi-value-title {
+	float: none;
+	display: block;
+	width: 220px;
+	max-width: 100%;
+	padding: 0;
+	text-align: left;
+	color: var(--text-secondary, #5b6b82);
+	font-size: var(--text-sm, 14px);
+}
+.c2000-ui .cbi-value-field {
+	flex: 1 1 260px;
+	min-width: 0;
+}
+@media (max-width: 700px) {
+	.c2000-ui .cbi-value-title { width: 100%; }
+}
+
+/* ---------- 页面标题 / 描述 ---------- */
+.c2000-ui .luci-content > h2 {
+	margin: 0 0 4px;
+	font-size: 22px;
+	font-weight: 700;
+	letter-spacing: .01em;
+}
+.c2000-ui .luci-content > p {
+	margin: 0 0 16px;
+	color: var(--text-secondary, #5b6b82);
+}
+
+/* ---------- 旧式字段集/表格: 卡片化 ---------- */
+.c2000-ui fieldset.cbi-section {
+	border: 1px solid var(--border, #e3e9f2);
+	border-radius: var(--radius-lg, 16px);
+	background: var(--surface, #fff);
+	margin: 0 0 16px;
+	padding: 4px 18px;
+}
+.c2000-ui legend {
+	font-weight: 650;
+	font-size: 15px;
+	padding: 0 6px;
+	color: var(--text, #16233a);
+}
+.c2000-ui .cbi-section-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+.c2000-ui .cbi-section-table th,
+.c2000-ui .cbi-section-table td {
+	padding: 10px 8px;
+	text-align: left;
+	border-bottom: 1px solid var(--border, #eef2f7);
+}
+.c2000-ui .cbi-section-table tr:last-child td {
+	border-bottom: 0;
+}
+
+/* ---------- 代码块/文本域 ---------- */
+.c2000-ui textarea,
+.c2000-ui .cbi-input-textarea {
+	width: 100%;
+	min-height: 120px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 13px;
+	line-height: 1.55;
+	border: 1px solid var(--control-border, #cfd8e3);
+	border-radius: var(--radius-md, 10px);
+	background: var(--surface-soft, #f7f9fc);
+	padding: 10px 12px;
+	color: var(--text, #16233a);
+}
+
+/* ---------- 提示块 ---------- */
+.c2000-ui .alert-message {
+	border-radius: var(--radius-md, 10px);
+	border: 1px solid var(--border, #e3e9f2);
+	background: var(--surface-soft, #f7f9fc);
+	padding: 12px 14px;
+	margin: 0 0 16px;
+}

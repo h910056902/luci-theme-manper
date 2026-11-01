@@ -39,7 +39,8 @@
 	end
 
 	local function menu_tree(node_tbl, name, depth)
-		local out = { name = name, title = tr(node_tbl.title) or name }
+		-- striptags: 部分菜单标题含 <abbr title=...> 等标签, 会原样显示在侧栏
+		local out = { name = name, title = util.striptags(tr(node_tbl.title) or name) }
 		if node_tbl.order then out.order = node_tbl.order end
 		if node_tbl.hidden then out.hidden = true end
 		if depth < 4 and node_tbl.nodes then
@@ -97,6 +98,7 @@ window.L = {
 <link rel="stylesheet" href="<%=media%>/luci-adapter.css?v=1.0.17">
 <link rel="stylesheet" href="<%=media%>/luci-components.css?v=1.0.17">
 <link rel="stylesheet" href="<%=media%>/density.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/manper-subpage.css?v=1.0.17">
 <script src="/luci-static/resources/cbi.js"></script>
 <script src="<%=media%>/data.js?v=1.0.17"></script>
 <script src="<%=media%>/dashboard.js?v=1.0.17"></script>
