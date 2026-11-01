@@ -474,17 +474,21 @@ end
 local path_info = os.getenv("PATH_INFO") or ""
 local request_method = os.getenv("REQUEST_METHOD") or ""
 
--- KP-MYOS-SWITCH: manper 模式下厂商路由不暴露(重定向到驾驶舱);
--- myos 模式放行 /nradio/* 与 /nradioadv/*, 与原厂固件行为一致
-if active_theme ~= "myos" and request_method == "GET" and (
+-- KP-MYOS-SWITCH: 根路径/管理入口始终重定向到实例首页
+--   原因: /cgi-bin/luci/ 在未登录时只渲染主题外壳(无登录表单), 会让"退出登录"落到空页面;
+--         /admin/status/details 未登录时才会走 sysauth 渲染登录页。
+-- 厂商路由(/nradio*、/nradioadv*)仅在 manper 模式下拦截(隐藏), myos 模式放行。
+if request_method == "GET" and (
 	path_info == "" or
 	path_info == "/" or
 	path_info == "/admin" or
 	path_info == "/admin/" or
-	path_info == "/nradio" or
-	path_info:match("^/nradio/") or
-	path_info == "/nradioadv" or
-	path_info:match("^/nradioadv/")
+	(active_theme ~= "myos" and (
+		path_info == "/nradio" or
+		path_info:match("^/nradio/") or
+		path_info == "/nradioadv" or
+		path_info:match("^/nradioadv/")
+	))
 ) then
 	io.write("Status: 302 Found\r\n")
 	io.write("Location: /cgi-bin/luci/admin/status/details\r\n")
