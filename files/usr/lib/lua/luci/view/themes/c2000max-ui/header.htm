@@ -1,0 +1,134 @@
+<%#
+ MYOS UI (c2000max-ui) — manper 移植版 Lua 外壳
+ 上游: 561410590/immortalwrt-by-MYOS :: luci-theme-c2000max-ui (Apache-2.0)
+ 说明: 上游为 ucode 模板,本文件是等价 Lua 实现,保留相同 DOM 结构/类名;
+       菜单/搜索/侧栏由上游 menu.js 客户端渲染(与仓库行为一致),树数据由服务端注入。
+-%>
+<%
+	local util = require "luci.util"
+	local http = require "luci.http"
+	local disp = require "luci.dispatcher"
+	local fs   = require "nixio.fs"
+	local jsonc = require "luci.jsonc"
+
+	local boardinfo = util.ubus("system", "board") or {}
+	local hostname = boardinfo.hostname or "MYOS"
+	local model    = boardinfo.model or "NRadio C2000"
+	local fwdesc   = (boardinfo.release and boardinfo.release.description) or ""
+	local media    = "/luci-static/c2000max-ui"
+	local APP      = "/overlay/nradio-apps/openwrt-luci-8080"
+
+	http.prepare_content("text/html; charset=UTF-8")
+
+	local node = disp.context.dispatched
+	local reqpath = table.concat(disp.context.request or {}, "/")
+	local homeurl = disp.build_url("admin", "status", "details")
+
+	-- 全量上游图标 sprite(含 menu-* 菜单图标, 供 menu.js 的 use href 使用)
+	local sprite = fs.readfile(APP .. "/www/luci-static/c2000max-ui/icons.svg.htm") or ""
+
+	-- 菜单树: 序列化为上游 menu.js 期望的结构(children 对象表 + name/title/order/hidden/action)
+	-- 官方 menu.d 的 title 是英文 key: 显式按当前请求语言翻译
+	-- (调度树缓存可能是在英文环境下建的, 直接用 translate 会漏译)
+	local i18n = require "luci.i18n"
+	pcall(function() i18n.setlanguage(luci.i18n.context.lang) end)
+	local function tr(s)
+		if not s then return s end
+		local ok, v = pcall(i18n.translate, s)
+		return (ok and v) or s
+	end
+
+	local function menu_tree(node_tbl, name, depth)
+		local out = { name = name, title = tr(node_tbl.title) or name }
+		if node_tbl.order then out.order = node_tbl.order end
+		if node_tbl.hidden then out.hidden = true end
+		if depth < 4 and node_tbl.nodes then
+			local kids, keyed = {}, {}
+			for _, cn in ipairs(disp.node_childs(node_tbl) or {}) do
+				local ch = node_tbl.nodes[cn]
+				if ch and not ch.hidden and ch.title then
+					local k = menu_tree(ch, cn, depth + 1)
+					kids[#kids + 1] = k
+					keyed[k.name] = k
+				end
+			end
+			if #kids > 0 then
+				out.children = keyed
+				-- 有子节点时: auto/无 target 的父节点 = firstchild(不渲染自身入口)
+				out.action = { type = (node_tbl.auto or not node_tbl.target) and "firstchild" or "real" }
+			end
+		end
+		return out
+	end
+
+	local tree = disp.node()
+	local admin = tree and tree.nodes and tree.nodes.admin
+	local menutree = { name = "root", children = {} }
+	if admin then
+		menutree.children.admin = menu_tree(admin, "admin", 0)
+	end
+	local menutree_json = jsonc.stringify(menutree) or "{}"
+-%>
+<!doctype html>
+<html lang="<%=luci.i18n.context.lang%>">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#eef3f8">
+<title><%=util.pcdata(hostname)%> · <%=node and util.pcdata(translate(node.title or "")) or "MYOS"%></title>
+<script>
+/* manper L shim: 供上游 shell.js 的 L.url / theme.js 的 L.env.media 使用
+   (故意不提供 require —— menu.js 将走 setTree 注入路径) */
+window.L = {
+	url: function () {
+		var p = [].slice.call(arguments).filter(function (x) { return x !== undefined && x !== null && x !== ''; });
+		return '/cgi-bin/luci/' + p.join('/');
+	},
+	env: { media: '<%=media%>', dispatchpath: [<%=reqpath ~= "" and ("'" .. util.pcdata(reqpath) .. "'") or ""%>] }
+};
+</script>
+<script src="<%=media%>/theme.js?v=1.0.17"></script>
+<link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+<link rel="stylesheet" href="<%=media%>/tokens.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/components.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/styles.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/c2000max.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/luci-adapter.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/luci-components.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/density.css?v=1.0.17">
+<script src="/luci-static/resources/cbi.js"></script>
+<script src="<%=media%>/data.js?v=1.0.17"></script>
+<script src="<%=media%>/dashboard.js?v=1.0.17"></script>
+</head>
+<body class="c2000-ui lang_<%=luci.i18n.context.lang%>" data-page="<%=util.pcdata(reqpath)%>" data-home-url="<%=homeurl%>" data-device-model="<%=util.pcdata(model)%>">
+<a class="skip-link" href="#maincontent">跳到内容</a>
+<%=sprite%>
+<script>window.__MYOS_MENU__=<%=menutree_json%>;</script>
+
+<button class="header-menu icon-button" data-menu-toggle aria-controls="sidebar" aria-expanded="false" aria-label="打开完整菜单"><svg class="icon"><use href="#menu"/></svg></button>
+<a class="brand" href="<%=homeurl%>" aria-label="MYOS 首页"><span>MY<span class="brand-max">OS</span></span><small><%=util.pcdata(model)%></small></a>
+<div class="sidebar-backdrop" hidden></div>
+<aside class="sidebar" id="sidebar" aria-label="完整菜单">
+  <div class="sidebar-heading"><div><strong>MYOS</strong><small><%=util.pcdata(model)%></small></div><button class="icon-button" id="close-menu" aria-label="关闭菜单"><svg class="icon"><use href="#close"/></svg></button></div>
+  <label class="menu-search"><svg class="icon"><use href="#search"/></svg><input id="menu-search" type="search" placeholder="搜索菜单或插件" aria-label="搜索菜单或插件" autocomplete="off"></label>
+  <nav class="navigation" id="menu-tree" aria-label="分类与插件"></nav>
+  <p class="menu-empty" hidden>未找到匹配的菜单或插件</p>
+  <div class="sidebar-footer"><span><i></i> <%=util.pcdata(fwdesc ~= "" and fwdesc or "MYOS")%></span><small id="menu-source">LuCI · <%=util.pcdata(model)%></small></div>
+</aside>
+
+<main class="main" id="home">
+  <div class="landscape" aria-hidden="true"><svg class="terrain" viewBox="0 0 1359 190" preserveAspectRatio="none"><defs><linearGradient id="terrain-fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d5dee9" stop-opacity=".72"/><stop offset=".58" stop-color="#e2e9f1" stop-opacity=".4"/><stop offset="1" stop-color="#eef2f7" stop-opacity="0"/></linearGradient></defs><path d="M0 0C155 17 272 73 450 76S657 96 827 67 1110-11 1359 9V190H0Z" fill="url(#terrain-fade)"/></svg><div class="horizon"></div></div>
+  <header class="topbar"><div id="indicators"></div>
+    <div class="theme-picker"><button type="button" class="theme-toggle icon-button" data-theme-toggle aria-label="外观模式" title="外观模式" aria-expanded="false" aria-controls="theme-options"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg></button>
+      <div class="theme-control" id="theme-options" role="group" aria-label="外观模式">
+        <div class="theme-festival" hidden><img alt="" width="42" height="42"><span><strong></strong><small></small></span></div>
+        <button type="button" data-theme-choice="light" aria-pressed="false" aria-label="浅色模式" title="浅色模式"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg><span class="theme-choice-label">浅色</span></button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false" aria-label="深色模式" title="深色模式"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg><span class="theme-choice-label">深色</span></button>
+        <button type="button" data-theme-choice="system" aria-pressed="true" aria-label="跟随系统" title="跟随系统"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg><span class="theme-choice-label">跟随系统</span></button>
+      </div>
+    </div>
+    <button class="account" id="account-button" aria-label="管理员菜单" aria-expanded="false" aria-controls="account-menu"><span class="avatar"><svg class="icon" aria-hidden="true"><use href="#user"/></svg></span><span>管理员</span><svg class="icon account-chevron" aria-hidden="true"><use href="#chevron"/></svg></button>
+    <div id="account-menu" class="account-menu" hidden><strong>管理员</strong><button type="button" id="logout-button">退出登录<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg></button></div>
+  </header>
+  <div id="maincontent" class="luci-content">

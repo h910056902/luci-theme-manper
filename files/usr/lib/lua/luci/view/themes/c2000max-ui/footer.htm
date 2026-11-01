@@ -1,0 +1,33 @@
+<%#
+ MYOS UI (c2000max-ui) — manper 移植版 Lua 尾模板
+ 上游: 561410590/immortalwrt-by-MYOS :: luci-theme-c2000max-ui (Apache-2.0)
+ 说明: 侧栏/搜索/抽屉交给上游 menu.js, 账户菜单交给 shell.js,
+       外观切换交给 theme.js —— 本文件只注入菜单树并挂载仪表盘。
+-%>
+<% local util = require "luci.util"
+   local boardinfo = util.ubus("system", "board") or {}
+   local fwdesc = (boardinfo.release and boardinfo.release.description) or "MYOS"
+   local media = "/luci-static/c2000max-ui" %>
+  </div>
+  <footer class="main-footer"><span class="firmware-compact"><%=util.pcdata(fwdesc)%></span><span class="firmware-version"><%=util.pcdata(fwdesc)%></span><span class="theme-credit">MYOS UI · C2000MAX UI by inst.</span></footer>
+</main>
+<script src="<%=media%>/menu.js?v=1.0.17"></script>
+<script src="<%=media%>/shell.js?v=1.0.17"></script>
+<script>
+/* manper: 注入服务端菜单树 → menu.js 用上游图标映射/搜索/分组渲染 */
+(function () {
+	if (window.C2000Menu && window.__MYOS_MENU__) {
+		window.C2000Menu.setTree(window.__MYOS_MENU__, {
+			url: function (path) { return '/cgi-bin/luci/' + path.join('/'); },
+			translate: function (v) { return v; },
+			homeUrl: document.body.dataset.homeUrl
+		});
+	}
+	/* 原厂 shell.js 末行的 L.require 会因缺少 luci.js 抛错, 静默兜底 */
+	window.addEventListener('error', function (e) {
+		if (e && /L\.require/.test(e.message || '')) e.preventDefault();
+	});
+})();
+</script>
+</body>
+</html>
