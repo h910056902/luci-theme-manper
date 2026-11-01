@@ -252,4 +252,42 @@ window.L = {
     <button class="account" id="account-button" aria-label="管理员菜单" aria-expanded="false" aria-controls="account-menu"><span class="avatar"><svg class="icon" aria-hidden="true"><use href="#user"/></svg></span><span>管理员</span><svg class="icon account-chevron" aria-hidden="true"><use href="#chevron"/></svg></button>
     <div id="account-menu" class="account-menu" hidden><strong>管理员</strong><button type="button" id="logout-button">退出登录<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg></button></div>
   </header>
-  <div id="maincontent" class="luci-content">
+  <div id="maincontent" class="luci-content"><%
+	-- 同级页 Tab 导航: 上游由 shell.js 的 L.require('ui') 渲染(本机无 luci.js),
+	-- 这里服务端补齐, 保证「接口/路由/DHCP/主机名」等同级页可切换。
+	local req = disp.context.request or {}
+	local function tabs_at(level)
+		local parent, ok = disp.node(), true
+		for i = 1, level - 1 do
+			if parent and parent.nodes and parent.nodes[req[i]] then
+				parent = parent.nodes[req[i]]
+			else
+				ok = false
+				break
+			end
+		end
+		if not ok or not parent then return end
+		local kids = {}
+		for _, n in ipairs(disp.node_childs(parent) or {}) do
+			local ch = parent.nodes[n]
+			if ch and not ch.hidden and ch.title then
+				kids[#kids + 1] = { name = n, node = ch }
+			end
+		end
+		if #kids < 2 then return end
+		write('<ul class="tabs">')
+		for _, k in ipairs(kids) do
+			local parts = {}
+			for i = 1, level - 1 do parts[#parts + 1] = req[i] end
+			parts[#parts + 1] = k.name
+			local act = (req[level] == k.name) and ' class="active"' or ""
+			write('<li' .. act .. '><a' .. (act ~= "" and ' aria-current="page"' or "") .. ' href="' .. url_of(parts) .. '">'
+				.. util.pcdata(util.striptags(tr(k.node.title) or k.name)) .. '</a></li>')
+		end
+		write('</ul>')
+	end
+	-- 只渲染「当前页的同级兄弟」, 避免与侧栏的顶层分类重复
+	-- MYOS 仪表盘首页本身就是导航终点, 不显示 Tab
+	local is_home = (#req == 3 and req[1] == "admin" and req[2] == "status" and req[3] == "details")
+	if #req >= 2 and not is_home then tabs_at(#req) end
+  %>

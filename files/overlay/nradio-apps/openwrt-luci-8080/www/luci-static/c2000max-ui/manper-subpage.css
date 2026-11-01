@@ -160,3 +160,34 @@
 	padding: 12px 14px;
 	margin: 0 0 16px;
 }
+
+/* ---------- 网络概览: LuCI 用内联样式写死浅色底, 深色主题下会白底浅字 ---------- */
+:root[data-theme="dark"] .c2000-ui .cbi-section-table-row,
+:root[data-theme="dark"] .c2000-ui .cbi-section-table-row td {
+	background: var(--surface) !important;
+	color: var(--text) !important;
+}
+:root[data-theme="dark"] .c2000-ui .cbi-section-table-row:hover,
+:root[data-theme="dark"] .c2000-ui .cbi-section-table-row:hover td {
+	background: var(--hover) !important;
+}
+/* 接口色块的底色来自 LuCI(浅色/彩色), 文字固定深色保证对比 */
+.c2000-ui .ifacebox-head,
+.c2000-ui .ifacebox-head strong,
+.c2000-ui .ifacebox-head span {
+	color: #10202f !important;
+}
+.c2000-ui .ifacebox {
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md, 10px);
+	overflow: hidden;
+	background: var(--surface);
+}
+.c2000-ui .ifacebox-body { color: var(--text); }
+/* ifacebox 内的图标按钮在深色下补对比 */
+:root[data-theme="dark"] .c2000-ui .ifacebox-body .ifacebadge,
+:root[data-theme="dark"] .c2000-ui .ifacebox-body .cbi-button {
+	background: var(--surface-soft) !important;
+	color: var(--text) !important;
+	border-color: var(--border) !important;
+}
