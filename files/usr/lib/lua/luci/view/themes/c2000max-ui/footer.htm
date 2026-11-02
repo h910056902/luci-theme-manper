@@ -10,6 +10,10 @@
    local media = "/luci-static/c2000max-ui"
    -- 设备型号映射（与 header 一致）：HC-WT9500 = C2000 Ultra，C2000MAX = C2000 MAX
    local dname = tostring(boardinfo.model or "")
+   if dname == "" then
+      local mf = io.open("/tmp/sysinfo/model")
+      if mf then dname = (mf:read("*a") or ""):gsub("%s+$", ""); mf:close() end
+   end
    do
       local probe = string.upper(dname .. " " .. tostring(boardinfo.board_name or ""))
       if probe:find("WT9500", 1, true) or probe:find("ULTRA", 1, true) then

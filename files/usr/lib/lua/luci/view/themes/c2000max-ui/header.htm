@@ -14,7 +14,11 @@
 	local boardinfo = util.ubus("system", "board") or {}
 	local hostname = boardinfo.hostname or "MYOS"
 	-- 设备型号映射：本机 HC-WT9500 = C2000 Ultra；仪表盘按 model 含 "Ultra" 切 Ultra 外观素材
+	-- 识别来源对齐上游 c2000max.ui identity：ubus system board.model → /tmp/sysinfo/model 兜底
 	local model    = tostring(boardinfo.model or "")
+	if model == "" and fs and fs.access("/tmp/sysinfo/model") then
+		model = (fs.readfile("/tmp/sysinfo/model") or ""):gsub("%s+$", "")
+	end
 	do
 		local probe = string.upper(model .. " " .. tostring(boardinfo.board_name or ""))
 		if probe:find("WT9500", 1, true) or probe:find("ULTRA", 1, true) then
@@ -219,7 +223,7 @@ window.L = {
 <link rel="stylesheet" href="<%=media%>/manper-subpage.css?v=1.0.17">
 <script src="/luci-static/resources/cbi.js"></script>
 <script src="<%=media%>/data.js?v=1.0.17"></script>
-<script src="<%=media%>/dashboard.js?v=1.0.17"></script>
+<script src="<%=media%>/dashboard.js?v=1.0.17-kp2"></script>
 </head>
 <body class="c2000-ui lang_<%=luci.i18n.context.lang%>" data-page="<%=util.pcdata(reqpath)%>" data-home-url="<%=homeurl%>" data-device-model="<%=util.pcdata(model)%>">
 <a class="skip-link" href="#maincontent">跳到内容</a>

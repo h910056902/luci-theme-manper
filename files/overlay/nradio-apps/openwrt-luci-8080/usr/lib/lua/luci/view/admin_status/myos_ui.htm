@@ -80,7 +80,12 @@
 		local g = rt and rt.global or {}
 
 		-- 设备型号映射：HC-WT9500 = C2000 Ultra，C2000MAX = C2000 MAX
+		-- 识别来源对齐上游 c2000max.ui identity：board.model → /tmp/sysinfo/model 兜底
 		local kp_model = tostring(boardinfo.model or "")
+		if kp_model == "" then
+			local mf = io.open("/tmp/sysinfo/model")
+			if mf then kp_model = (mf:read("*a") or ""):gsub("%s+$", ""); mf:close() end
+		end
 		local kp_probe = string.upper(kp_model .. " " .. tostring(boardinfo.board_name or ""))
 		if kp_probe:find("WT9500", 1, true) or kp_probe:find("ULTRA", 1, true) then
 			kp_model = "C2000 Ultra"

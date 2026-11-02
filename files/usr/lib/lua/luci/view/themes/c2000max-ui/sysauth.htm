@@ -7,7 +7,12 @@
    local disp = require "luci.dispatcher"
    local boardinfo = util.ubus("system", "board") or {}
    -- 设备型号映射：HC-WT9500 = C2000 Ultra，C2000MAX = C2000 MAX
+   -- 识别来源对齐上游：ubus system board.model → /tmp/sysinfo/model 兜底
    local model = tostring(boardinfo.model or "")
+   if model == "" then
+      local mf = io.open("/tmp/sysinfo/model")
+      if mf then model = (mf:read("*a") or ""):gsub("%s+$", ""); mf:close() end
+   end
    do
       local probe = string.upper(model .. " " .. tostring(boardinfo.board_name or ""))
       if probe:find("WT9500", 1, true) or probe:find("ULTRA", 1, true) then

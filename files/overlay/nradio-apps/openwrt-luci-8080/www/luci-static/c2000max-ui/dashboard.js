@@ -16,7 +16,7 @@ function mount(root, url) {
    {id:'mid-autumn',file:'c2000max-mid-autumn.png',name:'中秋限定',wish:'月圆人团圆，远方也在身边。',symbol:'☾'},
    {id:'national-day',file:'c2000max-national-day.png',name:'国庆限定',wish:'山河锦绣，沿途皆是好风景。',symbol:'✦'}
   ];
-  if(ultra) skins.forEach(s=>{s.file='c2000ultra.svg';});
+  if(ultra) skins.forEach(s=>{s.file='c2000ultra-front.png';});
   const key='c2000max-device-art',decorKey='c2000max-decorations';
   let selected='max',decorations=true,clearWish;
   try {
