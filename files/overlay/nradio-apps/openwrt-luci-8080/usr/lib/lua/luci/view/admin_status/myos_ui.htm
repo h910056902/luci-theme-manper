@@ -79,7 +79,17 @@
 		local rt = ubus_call("infocd", "runtime")
 		local g = rt and rt.global or {}
 
-		state.identity = { model = boardinfo.model or "NRadio C2000" }
+		-- 设备型号映射：HC-WT9500 = C2000 Ultra，C2000MAX = C2000 MAX
+		local kp_model = tostring(boardinfo.model or "")
+		local kp_probe = string.upper(kp_model .. " " .. tostring(boardinfo.board_name or ""))
+		if kp_probe:find("WT9500", 1, true) or kp_probe:find("ULTRA", 1, true) then
+			kp_model = "C2000 Ultra"
+		elseif kp_probe:find("C2000MAX", 1, true) then
+			kp_model = "C2000 MAX"
+		elseif kp_model == "" then
+			kp_model = "NRadio C2000"
+		end
+		state.identity = { model = kp_model }
 
 		if cell then
 			local entries = {}

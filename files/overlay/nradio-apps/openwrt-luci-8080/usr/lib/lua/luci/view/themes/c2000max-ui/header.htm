@@ -1,0 +1,304 @@
+<%#
+ MYOS UI (c2000max-ui) — manper 移植版 Lua 外壳
+ 上游: 561410590/immortalwrt-by-MYOS :: luci-theme-c2000max-ui (Apache-2.0)
+ 说明: 上游为 ucode 模板,本文件是等价 Lua 实现,保留相同 DOM 结构/类名;
+       菜单/搜索/侧栏由上游 menu.js 客户端渲染(与仓库行为一致),树数据由服务端注入。
+-%>
+<%
+	local util = require "luci.util"
+	local http = require "luci.http"
+	local disp = require "luci.dispatcher"
+	local fs   = require "nixio.fs"
+	local jsonc = require "luci.jsonc"
+
+	local boardinfo = util.ubus("system", "board") or {}
+	local hostname = boardinfo.hostname or "MYOS"
+	-- 设备型号映射：本机 HC-WT9500 = C2000 Ultra；仪表盘按 model 含 "Ultra" 切 Ultra 外观素材
+	local model    = tostring(boardinfo.model or "")
+	do
+		local probe = string.upper(model .. " " .. tostring(boardinfo.board_name or ""))
+		if probe:find("WT9500", 1, true) or probe:find("ULTRA", 1, true) then
+			model = "C2000 Ultra"
+		elseif probe:find("C2000MAX", 1, true) then
+			model = "C2000 MAX"
+		elseif model == "" then
+			model = "NRadio C2000"
+		end
+	end
+	local fwdesc   = (boardinfo.release and boardinfo.release.description) or ""
+	local media    = "/luci-static/c2000max-ui"
+	local APP      = "/overlay/nradio-apps/openwrt-luci-8080"
+
+	http.prepare_content("text/html; charset=UTF-8")
+
+	local node = disp.context.dispatched
+	local reqpath = table.concat(disp.context.request or {}, "/")
+	local homeurl = disp.build_url("admin", "status", "details")
+
+	-- 全量上游图标 sprite(含 menu-* 菜单图标, 供 menu.js 的 use href 使用)
+	local sprite = fs.readfile(APP .. "/www/luci-static/c2000max-ui/icons.svg.htm") or ""
+
+	-- 菜单树: 序列化为上游 menu.js 期望的结构(children 对象表 + name/title/order/hidden/action)
+	-- 官方 menu.d 的 title 是英文 key: 显式按当前请求语言翻译
+	-- (调度树缓存可能是在英文环境下建的, 直接用 translate 会漏译)
+	local i18n = require "luci.i18n"
+	pcall(function() i18n.setlanguage(luci.i18n.context.lang) end)
+	local function tr(s)
+		if not s then return s end
+		local ok, v = pcall(i18n.translate, s)
+		return (ok and v) or s
+	end
+
+	local function menu_tree(node_tbl, name, depth)
+		-- striptags: 部分菜单标题含 <abbr title=...> 等标签, 会原样显示在侧栏
+		local out = { name = name, title = util.striptags(tr(node_tbl.title) or name) }
+		if node_tbl.order then out.order = node_tbl.order end
+		if node_tbl.hidden then out.hidden = true end
+		if depth < 4 and node_tbl.nodes then
+			local kids, keyed = {}, {}
+			for _, cn in ipairs(disp.node_childs(node_tbl) or {}) do
+				local ch = node_tbl.nodes[cn]
+				if ch and not ch.hidden and ch.title then
+					local k = menu_tree(ch, cn, depth + 1)
+					kids[#kids + 1] = k
+					keyed[k.name] = k
+				end
+			end
+			if #kids > 0 then
+				out.children = keyed
+				-- 有子节点时: auto/无 target 的父节点 = firstchild(不渲染自身入口)
+				out.action = { type = (node_tbl.auto or not node_tbl.target) and "firstchild" or "real" }
+			end
+		end
+		return out
+	end
+
+	local tree = disp.node()
+	local admin = tree and tree.nodes and tree.nodes.admin
+	local menutree = { name = "root", children = {} }
+	if admin then
+		menutree.children.admin = menu_tree(admin, "admin", 0)
+	end
+
+	-- ===== 服务端预渲染菜单(骨架) =====
+	-- 原因: 慢页面(如防火墙, 服务端 27s)时 uhttpd 先吐外壳, menu.js 要等脚本加载,
+	--       期间侧栏空白 → 观感上「菜单消失」。这里先渲染同结构骨架,
+	--       menu.js 就绪后会 replaceChildren 覆盖为带搜索/音色的完整版。
+	-- 图标映射与上游 menu.js 的 icons/iconTones 保持一致。
+	local ICON_BY_NAME = {
+		status = "grid", system = "settings", modem = "radio", services = "layers",
+		network = "globe", statistics = "chart", vpn = "shield", nas = "storage",
+		store = "package", istore = "package", software = "package", opkg = "package",
+		package = "package", packagemanager = "package", logout = "logout",
+		embedded = "sim", simcard = "sim", cpesel = "sim", qmodem = "radio", qmodemnext = "radio",
+		atwebserver = "terminal", ttyd = "terminal", terminal = "terminal",
+		fancontrol = "fan", firewall = "shield", openclash = "shield", passwall = "shield",
+		passwall2 = "shield", wireguard = "shield", openvpn = "shield", zerotier = "shield",
+		tailscale = "shield", ddns = "cloud", nros = "cloud", myosnros = "cloud",
+		myosupdate = "refresh", update = "refresh", flash = "upload", backup = "download",
+		wireless = "wifi", interfaces = "globe", dhcp = "globe", routes = "globe",
+		clients = "people", devices = "people", processes = "activity", realtime = "chart",
+		wrtbwmon = "chart", traffic = "chart", logs = "terminal", leds = "signal",
+	}
+	local ICON_TONES = {
+		home = "network", grid = "network", globe = "network", settings = "system",
+		radio = "device", layers = "device", device = "device", chart = "signal",
+		package = "device", plug = "device", shield = "network", storage = "device",
+		terminal = "system", fan = "signal", sim = "device", cloud = "network",
+		refresh = "signal", wifi = "network", people = "network", activity = "signal",
+		upload = "system", download = "network", signal = "signal",
+	}
+	-- 有 menu- 前缀变体的图标
+	local MENU_PREFIXED = {
+		shield = true, package = true, plug = true, storage = true,
+		terminal = true, fan = true, sim = true, cloud = true,
+	}
+
+	local function icon_for(key, title, grouped)
+		local name = (key or ""):lower():gsub("[-_]", "")
+		local ic = ICON_BY_NAME[name]
+		if ic then return ic end
+		local label = name .. " " .. (title or ""):lower()
+		if label:find("istore") or label:find("软件包") or label:find("软件商店") then return "package" end
+		if label:find("sim") or label:find("切卡") or label:find("内置卡") then return "sim" end
+		if label:find("fan") or label:find("风扇") then return "fan" end
+		if label:find("atweb") or label:find("ttyd") or label:find("terminal") or label:find("终端") then return "terminal" end
+		if label:find("qmodem") or label:find("modem") or label:find("模组") then return "radio" end
+		if label:find("openclash") or label:find("passwall") or label:find("vpn") or label:find("防火墙") or label:find("firewall") then return "shield" end
+		if label:find("ddns") or label:find("nros") or label:find("云控") or label:find("远程控制") then return "cloud" end
+		if label:find("固件更新") or label:find("在线升级") then return "refresh" end
+		if label:find("无线") or label:find("wireless") or label:find("wifi") then return "wifi" end
+		if label:find("流量") or label:find("带宽") or label:find("traffic") then return "chart" end
+		if label:find("日志") or label:find("log") then return "terminal" end
+		return grouped and "layers" or "plug"
+	end
+
+	local function icon_svg(ic)
+		local id = MENU_PREFIXED[ic] and ("menu-" .. ic) or ic
+		local tone = ICON_TONES[ic]
+		write('<svg class="icon' .. (tone and (" icon-tone-" .. tone) or "") .. '" aria-hidden="true"><use href="#' .. id .. '"/></svg>')
+	end
+
+	local function url_of(parts)
+		return "/cgi-bin/luci/" .. table.concat(parts, "/")
+	end
+
+	local function node_active(parts)
+		local want = table.concat(parts, "/")
+		return reqpath == want or reqpath:sub(1, #want + 1) == want .. "/"
+	end
+
+	local function render_skeleton(node_tbl, parts, depth, key)
+		local kids = {}
+		for _, cn in ipairs(disp.node_childs(node_tbl) or {}) do
+			local ch = node_tbl.nodes[cn]
+			if ch and not ch.hidden and ch.title then
+				kids[#kids + 1] = { name = cn, node = ch }
+			end
+		end
+		local title = util.striptags(tr(node_tbl.title) or "")
+		if #kids == 0 then
+			local cls = "menu-link" .. (depth == 0 and " menu-root-link" or "")
+			local act = node_active(parts) and " active" or ""
+			write('<a class="' .. cls .. act .. '" href="' .. url_of(parts) .. '" data-menu-item="true" data-path="' .. table.concat(parts, "/") .. '">')
+			icon_svg(icon_for(key or "", title, false))
+			write("<span>" .. util.pcdata(title) .. "</span></a>")
+			return
+		end
+		local open = ""
+		for _, ch in ipairs(kids) do
+			local cp = {}
+			for _, v in ipairs(parts) do cp[#cp + 1] = v end
+			cp[#cp + 1] = ch.name
+			if node_active(cp) then open = ' open' end
+		end
+		write('<details class="menu-group" data-menu-item="true" data-title="' .. util.pcdata(title) .. '" data-path="' .. table.concat(parts, "/") .. '"' .. open .. '>')
+		write('<summary class="menu-category">')
+		icon_svg(icon_for(key or "", title, true))
+		write("<span>" .. util.pcdata(title) .. "</span>")
+		icon_svg("chevron")
+		write('</summary><div class="menu-children">')
+		for _, ch in ipairs(kids) do
+			local cp = {}
+			for _, v in ipairs(parts) do cp[#cp + 1] = v end
+			cp[#cp + 1] = ch.name
+			render_skeleton(ch.node, cp, depth + 1, ch.name)
+		end
+		write("</div></details>")
+	end
+	local menutree_json = jsonc.stringify(menutree) or "{}"
+-%>
+<!doctype html>
+<html lang="<%=luci.i18n.context.lang%>">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#eef3f8">
+<title><%=util.pcdata(hostname)%> · <%=node and util.pcdata(translate(node.title or "")) or "MYOS"%></title>
+<script>
+/* manper L shim: 供上游 shell.js 的 L.url / theme.js 的 L.env.media 使用
+   (故意不提供 require —— menu.js 将走 setTree 注入路径) */
+window.L = {
+	url: function () {
+		var p = [].slice.call(arguments).filter(function (x) { return x !== undefined && x !== null && x !== ''; });
+		return '/cgi-bin/luci/' + p.join('/');
+	},
+	env: { media: '<%=media%>', dispatchpath: [<%=reqpath ~= "" and ("'" .. util.pcdata(reqpath) .. "'") or ""%>] }
+};
+</script>
+<script src="<%=media%>/theme.js?v=1.0.17"></script>
+<link rel="stylesheet" href="/luci-static/bootstrap/cascade.css">
+<link rel="stylesheet" href="<%=media%>/tokens.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/components.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/styles.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/c2000max.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/luci-adapter.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/luci-components.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/density.css?v=1.0.17">
+<link rel="stylesheet" href="<%=media%>/manper-subpage.css?v=1.0.17">
+<script src="/luci-static/resources/cbi.js"></script>
+<script src="<%=media%>/data.js?v=1.0.17"></script>
+<script src="<%=media%>/dashboard.js?v=1.0.17"></script>
+</head>
+<body class="c2000-ui lang_<%=luci.i18n.context.lang%>" data-page="<%=util.pcdata(reqpath)%>" data-home-url="<%=homeurl%>" data-device-model="<%=util.pcdata(model)%>">
+<a class="skip-link" href="#maincontent">跳到内容</a>
+<%=sprite%>
+<script>window.__MYOS_MENU__=<%=menutree_json%>;</script>
+
+<button class="header-menu icon-button" data-menu-toggle aria-controls="sidebar" aria-expanded="false" aria-label="打开完整菜单"><svg class="icon"><use href="#menu"/></svg></button>
+<a class="brand" href="<%=homeurl%>" aria-label="MYOS 首页"><span>MY<span class="brand-max">OS</span></span><small><%=util.pcdata(model)%></small></a>
+<div class="sidebar-backdrop" hidden></div>
+<aside class="sidebar" id="sidebar" aria-label="完整菜单">
+  <div class="sidebar-heading"><div><strong>MYOS</strong><small><%=util.pcdata(model)%></small></div><button class="icon-button" id="close-menu" aria-label="关闭菜单"><svg class="icon"><use href="#close"/></svg></button></div>
+  <label class="menu-search"><svg class="icon"><use href="#search"/></svg><input id="menu-search" type="search" placeholder="搜索菜单或插件" aria-label="搜索菜单或插件" autocomplete="off"></label>
+  <nav class="navigation" id="menu-tree" aria-label="分类与插件"><%
+    write('<a class="nav-home nav-item" href="' .. homeurl .. '" data-preview-panel="home">')
+    icon_svg("home")
+    write("<span>首页</span></a>")
+    if admin then
+      for _, cn in ipairs(disp.node_childs(admin) or {}) do
+        local ch = admin.nodes[cn]
+        if ch and not ch.hidden and ch.title then
+          render_skeleton(ch, {"admin", cn}, 0, cn)
+        end
+      end
+    end
+  %></nav>
+  <p class="menu-empty" hidden>未找到匹配的菜单或插件</p>
+  <div class="sidebar-footer"><span><i></i> <%=util.pcdata(fwdesc ~= "" and fwdesc or "MYOS")%></span><small id="menu-source">LuCI · <%=util.pcdata(model)%></small></div>
+</aside>
+
+<main class="main" id="home">
+  <div class="landscape" aria-hidden="true"><svg class="terrain" viewBox="0 0 1359 190" preserveAspectRatio="none"><defs><linearGradient id="terrain-fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d5dee9" stop-opacity=".72"/><stop offset=".58" stop-color="#e2e9f1" stop-opacity=".4"/><stop offset="1" stop-color="#eef2f7" stop-opacity="0"/></linearGradient></defs><path d="M0 0C155 17 272 73 450 76S657 96 827 67 1110-11 1359 9V190H0Z" fill="url(#terrain-fade)"/></svg><div class="horizon"></div></div>
+  <header class="topbar"><div id="indicators"></div>
+    <div class="theme-picker"><button type="button" class="theme-toggle icon-button" data-theme-toggle aria-label="外观模式" title="外观模式" aria-expanded="false" aria-controls="theme-options"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg></button>
+      <div class="theme-control" id="theme-options" role="group" aria-label="外观模式">
+        <div class="theme-festival" hidden><img alt="" width="42" height="42"><span><strong></strong><small></small></span></div>
+        <button type="button" data-theme-choice="light" aria-pressed="false" aria-label="浅色模式" title="浅色模式"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg><span class="theme-choice-label">浅色</span></button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false" aria-label="深色模式" title="深色模式"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg><span class="theme-choice-label">深色</span></button>
+        <button type="button" data-theme-choice="system" aria-pressed="true" aria-label="跟随系统" title="跟随系统"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg><span class="theme-choice-label">跟随系统</span></button>
+      </div>
+    </div>
+    <button class="account" id="account-button" aria-label="管理员菜单" aria-expanded="false" aria-controls="account-menu"><span class="avatar"><svg class="icon" aria-hidden="true"><use href="#user"/></svg></span><span>管理员</span><svg class="icon account-chevron" aria-hidden="true"><use href="#chevron"/></svg></button>
+    <div id="account-menu" class="account-menu" hidden><strong>管理员</strong><button type="button" id="logout-button">退出登录<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg></button></div>
+  </header>
+  <div id="maincontent" class="luci-content"><%
+	-- 同级页 Tab 导航: 上游由 shell.js 的 L.require('ui') 渲染(本机无 luci.js),
+	-- 这里服务端补齐, 保证「接口/路由/DHCP/主机名」等同级页可切换。
+	local req = disp.context.request or {}
+	local function tabs_at(level)
+		local parent, ok = disp.node(), true
+		for i = 1, level - 1 do
+			if parent and parent.nodes and parent.nodes[req[i]] then
+				parent = parent.nodes[req[i]]
+			else
+				ok = false
+				break
+			end
+		end
+		if not ok or not parent then return end
+		local kids = {}
+		for _, n in ipairs(disp.node_childs(parent) or {}) do
+			local ch = parent.nodes[n]
+			if ch and not ch.hidden and ch.title then
+				kids[#kids + 1] = { name = n, node = ch }
+			end
+		end
+		if #kids < 2 then return end
+		write('<ul class="tabs">')
+		for _, k in ipairs(kids) do
+			local parts = {}
+			for i = 1, level - 1 do parts[#parts + 1] = req[i] end
+			parts[#parts + 1] = k.name
+			local act = (req[level] == k.name) and ' class="active"' or ""
+			write('<li' .. act .. '><a' .. (act ~= "" and ' aria-current="page"' or "") .. ' href="' .. url_of(parts) .. '">'
+				.. util.pcdata(util.striptags(tr(k.node.title) or k.name)) .. '</a></li>')
+		end
+		write('</ul>')
+	end
+	-- 只渲染「当前页的同级兄弟」, 避免与侧栏的顶层分类重复
+	-- MYOS 仪表盘首页本身就是导航终点, 不显示 Tab
+	local is_home = (#req == 3 and req[1] == "admin" and req[2] == "status" and req[3] == "details")
+	if #req >= 2 and not is_home then tabs_at(#req) end
+  %>

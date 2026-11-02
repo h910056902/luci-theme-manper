@@ -7,9 +7,21 @@
 <% local util = require "luci.util"
    local boardinfo = util.ubus("system", "board") or {}
    local fwdesc = (boardinfo.release and boardinfo.release.description) or "MYOS"
-   local media = "/luci-static/c2000max-ui" %>
+   local media = "/luci-static/c2000max-ui"
+   -- 设备型号映射（与 header 一致）：HC-WT9500 = C2000 Ultra，C2000MAX = C2000 MAX
+   local dname = tostring(boardinfo.model or "")
+   do
+      local probe = string.upper(dname .. " " .. tostring(boardinfo.board_name or ""))
+      if probe:find("WT9500", 1, true) or probe:find("ULTRA", 1, true) then
+         dname = "C2000 Ultra"
+      elseif probe:find("C2000MAX", 1, true) then
+         dname = "C2000 MAX"
+      elseif dname == "" then
+         dname = "NRadio C2000"
+      end
+   end %>
   </div>
-  <footer class="main-footer"><span class="firmware-compact"><%=util.pcdata(fwdesc)%></span><span class="firmware-version"><%=util.pcdata(fwdesc)%></span><span class="theme-credit">MYOS UI · C2000MAX UI by inst.</span></footer>
+  <footer class="main-footer"><span class="firmware-compact"><%=util.pcdata(fwdesc)%></span><span class="firmware-version"><%=util.pcdata(fwdesc)%></span><span class="theme-credit">MYOS UI · <%=util.pcdata(dname)%> by inst.</span></footer>
 </main>
 <script src="<%=media%>/menu.js?v=1.0.17"></script>
 <script src="<%=media%>/shell.js?v=1.0.17"></script>

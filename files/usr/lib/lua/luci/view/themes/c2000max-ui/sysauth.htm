@@ -6,7 +6,18 @@
    local http = require "luci.http"
    local disp = require "luci.dispatcher"
    local boardinfo = util.ubus("system", "board") or {}
-   local model = boardinfo.model or "NRadio C2000"
+   -- 设备型号映射：HC-WT9500 = C2000 Ultra，C2000MAX = C2000 MAX
+   local model = tostring(boardinfo.model or "")
+   do
+      local probe = string.upper(model .. " " .. tostring(boardinfo.board_name or ""))
+      if probe:find("WT9500", 1, true) or probe:find("ULTRA", 1, true) then
+         model = "C2000 Ultra"
+      elseif probe:find("C2000MAX", 1, true) then
+         model = "C2000 MAX"
+      elseif model == "" then
+         model = "NRadio C2000"
+      end
+   end
    local fwdesc = (boardinfo.release and boardinfo.release.description) or "MYOS"
    local media = "/luci-static/c2000max-ui"
    -- 登录表单必须 POST 回「当前页面」: 提交到根路径 /cgi-bin/luci/ 会落到空壳页,
@@ -49,7 +60,7 @@
 <label class="login-field" for="luci_password">密码<span class="login-password"><input id="luci_password" name="luci_password" type="password" autocomplete="current-password" autofocus><button type="button" id="password-toggle" aria-label="显示密码" aria-pressed="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg></button></span></label>
 <button class="ui-button login-submit" type="submit">登录<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
 </form>
-<p class="login-footer">MYOS UI · C2000MAX UI by inst.</p>
+<p class="login-footer">MYOS UI · <%=util.pcdata(model)%> by inst.</p>
 </section>
 </main>
 <footer class="wallpaper-credit"><span>MYOS · <%=util.pcdata(model)%></span></footer>

@@ -13,7 +13,18 @@
 
 	local boardinfo = util.ubus("system", "board") or {}
 	local hostname = boardinfo.hostname or "MYOS"
-	local model    = boardinfo.model or "NRadio C2000"
+	-- 设备型号映射：本机 HC-WT9500 = C2000 Ultra；仪表盘按 model 含 "Ultra" 切 Ultra 外观素材
+	local model    = tostring(boardinfo.model or "")
+	do
+		local probe = string.upper(model .. " " .. tostring(boardinfo.board_name or ""))
+		if probe:find("WT9500", 1, true) or probe:find("ULTRA", 1, true) then
+			model = "C2000 Ultra"
+		elseif probe:find("C2000MAX", 1, true) then
+			model = "C2000 MAX"
+		elseif model == "" then
+			model = "NRadio C2000"
+		end
+	end
 	local fwdesc   = (boardinfo.release and boardinfo.release.description) or ""
 	local media    = "/luci-static/c2000max-ui"
 	local APP      = "/overlay/nradio-apps/openwrt-luci-8080"
