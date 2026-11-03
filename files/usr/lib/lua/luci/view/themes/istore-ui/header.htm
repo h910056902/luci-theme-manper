@@ -135,8 +135,8 @@
 			{ t = "蜂窝详情", h = "/cgi-bin/luci/nradio/cellular", i = "fa-signal", p = { "nradio", "cellular" } },
 		},
 		network = {
-			{ t = "SIM 信息", h = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/sim", i = "fa-sim-card", v = "/cgi-bin/luci/nradio/system/sim" },
-			{ t = "设备信息", h = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/device", i = "fa-microchip", v = "/cgi-bin/luci/nradio/system/device" },
+			{ t = "SIM 信息", h = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/sim", i = "fa-sim-card", v = "/cgi-bin/luci/nradio/system/sim" },
+			{ t = "设备信息", h = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/device", i = "fa-microchip", v = "/cgi-bin/luci/nradio/system/device" },
 		},
 	}
 
@@ -258,9 +258,9 @@
 
 	-- 原厂页面并入网络分组（蜂窝 / SIM / 设备）
 	if buckets.network then
-		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/nradio/cellular", path = { "nradio", "cellular" }, order = 10 }
-		buckets.network[#buckets.network + 1] = { name = "siminfo", title = "SIM 信息", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/sim", v = "/cgi-bin/luci/nradio/system/sim", order = 11 }
-		buckets.network[#buckets.network + 1] = { name = "deviceinfo", title = "设备信息", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/device", v = "/cgi-bin/luci/nradio/system/device", order = 12 }
+		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/cellular", v = "/cgi-bin/luci/nradio/cellular", order = 10 }
+		buckets.network[#buckets.network + 1] = { name = "siminfo", title = "SIM 信息", url = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/sim", v = "/cgi-bin/luci/nradio/system/sim", order = 11 }
+		buckets.network[#buckets.network + 1] = { name = "deviceinfo", title = "设备信息", url = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/device", v = "/cgi-bin/luci/nradio/system/device", order = 12 }
 	end
 	-- 二级页面：自动测速在 openclash 之下，手动补进「服务」分组
 	if buckets.services then
@@ -292,7 +292,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><%=util.pcdata(title)%> · <%=util.pcdata(model)%></title>
 <link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
-<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=7">
+<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=8">
 <%
 	-- 原厂路由（/nradio/*）内容基于 bootstrap 栅格与 panel，需要在壳内补基础样式 + 适配层
 	if reqstr:match("^/nradio") then
@@ -301,7 +301,7 @@
 <link rel="stylesheet" href="<%=media%>/css/main.min.css">
 <link rel="stylesheet" href="<%=media%>/css/nradio.min.css">
 <link rel="stylesheet" href="<%=media%>/vendor-adapter.css">
-<%-- 原厂页大量内联脚本依赖 jQuery/Bootstrap/main.js，缺了会 "$ is not defined" 且内容不渲染 --%>
+<%# 原厂页大量内联脚本依赖 jQuery/Bootstrap/main.js，缺了会 "$ is not defined" 且内容不渲染 %>
 <script src="<%=media%>/js/jquery.min.js"></script>
 <script src="<%=media%>/js/bootstrap.min.js"></script>
 <script src="<%=media%>/js/main.min.js"></script>

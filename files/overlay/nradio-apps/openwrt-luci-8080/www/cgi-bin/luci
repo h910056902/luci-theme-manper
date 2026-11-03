@@ -294,16 +294,31 @@ function luci.dispatcher.createtree()
 			if active_theme == "istore" then
 				-- 原厂页面容器：自带完整 HTML 的页面（/nradio/system/sim 等）用 iframe 包壳，
 				-- 保证侧栏常驻。挂在 admin/status 下（URL /admin/status/vendor），hidden 不进侧栏。
-				if m_admin.nodes.status then
-					m_admin.nodes.status.nodes = m_admin.nodes.status.nodes or {}
-					m_admin.nodes.status.nodes.vendor = {
+				-- mediaurlbase 显式指定为 istore-ui：否则 <%%+header%%> 会按原厂树解析成 nradio 外壳
+				-- （没侧栏，看起来像"跳回了 80 端口/原厂固件"）。
+				-- 固件缺 admin_network/diagnostics 模型（原页直接 500）→ 用自建诊断页顶上
+				if m_admin.nodes.network and m_admin.nodes.network.nodes then
+					m_admin.nodes.network.nodes.diagnostics = {
 						nodes = {},
-						target = luci.dispatcher.template("admin_status/kp_vendor"),
-						title = "原厂页面",
-						order = 6,
-						hidden = true,
+						target = luci.dispatcher.template("admin_status/kp_diag"),
+						title = "网络诊断",
+						order = 60,
 						leaf = true
 					}
+				end
+				-- 注册在 admin 顶层（URL /admin/vendor）：父链媒体路径是 istore-ui，
+				-- 这样 <%+header%> 才会渲染成第三套主题外壳，而不是原厂 nradio 外壳。
+				m_admin.nodes.vendor = {
+					nodes = {},
+					target = luci.dispatcher.template("admin_status/kp_vendor"),
+					title = "原厂页面",
+					order = 6,
+					hidden = true,
+					leaf = true,
+					mediaurlbase = "/luci-static/istore-ui"
+				}
+				if m_admin.nodes.status and m_admin.nodes.status.nodes then
+					m_admin.nodes.status.nodes.vendor = nil
 				end
 				-- 第三套主题：侧栏常驻「设置向导」入口（Wi-Fi / SIM 切换 / OpenClash 订阅）
 				m_admin.nodes.network_guide = {

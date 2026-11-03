@@ -10,6 +10,9 @@
 	local http = require "luci.http"
 	local util = require "luci.util"
 
+	-- 注意：本路由挂在原厂调度树下，node.mediaurlbase 可能是 /luci-static/nradio，
+	-- 那样 header 会解析成「原厂固件外壳」（无侧栏，看起来像跳回 80 端口）。
+	-- 已由 CGI 把该节点的 mediaurlbase 固定为 /luci-static/istore-ui。
 	local src = http.formvalue("src") or ""
 	-- 安全：只允许本站 /cgi-bin/luci/ 下的路由，禁止跳转/穿越
 	if not src:match("^/cgi%-bin/luci/") or src:find("..", 1, true) or src:find("//", 1, true) then
@@ -33,7 +36,32 @@
 			</a>
 		</div>
 	</div>
-	<iframe src="<%=util.pcdata(src)%>" title="<%=util.pcdata(title)%>"
+	<iframe id="kpVendorFrame" src="<%=util.pcdata(src)%>" title="<%=util.pcdata(title)%>"
 		style="display:block;width:100%;height:calc(100vh - 168px);min-height:520px;border:0;border-top:1px solid var(--line);background:#fff"></iframe>
 </div>
+<script>
+/* 原厂页自带顶部导航/页脚：同源可注入样式裁掉，只保留内容区，避免"页面套页面" */
+(function () {
+	'use strict';
+	var f = document.getElementById('kpVendorFrame');
+	if (!f) return;
+	function tidy() {
+		try {
+			var d = f.contentDocument;
+			if (!d || !d.head) return;
+			if (d.getElementById('kp-vendor-tidy')) return;
+			var s = d.createElement('style');
+			s.id = 'kp-vendor-tidy';
+			s.textContent = [
+				'header,.header,.topbar,.navbar,.navbar-default,#header,#topbar{display:none!important}',
+				'footer,.footer,#footer{display:none!important}',
+				'body{padding-top:0!important;background:#fff!important}',
+				'.container{width:auto!important;max-width:100%!important;padding-left:14px!important;padding-right:14px!important}'
+			].join('\n');
+			d.head.appendChild(s);
+		} catch (e) {}
+	}
+	f.addEventListener('load', tidy);
+})();
+</script>
 <%+footer%>
