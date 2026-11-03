@@ -292,6 +292,19 @@ function luci.dispatcher.createtree()
 				}
 			end
 			if active_theme == "istore" then
+				-- 原厂页面容器：自带完整 HTML 的页面（/nradio/system/sim 等）用 iframe 包壳，
+				-- 保证侧栏常驻。挂在 admin/status 下（URL /admin/status/vendor），hidden 不进侧栏。
+				if m_admin.nodes.status then
+					m_admin.nodes.status.nodes = m_admin.nodes.status.nodes or {}
+					m_admin.nodes.status.nodes.vendor = {
+						nodes = {},
+						target = luci.dispatcher.template("admin_status/kp_vendor"),
+						title = "原厂页面",
+						order = 6,
+						hidden = true,
+						leaf = true
+					}
+				end
 				-- 第三套主题：侧栏常驻「设置向导」入口（Wi-Fi / SIM 切换 / OpenClash 订阅）
 				m_admin.nodes.network_guide = {
 					nodes = {

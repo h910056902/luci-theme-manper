@@ -61,6 +61,18 @@
 		return ICONS[name] or ICONS[(name or ""):lower()] or "fa-circle-dot"
 	end
 
+	-- 原厂页面并入对应分组（不再单独成组）；自带完整 HTML 的页面走 iframe 容器保留侧栏
+	local vsrc = http.formvalue("src") or ""
+	local EXTRA = {
+		status = {
+			{ t = "蜂窝详情", h = "/cgi-bin/luci/nradio/cellular", i = "fa-signal", p = { "nradio", "cellular" } },
+		},
+		network = {
+			{ t = "SIM 信息", h = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/sim", i = "fa-sim-card", v = "/cgi-bin/luci/nradio/system/sim" },
+			{ t = "设备信息", h = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/device", i = "fa-microchip", v = "/cgi-bin/luci/nradio/system/device" },
+		},
+	}
+
 	local tree = disp.node()
 	local admin = tree and tree.nodes and tree.nodes.admin
 
@@ -88,6 +100,17 @@
 <title><%=util.pcdata(title)%> · <%=util.pcdata(model)%></title>
 <link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
 <link rel="stylesheet" href="<%=media%>/istore-ui.css?v=4">
+<%
+	-- 原厂路由（/nradio/*）内容基于 bootstrap 栅格与 panel，需要在壳内补基础样式 + 适配层
+	if reqstr:match("^/nradio") then
+%>
+<link rel="stylesheet" href="<%=media%>/css/cascade.min.css">
+<link rel="stylesheet" href="<%=media%>/css/main.min.css">
+<link rel="stylesheet" href="<%=media%>/css/nradio.min.css">
+<link rel="stylesheet" href="<%=media%>/vendor-adapter.css">
+<%
+	end
+%>
 <script src="<%=media%>/shell.js?v=4" defer></script>
 </head>
 <body class="ios-body" data-model="<%=util.pcdata(model)%>">
@@ -147,6 +170,17 @@
 				</a>
 				<%
 					end
+					local ex = EXTRA[top.name]
+					if ex then
+						for _, e in ipairs(ex) do
+							local on = (e.v and vsrc == e.v) or (e.p and is_active(e.p))
+				%>
+				<a class="ios-nav-i<%= on and " active" or ""%>" href="<%=e.h%>" data-path="<%=e.h%>" data-label="<%=util.pcdata(e.t)%>">
+					<i class="fas <%=e.i%>" aria-hidden="true"></i><span><%=util.pcdata(e.t)%></span>
+				</a>
+				<%
+						end
+					end
 				%>
 				</div>
 			</div>
@@ -155,25 +189,6 @@
 				end
 			end
 		%>
-	<div class="ios-nav-g" data-group="vendor">
-		<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="true">
-			<span>原厂页面</span><i class="fas fa-chevron-down ch" aria-hidden="true"></i>
-		</button>
-		<div class="ios-nav-c">
-			<a class="ios-nav-i<%= is_active({ "nradio", "cellular" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/cellular" data-path="/cgi-bin/luci/nradio/cellular" data-label="蜂窝详情">
-				<i class="fas fa-signal" aria-hidden="true"></i><span>蜂窝详情</span>
-			</a>
-			<a class="ios-nav-i<%= is_active({ "nradio", "system", "sim" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/system/sim" data-path="/cgi-bin/luci/nradio/system/sim" data-label="SIM 信息">
-				<i class="fas fa-sim-card" aria-hidden="true"></i><span>SIM 信息</span>
-			</a>
-			<a class="ios-nav-i<%= is_active({ "nradio", "system", "device" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/system/device" data-path="/cgi-bin/luci/nradio/system/device" data-label="设备信息">
-				<i class="fas fa-microchip" aria-hidden="true"></i><span>设备信息</span>
-			</a>
-			<a class="ios-nav-i<%= is_active({ "admin", "docker" }) and " active" or ""%>" href="/cgi-bin/luci/admin/docker" data-path="/cgi-bin/luci/admin/docker" data-label="Docker">
-				<i class="fas fa-cube" aria-hidden="true"></i><span>Docker</span>
-			</a>
-		</div>
-	</div>
 	</nav>
 	<div class="ios-side-f">
 		<span><i class="fas fa-microchip" aria-hidden="true"></i> <%=util.pcdata(model)%></span>

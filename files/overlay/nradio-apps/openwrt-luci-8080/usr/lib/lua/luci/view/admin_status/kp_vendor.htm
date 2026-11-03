@@ -1,0 +1,39 @@
+<%#
+ istore-ui · 原厂页面容器
+ 背景：/nradio/system/sim、/nradio/system/device 这类原厂页面自带完整 HTML（没有侧栏），
+       直接打开会「丢菜单」。这里用 iframe 包进第三套主题外壳，菜单常驻。
+ 样式：原厂页面引用 /luci-static/istore-ui/css|js/*（跟随媒体路径），
+       这些文件是薄壳 → 加载 /luci-static/nradio/* 原资源 + vendor-adapter.css 统一风格。
+ 用法：/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/sim
+-%>
+<%
+	local http = require "luci.http"
+	local util = require "luci.util"
+
+	local src = http.formvalue("src") or ""
+	-- 安全：只允许本站 /cgi-bin/luci/ 下的路由，禁止跳转/穿越
+	if not src:match("^/cgi%-bin/luci/") or src:find("..", 1, true) or src:find("//", 1, true) then
+		src = "/cgi-bin/luci/nradio/cellular"
+	end
+
+	local title = "原厂页面"
+	if src:find("/system/sim", 1, true) then title = "SIM 信息"
+	elseif src:find("/system/device", 1, true) then title = "设备信息"
+	elseif src:find("/cellular", 1, true) then title = "蜂窝详情"
+	end
+-%>
+<%+header%>
+<div class="ios-card flush">
+	<div class="ios-card-h" style="padding:12px 16px 0;margin:0 0 10px">
+		<h3><%=util.pcdata(title)%></h3>
+		<span class="sub">原厂页面 · 已套用主题样式</span>
+		<div class="right">
+			<a class="ios-btn sm" href="<%=util.pcdata(src)%>" target="_blank" rel="noopener">
+				<i class="fas fa-up-right-from-square"></i> 新窗口
+			</a>
+		</div>
+	</div>
+	<iframe src="<%=util.pcdata(src)%>" title="<%=util.pcdata(title)%>"
+		style="display:block;width:100%;height:calc(100vh - 168px);min-height:520px;border:0;border-top:1px solid var(--line);background:#fff"></iframe>
+</div>
+<%+footer%>
