@@ -87,10 +87,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><%=util.pcdata(title)%> · <%=util.pcdata(model)%></title>
 <link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
-<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=1">
-<script src="<%=media%>/shell.js?v=1" defer></script>
+<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=2">
+<script src="<%=media%>/shell.js?v=2" defer></script>
 </head>
 <body class="ios-body" data-model="<%=util.pcdata(model)%>">
+<script>try{if(localStorage.getItem('iosCollapsed')==='1')document.body.classList.add('ios-collapsed')}catch(e){}</script>
 <div class="ios-shell">
 <a href="#maincontent" class="ios-skip" style="position:absolute;left:-9999px">跳到内容</a>
 
@@ -98,10 +99,13 @@
 	<div class="ios-brand">
 		<span class="ios-logo">M</span>
 		<div><b>manper</b><small>iStoreOS 风格</small></div>
+		<button class="ios-collapse" id="iosCollapse" type="button" aria-label="折叠侧栏" aria-expanded="true" title="折叠 / 展开侧栏">
+			<i class="fas fa-angles-left" aria-hidden="true"></i>
+		</button>
 	</div>
 	<nav class="ios-nav" aria-label="主导航">
 		<div class="ios-nav-g">
-			<a class="ios-nav-i<%= reqstr == "" and " active" or ""%>" href="<%=homeurl%>" data-path="<%=homeurl%>">
+			<a class="ios-nav-i<%= reqstr == "" and " active" or ""%>" href="<%=homeurl%>" data-path="<%=homeurl%>" data-label="首页">
 				<i class="fas fa-gauge-high" aria-hidden="true"></i><span>首页</span>
 			</a>
 		</div>
@@ -120,7 +124,7 @@
 					if #kids == 0 then
 		%>
 			<div class="ios-nav-g">
-				<a class="ios-nav-i<%= tactive and " active" or ""%>" href="<%=turl%>" data-path="<%=turl%>">
+				<a class="ios-nav-i<%= tactive and " active" or ""%>" href="<%=turl%>" data-path="<%=turl%>" data-label="<%=util.pcdata(ttitle)%>">
 					<i class="fas <%=icon_of(top.name, ttitle)%>" aria-hidden="true"></i><span><%=util.pcdata(ttitle)%></span>
 				</a>
 			</div>
@@ -135,7 +139,7 @@
 						local kurl = node_url(kpath)
 						local ktitle = tr(util.striptags(k.node.title))
 				%>
-				<a class="ios-nav-i<%= is_active(kpath) and " active" or ""%>" href="<%=kurl%>" data-path="<%=kurl%>">
+				<a class="ios-nav-i<%= is_active(kpath) and " active" or ""%>" href="<%=kurl%>" data-path="<%=kurl%>" data-label="<%=util.pcdata(ktitle)%>">
 					<i class="fas <%=icon_of(k.name, ktitle)%>" aria-hidden="true"></i><span><%=util.pcdata(ktitle)%></span>
 				</a>
 				<%
@@ -149,16 +153,16 @@
 		%>
 	<div class="ios-nav-g">
 		<div class="ios-nav-t">原厂页面</div>
-		<a class="ios-nav-i<%= is_active({ "nradio", "cellular" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/cellular" data-path="/cgi-bin/luci/nradio/cellular">
+		<a class="ios-nav-i<%= is_active({ "nradio", "cellular" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/cellular" data-path="/cgi-bin/luci/nradio/cellular" data-label="蜂窝详情">
 			<i class="fas fa-signal" aria-hidden="true"></i><span>蜂窝详情</span>
 		</a>
-		<a class="ios-nav-i<%= is_active({ "nradio", "system", "sim" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/system/sim" data-path="/cgi-bin/luci/nradio/system/sim">
+		<a class="ios-nav-i<%= is_active({ "nradio", "system", "sim" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/system/sim" data-path="/cgi-bin/luci/nradio/system/sim" data-label="SIM 信息">
 			<i class="fas fa-sim-card" aria-hidden="true"></i><span>SIM 信息</span>
 		</a>
-		<a class="ios-nav-i<%= is_active({ "nradio", "system", "device" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/system/device" data-path="/cgi-bin/luci/nradio/system/device">
+		<a class="ios-nav-i<%= is_active({ "nradio", "system", "device" }) and " active" or ""%>" href="/cgi-bin/luci/nradio/system/device" data-path="/cgi-bin/luci/nradio/system/device" data-label="设备信息">
 			<i class="fas fa-microchip" aria-hidden="true"></i><span>设备信息</span>
 		</a>
-		<a class="ios-nav-i<%= is_active({ "admin", "docker" }) and " active" or ""%>" href="/cgi-bin/luci/admin/docker" data-path="/cgi-bin/luci/admin/docker">
+		<a class="ios-nav-i<%= is_active({ "admin", "docker" }) and " active" or ""%>" href="/cgi-bin/luci/admin/docker" data-path="/cgi-bin/luci/admin/docker" data-label="Docker">
 			<i class="fas fa-cube" aria-hidden="true"></i><span>Docker</span>
 		</a>
 	</div>

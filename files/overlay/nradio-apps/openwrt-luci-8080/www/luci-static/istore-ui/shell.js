@@ -44,3 +44,25 @@
 		best.classList.add('active');
 	}
 })();
+
+/* ---- 侧栏折叠（桌面端 72px 图标栏），状态记忆 ---- */
+(function () {
+	var KEY = 'iosCollapsed';
+	var body = document.body;
+	var btn = document.getElementById('iosCollapse');
+
+	function apply(on) {
+		body.classList.toggle('ios-collapsed', !!on);
+		if (btn) btn.setAttribute('aria-expanded', on ? 'false' : 'true');
+	}
+	apply(body.classList.contains('ios-collapsed'));
+
+	if (btn) {
+		btn.addEventListener('click', function () {
+			var on = !body.classList.contains('ios-collapsed');
+			apply(on);
+			try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) {}
+		});
+	}
+	/* 窄屏（抽屉模式）不保留折叠态视觉，但记录保留，回桌面自动恢复 */
+})();

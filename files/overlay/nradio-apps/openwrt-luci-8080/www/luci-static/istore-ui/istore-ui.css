@@ -315,3 +315,55 @@ table.ios-tbl td.strong{color:var(--ink);font-weight:600}
 .ios-content .alert-message{border-radius:var(--r-s);font-size:12px}
 .ios-content .ifacebox{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);box-shadow:var(--sh-1)}
 .ios-content .ifacebox-head{background:var(--surface-2);border-bottom:1px solid var(--line)}
+/* ==========================================================================
+   侧栏缩放：折叠为 72px 图标栏（desktop），状态记忆在 localStorage
+   折叠态用 hover 气泡显示名称（data-label）
+   ========================================================================== */
+.ios-side{position:relative;transition:width .18s ease,flex-basis .18s ease}
+.ios-collapse{
+  margin-left:auto;width:26px;height:26px;border-radius:8px;border:1px solid var(--line);
+  background:#fff;color:var(--ink-3);display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;flex:0 0 26px;transition:color .15s,border-color .15s,background .15s,transform .18s
+}
+.ios-collapse:hover{color:var(--brand);border-color:var(--brand-line);background:var(--surface-2)}
+.ios-collapse i{font-size:11px;transition:transform .18s}
+
+body.ios-collapsed .ios-side{width:72px;flex:0 0 72px}
+body.ios-collapsed .ios-brand{padding:16px 0 10px;justify-content:center}
+body.ios-collapsed .ios-brand > div{display:none}
+body.ios-collapsed .ios-collapse{
+  position:absolute;right:-13px;top:20px;margin:0;width:24px;height:24px;flex:0 0 24px;
+  border-radius:50%;box-shadow:var(--sh-1);z-index:45
+}
+body.ios-collapsed .ios-collapse i{transform:rotate(180deg)}
+body.ios-collapsed .ios-nav{padding:6px 8px 12px}
+body.ios-collapsed .ios-nav-t{
+  height:1px;margin:8px 12px;padding:0;background:var(--line);
+  color:transparent;overflow:hidden;font-size:0
+}
+body.ios-collapsed .ios-nav-i{justify-content:center;padding:9px 0}
+body.ios-collapsed .ios-nav-i span{display:none}
+body.ios-collapsed .ios-nav-i i{font-size:15px;width:auto}
+body.ios-collapsed .ios-side-f{justify-content:center;padding:10px 4px}
+body.ios-collapsed .ios-side-f > span{display:none}
+
+/* 折叠态：悬浮气泡 */
+body.ios-collapsed .ios-nav-i{position:relative}
+body.ios-collapsed .ios-nav-i:hover::after{
+  content:attr(data-label);position:absolute;left:calc(100% + 10px);top:50%;
+  transform:translateY(-50%);background:var(--ink);color:#fff;font-size:11.5px;
+  font-weight:600;padding:4px 9px;border-radius:6px;white-space:nowrap;z-index:60;
+  box-shadow:0 6px 18px rgba(50,50,93,.18);pointer-events:none
+}
+@media(max-width:960px){
+  body.ios-collapsed .ios-side{width:236px;flex:0 0 236px}
+  body.ios-collapsed .ios-brand{padding:18px 18px 14px;justify-content:flex-start}
+  body.ios-collapsed .ios-brand > div{display:block}
+  body.ios-collapsed .ios-nav-t{height:auto;margin:10px 0 0;padding:6px 10px 4px;background:transparent;color:var(--ink-3);font-size:11px}
+  body.ios-collapsed .ios-nav-i{justify-content:flex-start;padding:8px 10px}
+  body.ios-collapsed .ios-nav-i span{display:inline}
+  body.ios-collapsed .ios-nav-i:hover::after{display:none}
+  body.ios-collapsed .ios-side-f{justify-content:space-between;padding:10px 16px 14px}
+  body.ios-collapsed .ios-side-f > span{display:inline}
+  body.ios-collapsed .ios-collapse{position:static;width:26px;height:26px;border-radius:8px;box-shadow:none}
+}
