@@ -1,0 +1,189 @@
+<%#
+ istore-ui · 设备信息（自建，直读原厂/系统数据）
+ 数据来源：
+   · ubus system board        → model / board_name / kernel / release
+   · ubus system info         → uptime / memory / root（存储）/ 负载
+   · ubus infocd cpestatus    → imei / model(模组) / revision / hwid / control / model_temp / mac
+   · ubus infocd runtime      → device_temp / wifi_temp / cpu / mem
+   · ubus network.interface.cpe_4 → 蜂窝 IPv4
+   · /sys/class/net/br-lan/address → 设备 MAC
+ 支持 ?state=1 返回 JSON（10s 轮询）。
+-%>
+<%
+	local http = require "luci.http"
+	local util = require "luci.util"
+
+	local function pick(t, keys)
+		for _, k in ipairs(keys) do
+			local v = t[k]
+			if v ~= nil and v ~= "" then return tostring(v) end
+		end
+		return ""
+	end
+	local function fmt_bytes(v)
+		local n = tonumber(v)
+		if not n or n <= 0 then return "—" end
+		local u = { "B", "KB", "MB", "GB", "TB" }
+		local i = 1
+		while n >= 1024 and i < #u do n = n / 1024; i = i + 1 end
+		return string.format(i >= 4 and "%.1f %s" or "%.0f %s", n, u[i])
+	end
+
+	local board = util.ubus("system", "board") or {}
+	local sinfo = util.ubus("system", "info") or {}
+	local st = util.ubus("infocd", "cpestatus") or {}
+	local cpe = (type(st) == "table" and st.result and st.result[1]) or {}
+	local s = cpe.status or {}
+	local rt = util.ubus("infocd", "runtime") or {}
+	local g = rt.global or {}
+	local cpe4 = util.ubus("network.interface.cpe_4", "status") or {}
+
+	-- 型号映射（与主题外壳一致）
+	local raw = tostring(board.model or "")
+	local probe = string.upper(raw .. " " .. tostring(board.board_name or ""))
+	local model = raw
+	if probe:find("WT9500", 1, true) or probe:find("ULTRA", 1, true) then model = "C2000 Ultra"
+	elseif probe:find("C2000MAX", 1, true) then model = "C2000 MAX" end
+	if model == "" then model = "NRadio C2000" end
+
+	local rel     = board.release or {}
+	local uptime  = tonumber(sinfo.uptime) or tonumber(g.uptime) or 0
+	local mem     = sinfo.memory or {}
+	local rootfs  = sinfo.root or {}
+	local mem_pct = (mem.total and mem.total > 0) and math.floor((mem.total - (mem.available or mem.free or 0)) * 100 / mem.total) or 0
+
+	-- 存储：system.info 的 root 是 squashfs（16MB），不是用户数据区；
+	-- 这里用 statvfs(/overlay) 取真实 overlay 容量（约 16GB），失败再回退 root
+	local fs_total, fs_used = tonumber(rootfs.total), tonumber(rootfs.used)
+	do
+		local ok_fs, nfs = pcall(require, "nixio.fs")
+		if ok_fs and nfs and nfs.statvfs then
+			local v = nfs.statvfs("/overlay") or nfs.statvfs("/")
+			if type(v) == "table" and tonumber(v.blocks) and tonumber(v.blocks) > 0 then
+				local bs = tonumber(v.bsize) or 4096
+				fs_total = tonumber(v.blocks) * bs
+				fs_used  = (tonumber(v.blocks) - tonumber(v.bfree or v.bavail or 0)) * bs
+			end
+		end
+	end
+	local fs_pct = (fs_total and fs_total > 0) and math.floor((fs_used or 0) * 100 / fs_total) or 0
+	local ipv4    = ""
+	if type(cpe4) == "table" then
+		for _, a in ipairs(cpe4["ipv4-address"] or {}) do
+			if a.address then ipv4 = a.address .. (a.mask and ("/" .. a.mask) or "") break end
+		end
+	end
+	local mac = ""
+	local f = io.open("/sys/class/net/br-lan/address")
+	if f then mac = (f:read("*l") or ""):upper(); f:close() end
+	if mac == "" then mac = (pick(s, { "mac" }) or ""):upper() end
+
+	local up_days = math.floor(uptime / 86400)
+	local up_hours = math.floor((uptime % 86400) / 3600)
+
+	if http.formvalue("state") == "1" then
+		http.prepare_content("application/json")
+		http.write_json({
+			uptime = up_days .. " 天 " .. up_hours .. " 时",
+			mem_pct = tostring(mem_pct) .. "%",
+			fs_pct = tostring(fs_pct) .. "%",
+			dtemp = tostring(g.device_temp or ""),
+			mtemp = pick(s, { "model_temp" }),
+			ipv4 = ipv4,
+		})
+		return
+	end
+-%>
+<%+header%>
+<div class="ios-page-h">
+	<div>
+		<h2>设备信息</h2>
+		<p class="sub">主机、模组与网络数据，与厂商页面同源 · 每 10 秒刷新</p>
+	</div>
+	<div class="ios-page-actions">
+		<button class="ios-btn" type="button" id="devRefresh"><i class="fas fa-rotate"></i> 刷新</button>
+		<a class="ios-btn" href="/cgi-bin/luci/nradio/system/device" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> 原厂页面</a>
+	</div>
+</div>
+
+<div class="ios-grid ios-g2x">
+	<div class="ios-card">
+		<div class="ios-card-h">
+			<h3>主机</h3>
+			<span class="sub"><%=util.pcdata(tostring(rel.description or "OpenWrt"))%></span>
+			<div class="right"><span class="ios-badge">在线</span></div>
+		</div>
+		<div class="ios-kv">
+			<div><span>设备型号</span><b><%=util.pcdata(model)%></b></div>
+			<div><span>板型</span><b class="mono"><%=util.pcdata(tostring(board.board_name or "—"))%></b></div>
+			<div><span>主机名</span><b><%=util.pcdata(tostring(board.hostname or "—"))%></b></div>
+			<div><span>MAC 地址</span><b class="mono"><%=util.pcdata(mac ~= "" and mac or "—")%></b></div>
+			<div><span>固件版本</span><b><%=util.pcdata(tostring(rel.version or "—"))%> / <%=util.pcdata(tostring(rel.revision or ""))%></b></div>
+			<div><span>内核</span><b class="mono"><%=util.pcdata(tostring(board.kernel or "—"))%></b></div>
+			<div><span>运行时间</span><b id="devUptime"><%=up_days%> 天 <%=up_hours%> 时</b></div>
+			<div><span>蜂窝 IPv4</span><b class="mono" id="devIp"><%=util.pcdata(ipv4 ~= "" and ipv4 or "—")%></b></div>
+		</div>
+		<div class="ios-kpi-row" style="margin-top:12px">
+			<div class="ios-kpi"><span>内存占用</span><b id="devMem"><%=mem_pct%><i>%</i></b></div>
+			<div class="ios-kpi"><span>存储占用</span><b id="devFs"><%=fs_pct%><i>%</i></b></div>
+			<div class="ios-kpi"><span>设备温度</span><b id="devTemp"><%=util.pcdata(tostring(g.device_temp or "—"))%><i>℃</i></b></div>
+		</div>
+	</div>
+
+	<div class="ios-card">
+		<div class="ios-card-h">
+			<h3>蜂窝模组</h3>
+			<span class="sub"><%=util.pcdata(pick(s, { "model" }) ~= "" and pick(s, { "model" }) or "未检测到")%></span>
+		</div>
+		<div class="ios-kv">
+			<div><span>模组型号</span><b><%=util.pcdata(pick(s, { "model" }) ~= "" and pick(s, { "model" }) or "—")%></b></div>
+			<div><span>固件版本</span><b class="mono"><%=util.pcdata(pick(s, { "revision" }) ~= "" and pick(s, { "revision" }) or "—")%></b></div>
+			<div><span>IMEI</span><b class="mono"><%=util.pcdata(pick(s, { "imei" }) ~= "" and pick(s, { "imei" }) or "—")%></b></div>
+			<div><span>HWID</span><b class="mono"><%=util.pcdata(pick(s, { "hwid" }) ~= "" and pick(s, { "hwid" }) or "—")%></b></div>
+			<div><span>控制口</span><b class="mono"><%=util.pcdata(pick(s, { "control" }) ~= "" and pick(s, { "control" }) or "—")%></b></div>
+			<div><span>模组温度</span><b id="devMtemp"><%=util.pcdata(pick(s, { "model_temp" }) ~= "" and (pick(s, { "model_temp" }) .. " ℃") or "—")%></b></div>
+			<div><span>模组 MAC</span><b class="mono"><%=util.pcdata(pick(s, { "mac" }) ~= "" and (pick(s, { "mac" })):upper() or "—")%></b></div>
+			<div><span>5G 能力</span><b><%=pick(s, { "nrcap" }) == "1" and "支持 NR" or "—"%></b></div>
+		</div>
+		<div class="ios-note info" style="margin-top:12px">
+			<i class="fas fa-microchip"></i>
+			<span>模组固件与 IMEI 为只读信息；如需升级固件请参考官方工具。</span>
+		</div>
+	</div>
+</div>
+
+<div class="ios-card">
+	<div class="ios-card-h"><h3>资源</h3><span class="sub">内存 / 存储</span></div>
+	<div class="ios-bars">
+		<div class="bar-row">
+			<span>内存</span>
+			<div class="bar"><i style="width:<%=mem_pct%>%"></i></div>
+			<b><%=fmt_bytes((mem.total or 0) - (mem.available or 0))%> / <%=fmt_bytes(mem.total)%></b>
+		</div>
+		<div class="bar-row">
+			<span>存储</span>
+			<div class="bar"><i style="width:<%=fs_pct%>%"></i></div>
+			<b><%=fmt_bytes(fs_used)%> / <%=fmt_bytes(fs_total)%></b>
+		</div>
+	</div>
+</div>
+
+<script>
+(function () {
+	'use strict';
+	function txt(id, v) { var e = document.getElementById(id); if (e && v !== undefined && v !== '') e.textContent = v; }
+	var btn = document.getElementById('devRefresh');
+	function refresh() {
+		fetch(location.pathname + '?state=1', { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				txt('devUptime', d.uptime); txt('devIp', d.ipv4);
+				txt('devMem', d.mem_pct); txt('devFs', d.fs_pct);
+				txt('devTemp', d.dtemp); txt('devMtemp', d.mtemp);
+			}).catch(function () {});
+	}
+	if (btn) btn.addEventListener('click', refresh);
+	setInterval(refresh, 10000);
+})();
+</script>
+<%+footer%>

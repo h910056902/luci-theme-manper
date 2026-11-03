@@ -296,6 +296,25 @@ function luci.dispatcher.createtree()
 				-- 保证侧栏常驻。挂在 admin/status 下（URL /admin/status/vendor），hidden 不进侧栏。
 				-- mediaurlbase 显式指定为 istore-ui：否则 <%%+header%%> 会按原厂树解析成 nradio 外壳
 				-- （没侧栏，看起来像"跳回了 80 端口/原厂固件"）。
+				-- SIM 信息 / 设备信息：同样自建，直读 cpesel + infocd + system（不再 iframe 包原厂页）
+				m_admin.nodes.sim = {
+					nodes = {},
+					target = luci.dispatcher.template("admin_status/kp_sim"),
+					title = "SIM 信息",
+					order = 3,
+					hidden = true,
+					leaf = true,
+					mediaurlbase = "/luci-static/istore-ui"
+				}
+				m_admin.nodes.device = {
+					nodes = {},
+					target = luci.dispatcher.template("admin_status/kp_device"),
+					title = "设备信息",
+					order = 4,
+					hidden = true,
+					leaf = true,
+					mediaurlbase = "/luci-static/istore-ui"
+				}
 				-- 蜂窝详情：自建页直读 infocd cpestatus（与原厂页面同源数据），
 				-- 不再用 iframe 包原厂整页（避免"页面套页面"与深色主题冲突）
 				m_admin.nodes.cellular = {

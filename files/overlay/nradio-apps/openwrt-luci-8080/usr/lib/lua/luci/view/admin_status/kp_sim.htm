@@ -1,0 +1,148 @@
+<%#
+ istore-ui · SIM 信息（自建，直读原厂数据）
+ 数据来源：
+   · ubus infocd cpestatus  → simno / simcount / sim_name / iccid / imsi / isp_company /
+                              simtype / cur_simtype / switchmode / CPIN / sim_flow / sim_mon
+   · uci cpesel.sim         → max（卡槽数）/ cur（当前卡）/ mode（0 自动 1 手动）/ stype
+   · uci cpesel.<iccid>     → 该卡备注名
+ 支持 ?state=1 返回 JSON（10s 轮询）。
+-%>
+<%
+	local http = require "luci.http"
+	local util = require "luci.util"
+
+	local function pick(t, keys)
+		for _, k in ipairs(keys) do
+			local v = t[k]
+			if v ~= nil and v ~= "" then return tostring(v) end
+		end
+		return ""
+	end
+	local function fmt_bytes(v)
+		local n = tonumber(v)
+		if not n or n <= 0 then return "—" end
+		local u = { "B", "KB", "MB", "GB", "TB" }
+		local i = 1
+		while n >= 1024 and i < #u do n = n / 1024; i = i + 1 end
+		return string.format(i >= 4 and "%.2f %s" or "%.1f %s", n, u[i])
+	end
+
+	local st = util.ubus("infocd", "cpestatus") or {}
+	local cpe = (type(st) == "table" and st.result and st.result[1]) or {}
+	local s = cpe.status or {}
+
+	local uci = require "luci.model.uci".cursor()
+	local cur   = tostring(uci:get("cpesel", "sim", "cur") or pick(s, { "simno" }))
+	local maxn  = tonumber(uci:get("cpesel", "sim", "max") or pick(s, { "simcount" })) or 1
+	local mode  = tostring(uci:get("cpesel", "sim", "mode") or "0")
+	local iccid = pick(s, { "iccid" })
+	local imsi  = pick(s, { "imsi" })
+	local isp   = pick(s, { "isp_company", "isp" })
+	local sname = pick(s, { "sim_name" })
+	if sname == "" and iccid ~= "" then sname = tostring(uci:get("cpesel", iccid, "name") or "") end
+	local cpin  = pick(s, { "CPIN" })
+	local flow  = fmt_bytes(s.sim_flow)
+	local mon   = fmt_bytes(s.sim_mon)
+
+	local cpin_ok = (cpin == "0" or cpin == "")
+	local mode_txt = (mode == "1") and "手动" or "自动"
+
+	if http.formvalue("state") == "1" then
+		http.prepare_content("application/json")
+		http.write_json({
+			cur = cur, max = tostring(maxn), mode = mode_txt,
+			iccid = iccid, imsi = imsi, isp = isp, name = sname,
+			cpin = cpin_ok and "正常" or ("异常(" .. cpin .. ")"),
+			flow = flow, mon = mon,
+		})
+		return
+	end
+-%>
+<%+header%>
+<div class="ios-page-h">
+	<div>
+		<h2>SIM 信息</h2>
+		<p class="sub">数据取自模组与 cpesel 配置，与厂商页面同源 · 每 10 秒刷新</p>
+	</div>
+	<div class="ios-page-actions">
+		<button class="ios-btn" type="button" id="simRefresh"><i class="fas fa-rotate"></i> 刷新</button>
+		<a class="ios-btn" href="/cgi-bin/luci/admin/network_guide/network" ><i class="fas fa-right-left"></i> 切换卡</a>
+		<a class="ios-btn" href="/cgi-bin/luci/nradio/system/sim" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> 原厂页面</a>
+	</div>
+</div>
+
+<div class="ios-grid ios-g2x">
+	<div class="ios-card">
+		<div class="ios-card-h">
+			<h3>当前 SIM 卡</h3>
+			<span class="sub" id="simName"><%=util.pcdata(sname ~= "" and sname or "未命名")%></span>
+			<div class="right">
+				<span class="ios-badge <%=cpin_ok and "ok" or "warn"%>" id="simState"><%=cpin_ok and "正常" or "异常"%></span>
+			</div>
+		</div>
+		<div class="ios-cell-hero">
+			<div class="ios-sim-badge">
+				<i class="fas fa-sim-card"></i>
+				<b>卡 <span id="simSlot"><%=util.pcdata(cur)%></span></b>
+				<small>共 <%=maxn%> 槽</small>
+			</div>
+			<div class="ios-cell-meta">
+				<div class="row"><span>运营商</span><b id="simIsp"><%=util.pcdata(isp ~= "" and isp or "—")%></b></div>
+				<div class="row"><span>切卡模式</span><b id="simMode"><%=mode_txt%></b></div>
+				<div class="row"><span>卡状态</span><b><%=cpin_ok and "已就绪（CPIN 正常）" or ("CPIN " .. util.pcdata(cpin))%></b></div>
+			</div>
+		</div>
+		<div class="ios-kv">
+			<div><span>ICCID</span><b class="mono" id="simIccid"><%=iccid ~= "" and util.pcdata(iccid) or "—"%></b></div>
+			<div><span>IMSI</span><b class="mono" id="simImsi"><%=imsi ~= "" and util.pcdata(imsi) or "—"%></b></div>
+		</div>
+	</div>
+
+	<div class="ios-card">
+		<div class="ios-card-h"><h3>卡槽</h3><span class="sub">物理槽位</span></div>
+		<div class="ios-slots">
+			<% for i = 1, maxn do %>
+			<div class="ios-slot<%= tostring(i) == cur and " on" or ""%>">
+				<div class="t"><i class="fas fa-sim-card"></i> 卡槽 <%=i%></div>
+				<small><%= tostring(i) == cur and "当前使用" or "未使用"%></small>
+			</div>
+			<% end %>
+		</div>
+		<div class="ios-note info" style="margin-top:12px">
+			<i class="fas fa-circle-info"></i>
+			<span>切卡会让蜂窝网络短暂中断（10–30 秒），请到「设置向导 → SIM 卡切换」操作。</span>
+		</div>
+	</div>
+</div>
+
+<div class="ios-grid ios-g2">
+	<div class="ios-card tight">
+		<div class="ios-card-h"><h3>本月流量</h3></div>
+		<div class="ios-big"><b id="simFlow"><%=flow%></b></div>
+	</div>
+	<div class="ios-card tight">
+		<div class="ios-card-h"><h3>统计周期流量</h3></div>
+		<div class="ios-big"><b id="simMon"><%=mon%></b></div>
+	</div>
+</div>
+
+<script>
+(function () {
+	'use strict';
+	function txt(id, v) { var e = document.getElementById(id); if (e && v) e.textContent = v; }
+	var btn = document.getElementById('simRefresh');
+	function refresh() {
+		fetch(location.pathname + '?state=1', { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				txt('simSlot', d.cur); txt('simName', d.name); txt('simIsp', d.isp);
+				txt('simIccid', d.iccid); txt('simImsi', d.imsi);
+				txt('simMode', d.mode); txt('simState', d.cpin);
+				txt('simFlow', d.flow); txt('simMon', d.mon);
+			}).catch(function () {});
+	}
+	if (btn) btn.addEventListener('click', refresh);
+	setInterval(refresh, 10000);
+})();
+</script>
+<%+footer%>

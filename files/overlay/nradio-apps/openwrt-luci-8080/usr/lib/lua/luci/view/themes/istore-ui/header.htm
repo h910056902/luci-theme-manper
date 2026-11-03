@@ -135,8 +135,8 @@
 			{ t = "蜂窝详情", h = "/cgi-bin/luci/nradio/cellular", i = "fa-signal", p = { "nradio", "cellular" } },
 		},
 		network = {
-			{ t = "SIM 信息", h = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/sim", i = "fa-sim-card", v = "/cgi-bin/luci/nradio/system/sim" },
-			{ t = "设备信息", h = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/device", i = "fa-microchip", v = "/cgi-bin/luci/nradio/system/device" },
+			{ t = "SIM 信息", h = "/cgi-bin/luci/admin/sim", i = "fa-sim-card", p = { "admin", "sim" } },
+			{ t = "设备信息", h = "/cgi-bin/luci/admin/device", i = "fa-microchip", p = { "admin", "device" } },
 		},
 	}
 
@@ -259,8 +259,8 @@
 	-- 原厂页面并入网络分组（蜂窝 / SIM / 设备）
 	if buckets.network then
 		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/admin/cellular", path = { "admin", "cellular" }, order = 10 }
-		buckets.network[#buckets.network + 1] = { name = "siminfo", title = "SIM 信息", url = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/sim", v = "/cgi-bin/luci/nradio/system/sim", order = 11 }
-		buckets.network[#buckets.network + 1] = { name = "deviceinfo", title = "设备信息", url = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/device", v = "/cgi-bin/luci/nradio/system/device", order = 12 }
+		buckets.network[#buckets.network + 1] = { name = "siminfo", title = "SIM 信息", url = "/cgi-bin/luci/admin/sim", path = { "admin", "sim" }, order = 11 }
+		buckets.network[#buckets.network + 1] = { name = "deviceinfo", title = "设备信息", url = "/cgi-bin/luci/admin/device", path = { "admin", "device" }, order = 12 }
 	end
 	-- 二级页面：自动测速在 openclash 之下，手动补进「服务」分组
 	if buckets.services then
