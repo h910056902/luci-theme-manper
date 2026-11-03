@@ -66,6 +66,7 @@
 		leds = "fa-lightbulb", reboot = "fa-rotate-right",
 		argon = "fa-palette", ["argon-config"] = "fa-palette", argonconfig = "fa-palette",
 		-- 网络类
+		ocspeed = "fa-bolt", autotimeset = "fa-clock-rotate-left", reset = "fa-rotate-left",
 		dhcp = "fa-server", hosts = "fa-tags", diagnostics = "fa-stethoscope",
 		passwall = "fa-shield-halved", passwall2 = "fa-shield-halved",
 		wireguard = "fa-shield-halved", openvpn = "fa-shield-halved",
@@ -156,6 +157,132 @@
 		return reqstr == p or reqstr:sub(1, #p + 1) == p .. "/"
 	end
 
+	-- ===================== 侧栏菜单（2026-11-03 重置） =====================
+	-- 目标：固定 5 个分组 + 中文标题 + 去重 + 有意义的排序；未识别节点进「其他」兜底
+	local TITLE_CN = {
+		details = "仪表盘", overview = "概览", firewall = "防火墙", routes = "路由表",
+		dmesg = "内核日志", log = "系统日志", processes = "进程", realtime = "实时图表",
+		network = "接口", wireless = "无线", dhcp = "DHCP / DNS", hosts = "主机名",
+		staticroutes = "静态路由", diagnostics = "网络诊断",
+		openclash = "OpenClash", ocspeed = "自动测速", store = "iStore", docker = "Docker",
+		system = "系统属性", admin = "管理权", software = "软件包", backup = "备份 / 刷机",
+		startup = "启动项", crontab = "计划任务", mount = "挂载点", leds = "LED 配置",
+		reboot = "重启", ["argon-config"] = "主题设置", argon = "主题设置",
+		network_guide = "设置向导",
+	}
+	local GROUP_OF = {
+		status = "status", network = "network", services = "services",
+		docker = "services", store = "services", system = "system",
+	}
+	local GROUPS = {
+		{ key = "status",   title = "状态", icon = "fa-gauge-high" },
+		{ key = "network",  title = "网络", icon = "fa-globe" },
+		{ key = "services", title = "服务", icon = "fa-layer-group" },
+		{ key = "system",   title = "系统", icon = "fa-gear" },
+	}
+	local ORDER = {
+		details = 1, overview = 2, realtime = 3, routes = 4, iptables = 5,
+		syslog = 6, dmesg = 7, processes = 8, firewall = 5, log = 6,
+		network = 1, wireless = 2, dhcp = 3, hosts = 4, staticroutes = 5, diagnostics = 6,
+		openclash = 1, ocspeed = 2, store = 3, docker = 4,
+		system = 1, admin = 2, packages = 3, software = 3, flashops = 4, backup = 4,
+		startup = 5, crontab = 6, autotimeset = 7, fstab = 8, mount = 8,
+		leds = 9, security = 10, reboot = 11, ["argon-config"] = 12, reset = 13,
+	}
+
+	-- 按 URL 精确命名：节点名重复/含义不清时（fstab/autotimeset/flashops…）以此为准
+	local TITLE_URL = {
+		["status/overview"] = "系统信息",
+		["status/syslog"] = "系统日志",
+		["status/iptables"] = "防火墙",
+		["network/routes"] = "静态路由",
+		["system/fstab"] = "挂载点",
+		["system/autotimeset"] = "时间同步",
+		["system/security"] = "安全设置",
+		["system/flashops"] = "备份 / 刷机",
+		["system/reset"] = "恢复出厂",
+		["system/packages"] = "软件包",
+		["system/argon-config"] = "主题设置",
+	}
+	-- 不进侧栏（登录/退出这类由页脚或页头承担）
+	local SKIP = { logout = true }
+
+	local buckets, seen_url, other = {}, {}, {}
+	local function add_item(g, it)
+		if not it.url or seen_url[it.url] then return end
+		if it.name and SKIP[it.name] then return end
+		seen_url[it.url] = true
+		it.key = it.path and (table.concat(it.path, "/"):gsub("^admin/", "")) or nil
+		buckets[g] = buckets[g] or {}
+		buckets[g][#buckets[g] + 1] = it
+	end
+	local function label_of(name, nd)
+		local cn = TITLE_CN[name]
+		if cn then return cn end
+		return tr(util.striptags(nd and nd.title)) or name
+	end
+
+	local guide_url, guide_active
+	if admin then
+		for _, top in ipairs(child_list(admin)) do
+			local g = GROUP_OF[top.name]
+			local kids = child_list(top.node)
+			if top.name == "network_guide" then
+				local kid = kids[1]
+				guide_url = node_url(kid and { "admin", "network_guide", kid.name } or { "admin", "network_guide" })
+				guide_active = kid and is_active({ "admin", "network_guide", kid.name }) or is_active({ "admin", "network_guide" })
+			elseif g and #kids > 0 then
+				for _, k in ipairs(kids) do
+					add_item(g, {
+						name = k.name,
+						title = label_of(k.name, k.node),
+						url = node_url({ "admin", top.name, k.name }),
+						path = { "admin", top.name, k.name },
+						order = ORDER[k.name] or 50,
+					})
+				end
+			elseif g then
+				add_item(g, {
+					name = top.name,
+					title = label_of(top.name, top.node),
+					url = node_url({ "admin", top.name }),
+					path = { "admin", top.name },
+					order = ORDER[top.name] or 50,
+				})
+			elseif not SKIP[top.name] then
+				-- 未映射的顶级节点：整体进「其他」，不丢入口（Logout 等已排除）
+				other[#other + 1] = { name = top.name, node = top.node, kids = kids }
+			end
+		end
+	end
+
+	-- 原厂页面并入网络分组（蜂窝 / SIM / 设备）
+	if buckets.network then
+		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/nradio/cellular", path = { "nradio", "cellular" }, order = 10 }
+		buckets.network[#buckets.network + 1] = { name = "siminfo", title = "SIM 信息", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/sim", v = "/cgi-bin/luci/nradio/system/sim", order = 11 }
+		buckets.network[#buckets.network + 1] = { name = "deviceinfo", title = "设备信息", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/device", v = "/cgi-bin/luci/nradio/system/device", order = 12 }
+	end
+	-- 二级页面：自动测速在 openclash 之下，手动补进「服务」分组
+	if buckets.services then
+		buckets.services[#buckets.services + 1] = {
+			name = "ocspeed", title = "自动测速",
+			url = "/cgi-bin/luci/admin/services/openclash/ocspeed",
+			path = { "admin", "services", "openclash", "ocspeed" },
+			order = 2,
+		}
+	end
+
+	-- URL 精确命名覆盖 + 排序
+	for _, g in ipairs(GROUPS) do
+		local items = buckets[g.key]
+		if items then
+			for _, it in ipairs(items) do
+				if it.key and TITLE_URL[it.key] then it.title = TITLE_URL[it.key] end
+			end
+			table.sort(items, function(a, b) return (a.order or 50) < (b.order or 50) end)
+		end
+	end
+
 	local title = node and node.title and tr(util.striptags(node.title)) or "首页"
 	http.prepare_content("text/html; charset=UTF-8")
 -%><!DOCTYPE html>
@@ -193,67 +320,76 @@
 		</button>
 	</div>
 	<nav class="ios-nav" aria-label="主导航">
+		<%
+			for _, g in ipairs(GROUPS) do
+				local items = buckets[g.key]
+				if items and #items > 0 then
+		%>
+		<div class="ios-nav-g" data-group="<%=g.key%>">
+			<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="true">
+				<i class="fas <%=g.icon%> gi" aria-hidden="true"></i>
+				<span><%=util.pcdata(g.title)%></span><i class="fas fa-chevron-down ch" aria-hidden="true"></i>
+			</button>
+			<div class="ios-nav-c">
+				<%
+					for _, it in ipairs(items) do
+						local on = (it.v and vsrc == it.v) or (it.path and is_active(it.path))
+				%>
+				<a class="ios-nav-i<%= on and " active" or ""%>" href="<%=it.url%>" data-path="<%=it.url%>" data-label="<%=util.pcdata(it.title)%>">
+					<i class="fas <%=icon_of(it.name, it.title)%>" aria-hidden="true"></i><span><%=util.pcdata(it.title)%></span>
+				</a>
+				<%
+					end
+				%>
+			</div>
+		</div>
+		<%
+				end
+			end
+
+			-- 「其他」兜底：未映射的顶级节点原样保留，避免入口丢失
+			if #other > 0 then
+		%>
+		<div class="ios-nav-g" data-group="other">
+			<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="true">
+				<i class="fas fa-ellipsis gi" aria-hidden="true"></i><span>其他</span><i class="fas fa-chevron-down ch" aria-hidden="true"></i>
+			</button>
+			<div class="ios-nav-c">
+			<%
+				for _, top in ipairs(other) do
+					local otitle = tr(util.striptags(top.node.title)) or top.name
+					if #top.kids == 0 then
+			%>
+				<a class="ios-nav-i<%= is_active({ "admin", top.name }) and " active" or ""%>" href="<%=node_url({ "admin", top.name })%>" data-path="<%=node_url({ "admin", top.name })%>" data-label="<%=util.pcdata(otitle)%>">
+					<i class="fas <%=icon_of(top.name, otitle)%>" aria-hidden="true"></i><span><%=util.pcdata(otitle)%></span>
+				</a>
+			<%
+					else
+						for _, k in ipairs(top.kids) do
+							local kp = { "admin", top.name, k.name }
+							local kt = tr(util.striptags(k.node.title)) or k.name
+			%>
+				<a class="ios-nav-i<%= is_active(kp) and " active" or ""%>" href="<%=node_url(kp)%>" data-path="<%=node_url(kp)%>" data-label="<%=util.pcdata(kt)%>">
+					<i class="fas <%=icon_of(k.name, kt)%>" aria-hidden="true"></i><span><%=util.pcdata(kt)%></span>
+				</a>
+			<%
+						end
+					end
+				end
+			%>
+			</div>
+		</div>
+		<%
+			end
+
+			if guide_url then
+		%>
 		<div class="ios-nav-g">
-			<a class="ios-nav-i<%= reqstr == "" and " active" or ""%>" href="<%=homeurl%>" data-path="<%=homeurl%>" data-label="首页">
-				<i class="fas fa-gauge-high" aria-hidden="true"></i><span>首页</span>
+			<a class="ios-nav-i<%= guide_active and " active" or ""%>" href="<%=guide_url%>" data-path="<%=guide_url%>" data-label="设置向导">
+				<i class="fas fa-wand-magic-sparkles" aria-hidden="true"></i><span>设置向导</span>
 			</a>
 		</div>
 		<%
-			if admin then
-				for _, top in ipairs(child_list(admin)) do
-					local kids = child_list(top.node)
-					local tpath = { "admin", top.name }
-					local turl = node_url(tpath)
-					local tactive = false
-					for _, k in ipairs(kids) do
-						if is_active({ "admin", top.name, k.name }) then tactive = true break end
-					end
-					if is_active(tpath) then tactive = true end
-					local ttitle = tr(util.striptags(top.node.title))
-					if #kids == 0 then
-		%>
-			<div class="ios-nav-g">
-				<a class="ios-nav-i<%= tactive and " active" or ""%>" href="<%=turl%>" data-path="<%=turl%>" data-label="<%=util.pcdata(ttitle)%>">
-					<i class="fas <%=icon_of(top.name, ttitle)%>" aria-hidden="true"></i><span><%=util.pcdata(ttitle)%></span>
-				</a>
-			</div>
-		<%
-					else
-		%>
-			<div class="ios-nav-g" data-group="<%=top.name%>">
-				<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="true">
-					<i class="fas <%=icon_of(top.name, ttitle)%> gi" aria-hidden="true"></i>
-					<span><%=util.pcdata(ttitle)%></span><i class="fas fa-chevron-down ch" aria-hidden="true"></i>
-				</button>
-				<div class="ios-nav-c">
-				<%
-					for _, k in ipairs(kids) do
-						local kpath = { "admin", top.name, k.name }
-						local kurl = node_url(kpath)
-						local ktitle = tr(util.striptags(k.node.title))
-				%>
-				<a class="ios-nav-i<%= is_active(kpath) and " active" or ""%>" href="<%=kurl%>" data-path="<%=kurl%>" data-label="<%=util.pcdata(ktitle)%>">
-					<i class="fas <%=icon_of(k.name, ktitle)%>" aria-hidden="true"></i><span><%=util.pcdata(ktitle)%></span>
-				</a>
-				<%
-					end
-					local ex = EXTRA[top.name]
-					if ex then
-						for _, e in ipairs(ex) do
-							local on = (e.v and vsrc == e.v) or (e.p and is_active(e.p))
-				%>
-				<a class="ios-nav-i<%= on and " active" or ""%>" href="<%=e.h%>" data-path="<%=e.h%>" data-label="<%=util.pcdata(e.t)%>">
-					<i class="fas <%=e.i%>" aria-hidden="true"></i><span><%=util.pcdata(e.t)%></span>
-				</a>
-				<%
-						end
-					end
-				%>
-				</div>
-			</div>
-		<%
-					end
-				end
 			end
 		%>
 	</nav>
