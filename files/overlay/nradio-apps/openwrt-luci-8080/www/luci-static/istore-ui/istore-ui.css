@@ -379,3 +379,7 @@ body.ios-collapsed .ios-nav-i:hover::after{
   body.ios-collapsed .ios-collapse{position:static;width:26px;height:26px;border-radius:8px;box-shadow:none}
   body.ios-collapsed.ios-drawer .ios-side{transform:translateX(0)}
 }
+/* ===== 分组标题图标（每个菜单条目/分组都有图标） ===== */
+.ios-nav-t .gi{width:15px;flex:0 0 15px;text-align:center;font-size:12px;color:var(--ink-3);opacity:.9}
+.ios-nav-t:hover .gi{color:var(--brand)}
+body.ios-collapsed .ios-nav-g > .ios-nav-t > .gi{display:none}

@@ -47,7 +47,7 @@
 	-- 一级分组 → 二级页面。iStoreOS 侧栏是「分组标题 + 条目」两层结构，
 	-- 更深的层级不展开（保持侧栏干净），子页面通过页内 Tab 导航。
 	local ICONS = {
-		status = "fa-gauge-high", overview = "fa-gauge-high",
+		status = "fa-gauge-high", overview = "fa-gauge-high", details = "fa-gauge-high",
 		network = "fa-globe", wireless = "fa-wifi", interfaces = "fa-network-wired",
 		services = "fa-layer-group", openclash = "fa-shield-halved",
 		system = "fa-gear", admin = "fa-gear", logout = "fa-right-from-bracket",
@@ -56,9 +56,75 @@
 		store = "fa-store", istore = "fa-store", statistics = "fa-chart-line",
 		firewall = "fa-shield", vpn = "fa-lock", nas = "fa-hard-drive",
 		quickstart = "fa-wand-magic-sparkles", network_guide = "fa-wand-magic-sparkles",
+		-- 状态类
+		routes = "fa-route", staticroutes = "fa-signs-post",
+		dmesg = "fa-microchip", log = "fa-file-lines", logs = "fa-file-lines",
+		syslog = "fa-file-lines", processes = "fa-list-ul", realtime = "fa-chart-line",
+		-- 系统类
+		security = "fa-lock", software = "fa-box-open", backup = "fa-floppy-disk",
+		startup = "fa-power-off", crontab = "fa-clock", mount = "fa-hard-drive",
+		leds = "fa-lightbulb", reboot = "fa-rotate-right",
+		argon = "fa-palette", ["argon-config"] = "fa-palette", argonconfig = "fa-palette",
+		-- 网络类
+		dhcp = "fa-server", hosts = "fa-tags", diagnostics = "fa-stethoscope",
+		passwall = "fa-shield-halved", passwall2 = "fa-shield-halved",
+		wireguard = "fa-shield-halved", openvpn = "fa-shield-halved",
+		zerotier = "fa-shield-halved", tailscale = "fa-shield-halved",
+		ddns = "fa-cloud", nros = "fa-cloud", myosnros = "fa-cloud",
+		myosupdate = "fa-rotate", update = "fa-rotate",
+		-- 其余常见
+		devices = "fa-display", clients = "fa-users", traffic = "fa-chart-column",
+		wireless_radio = "fa-wifi", fancontrol = "fa-fan", ttyd2 = "fa-terminal",
+	}
+
+	-- 标题关键词兜底：节点名不可预期（插件/多语言）时按标题文字匹配
+	local TITLE_ICONS = {
+		{ "概览", "fa-gauge-high" }, { "overview", "fa-gauge-high" },
+		{ "状态", "fa-gauge-high" }, { "status", "fa-gauge-high" },
+		{ "防火", "fa-shield" }, { "firewall", "fa-shield" },
+		{ "静态路由", "fa-signs-post" }, { "static route", "fa-signs-post" },
+		{ "路由", "fa-route" }, { "route", "fa-route" },
+		{ "系统日志", "fa-file-lines" }, { "system log", "fa-file-lines" },
+		{ "内核", "fa-microchip" }, { "kernel", "fa-microchip" },
+		{ "进程", "fa-list-ul" }, { "process", "fa-list-ul" },
+		{ "实时", "fa-chart-line" }, { "realtime", "fa-chart-line" },
+		{ "安全", "fa-lock" }, { "security", "fa-lock" },
+		{ "软件", "fa-box-open" }, { "software", "fa-box-open" },
+		{ "备份", "fa-floppy-disk" }, { "backup", "fa-floppy-disk" },
+		{ "固件", "fa-download" }, { "firmware", "fa-download" },
+		{ "启动", "fa-power-off" }, { "startup", "fa-power-off" },
+		{ "计划任务", "fa-clock" }, { "scheduled task", "fa-clock" },
+		{ "定时", "fa-calendar-days" }, { "scheduled setting", "fa-calendar-days" },
+		{ "挂载", "fa-hard-drive" }, { "mount", "fa-hard-drive" },
+		{ "led", "fa-lightbulb" },
+		{ "重启", "fa-rotate-right" }, { "reboot", "fa-rotate-right" },
+		{ "argon", "fa-palette" }, { "主题", "fa-palette" }, { "theme", "fa-palette" },
+		{ "dhcp", "fa-server" }, { "dns", "fa-server" },
+		{ "主机名", "fa-tags" }, { "hostname", "fa-tags" },
+		{ "诊断", "fa-stethoscope" }, { "diagnostic", "fa-stethoscope" },
+		{ "无线", "fa-wifi" }, { "wireless", "fa-wifi" }, { "wifi", "fa-wifi" },
+		{ "接口", "fa-network-wired" }, { "interface", "fa-network-wired" },
+		{ "蜂窝", "fa-signal" }, { "cellular", "fa-signal" },
+		{ "sim", "fa-sim-card" }, { "设备", "fa-microchip" }, { "device", "fa-microchip" },
+		{ "docker", "fa-cube" }, { "容器", "fa-cube" },
+		{ "终端", "fa-terminal" }, { "terminal", "fa-terminal" }, { "ttyd", "fa-terminal" },
+		{ "商店", "fa-store" }, { "store", "fa-store" },
+		{ "代理", "fa-shield-halved" }, { "clash", "fa-shield-halved" },
+		{ "日志", "fa-file-lines" }, { "log", "fa-file-lines" },
+		{ "统计", "fa-chart-line" }, { "图表", "fa-chart-line" },
+		{ "退出", "fa-right-from-bracket" }, { "logout", "fa-right-from-bracket" },
+		{ "向导", "fa-wand-magic-sparkles" }, { "wizard", "fa-wand-magic-sparkles" },
+		{ "重启", "fa-rotate-right" },
 	}
 	local function icon_of(name, title)
-		return ICONS[name] or ICONS[(name or ""):lower()] or "fa-circle-dot"
+		local k = tostring(name or ""):lower()
+		local ic = ICONS[k] or ICONS[name]
+		if ic then return ic end
+		local t = tostring(title or ""):lower()
+		for _, r in ipairs(TITLE_ICONS) do
+			if t:find(r[1], 1, true) then return r[2] end
+		end
+		return "fa-circle-dot"
 	end
 
 	-- 原厂页面并入对应分组（不再单独成组）；自带完整 HTML 的页面走 iframe 容器保留侧栏
@@ -99,7 +165,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><%=util.pcdata(title)%> · <%=util.pcdata(model)%></title>
 <link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
-<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=4">
+<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=5">
 <%
 	-- 原厂路由（/nradio/*）内容基于 bootstrap 栅格与 panel，需要在壳内补基础样式 + 适配层
 	if reqstr:match("^/nradio") then
@@ -111,7 +177,7 @@
 <%
 	end
 %>
-<script src="<%=media%>/shell.js?v=4" defer></script>
+<script src="<%=media%>/shell.js?v=5" defer></script>
 </head>
 <body class="ios-body" data-model="<%=util.pcdata(model)%>">
 <script>try{if(localStorage.getItem('iosCollapsed')==='1')document.body.classList.add('ios-collapsed')}catch(e){}</script>
@@ -156,6 +222,7 @@
 		%>
 			<div class="ios-nav-g" data-group="<%=top.name%>">
 				<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="true">
+					<i class="fas <%=icon_of(top.name, ttitle)%> gi" aria-hidden="true"></i>
 					<span><%=util.pcdata(ttitle)%></span><i class="fas fa-chevron-down ch" aria-hidden="true"></i>
 				</button>
 				<div class="ios-nav-c">
