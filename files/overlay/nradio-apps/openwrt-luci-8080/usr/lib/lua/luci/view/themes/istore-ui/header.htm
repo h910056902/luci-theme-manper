@@ -258,7 +258,7 @@
 
 	-- 原厂页面并入网络分组（蜂窝 / SIM / 设备）
 	if buckets.network then
-		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/cellular", v = "/cgi-bin/luci/nradio/cellular", order = 10 }
+		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/nradio/cellular", path = { "nradio", "cellular" }, order = 10 }
 		buckets.network[#buckets.network + 1] = { name = "siminfo", title = "SIM 信息", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/sim", v = "/cgi-bin/luci/nradio/system/sim", order = 11 }
 		buckets.network[#buckets.network + 1] = { name = "deviceinfo", title = "设备信息", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/device", v = "/cgi-bin/luci/nradio/system/device", order = 12 }
 	end
@@ -301,6 +301,11 @@
 <link rel="stylesheet" href="<%=media%>/css/main.min.css">
 <link rel="stylesheet" href="<%=media%>/css/nradio.min.css">
 <link rel="stylesheet" href="<%=media%>/vendor-adapter.css">
+<%-- 原厂页大量内联脚本依赖 jQuery/Bootstrap/main.js，缺了会 "$ is not defined" 且内容不渲染 --%>
+<script src="<%=media%>/js/jquery.min.js"></script>
+<script src="<%=media%>/js/bootstrap.min.js"></script>
+<script src="<%=media%>/js/main.min.js"></script>
+<script src="<%=media%>/js/nradio.min.js"></script>
 <%
 	end
 %>
