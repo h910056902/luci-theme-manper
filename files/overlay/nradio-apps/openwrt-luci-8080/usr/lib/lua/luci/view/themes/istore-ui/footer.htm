@@ -1,6 +1,16 @@
 <%#
  istore-ui · 尾模板：只闭合骨架，交互全部在 shell.js
+ 浅色皮肤在页面自身 <style> 之后加载，才能覆盖内置深色 token
 -%>
+<%
+	local _req = "/" .. table.concat((require "luci.dispatcher").context.requestpath or {}, "/")
+	local _light = _req:find("/services/openclash/ocspeed", 1, true) or _req:find("network_guide", 1, true)
+	if _light then
+%>
+<link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=1">
+<%
+	end
+%>
 	</main>
 </div><!-- /ios-main -->
 </div><!-- /ios-shell -->

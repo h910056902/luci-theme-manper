@@ -1,0 +1,155 @@
+/* ==========================================================================
+   light-overrides.css · 把内置深色的自有页面（自动测速 / 设置向导）拉到 iStoreOS 浅色
+   加载时机：footer（在页面自身 <style> 之后），保证同权重下覆盖生效
+   ========================================================================== */
+
+/* ======================= ① 自动测速 ocspeed ======================= */
+body .ocspeed-body{
+  --bg-canvas:transparent; --bg-solid:transparent;
+  --bg-card:#ffffff; --bg-subtle:#f8fafd; --bg-muted:#eef3fb;
+  --bg-hover:#f1f5fb; --bg-inset:#f8fafd;
+
+  --border-light:#e8eef6; --border-subtle:#eef3fb; --border-strong:#d9e3f0;
+  --border-card:#e8eef6; --border-focus:#0060ff;
+
+  --text-main:#32325d; --text-body:#5b6b8c; --text-muted:#8898aa; --text-sub:#8898aa;
+
+  --brand-primary:#0060ff; --brand-hover:#009aff; --brand-active:#0052d9;
+  --brand-light:#ecf3fe; --brand-ring:rgba(0,96,255,.18); --on-brand:#ffffff;
+
+  --status-ok:#00b578; --status-ok-bg:#e7f8f1; --status-ok-border:#bdeedd;
+  --status-warn:#ff8f1f; --status-warn-bg:#fff4e6; --status-warn-border:#ffe0b8;
+  --status-bad:#f5484a; --status-bad-bg:#fdeceb; --status-bad-border:#f8cdcc;
+
+  background:transparent; color:#5b6b8c;
+  padding:0 0 8px; border-radius:0;
+}
+body .ocspeed-body h1{color:#32325d}
+body .ocspeed-body .ver{
+  background:#ecf3fe; border:1px solid #cfe2ff; color:#0060ff;
+}
+body .ocspeed-body .live,
+body .ocspeed-body .pill{
+  background:#f8fafd; border-color:#e8eef6; color:#5b6b8c;
+}
+body .ocspeed-body .card,
+body .ocspeed-body .panel,
+body .ocspeed-body .pb,
+body .ocspeed-body details.cfg{
+  background:#ffffff; border:1px solid #e8eef6;
+  box-shadow:0 1px 2px rgba(50,50,93,.05), 0 8px 24px rgba(50,50,93,.05);
+}
+body .ocspeed-body .card:hover{background:#ffffff; border-color:#cfe2ff}
+body .ocspeed-body .card .v,
+body .ocspeed-body .card .big,
+body .ocspeed-body .ph b,
+body .ocspeed-body .tw td{color:#32325d}
+body .ocspeed-body .card .k,
+body .ocspeed-body .tw thead th,
+body .ocspeed-body .ph .sub{color:#8898aa}
+body .ocspeed-body .card.p0::before{
+  background:linear-gradient(90deg,transparent,#0060ff,transparent); box-shadow:none;
+}
+body .ocspeed-body button{
+  background:#ffffff; color:#32325d; border:1px solid #d9e3f0; border-radius:8px;
+}
+body .ocspeed-body button:hover{
+  background:#f8fafd; border-color:#cfe2ff; color:#0060ff;
+}
+body .ocspeed-body button.primary{
+  background:linear-gradient(144deg,#009aff 0%,#0060ff 100%);
+  border-color:transparent; color:#ffffff;
+  box-shadow:0 8px 20px rgba(0,96,255,.22);
+}
+body .ocspeed-body button.primary:hover{filter:brightness(1.05); color:#fff}
+body .ocspeed-body .pb-stages .st{
+  background:#f8fafd; border-color:#e8eef6; color:#8898aa;
+}
+body .ocspeed-body .pb-stages .st.done{
+  background:#e7f8f1; border-color:#bdeedd; color:#0a8f61;
+}
+body .ocspeed-body .pb-stages .st.active{
+  background:#ecf3fe; border-color:#cfe2ff; color:#0060ff;
+}
+body .ocspeed-body .tw{border:1px solid #e8eef6; background:#fff}
+body .ocspeed-body .tw thead th{
+  background:#f8fafd; color:#8898aa; border-bottom:1px solid #e8eef6; position:sticky; top:0;
+}
+body .ocspeed-body .tw tbody tr:hover{background:#f8fafd}
+body .ocspeed-body .tw td{border-bottom:1px solid #eef3fb}
+body .ocspeed-body #logbox{
+  background:#f8fafd; color:#5b6b8c; border:1px solid #e8eef6; border-radius:8px;
+}
+body .ocspeed-body .searchbox input{
+  background:#fff; border:1px solid #d9e3f0; color:#32325d; border-radius:8px;
+}
+body .ocspeed-body .searchbox input:focus{
+  border-color:#0060ff; box-shadow:0 0 0 3px rgba(0,96,255,.12);
+}
+body .ocspeed-body .pb-fill{background:linear-gradient(90deg,#009aff,#0060ff)}
+body .ocspeed-body .banner{border-radius:8px}
+body .ocspeed-body .bk-item{background:#f8fafd; border:1px solid #e8eef6}
+body .ocspeed-body a{color:#0060ff}
+body .ocspeed-body .sel-node,
+body .ocspeed-body .badge,
+body .ocspeed-body .tag{background:#ecf3fe; color:#0060ff; border-color:#cfe2ff}
+
+/* ======================= ② 设置向导 wizard ======================= */
+body{
+  --wz-bg:#f4f7fb; --wz-c1:#ffffff; --wz-c2:#f8fafd; --wz-bd:#e8eef6;
+  --wz-t1:#32325d; --wz-t2:#5b6b8c;
+  --wz-ac:#0060ff; --wz-ac2:#009aff;
+  --wz-gn:#00b578; --wz-rd:#f5484a; --wz-yl:#ff8f1f;
+}
+body .wz-head h1{color:#32325d; font-size:19px}
+body .wz-sub{color:#5b6b8c}
+body .wz-head .wz-back{
+  background:#fff; border:1px solid #e8eef6; color:#5b6b8c; border-radius:999px;
+}
+body .wz-head .wz-back:hover{color:#0060ff; border-color:#cfe2ff; background:#ecf3fe}
+body .wz-card{
+  background:#ffffff; border:1px solid #e8eef6; border-radius:12px;
+  box-shadow:0 1px 2px rgba(50,50,93,.05), 0 8px 24px rgba(50,50,93,.05);
+}
+body .wz-card h2{color:#32325d; font-size:14px}
+body .wz-card h2 .wz-no{
+  background:linear-gradient(144deg,#009aff,#0060ff); color:#fff; border-radius:7px;
+}
+body .wz-card h2 .wz-chip{
+  background:#f8fafd; border:1px solid #e8eef6; color:#5b6b8c;
+}
+body .wz-card h2 .wz-chip.on{background:#e7f8f1; border-color:#bdeedd; color:#0a8f61}
+body .wz-card h2 .wz-chip.off{background:#fdeceb; border-color:#f8cdcc; color:#c93b3d}
+body .wz-tip{color:#5b6b8c}
+body .wz-tip b{color:#c1730f}
+body .wz-row,
+body .wz-sim-now,
+body .wz-slot{background:#f8fafd; border:1px solid #e8eef6; border-radius:10px}
+body .wz-row .wz-band{color:#0060ff}
+body .wz-field label{color:#8898aa}
+body .wz-input,
+body .wz-select{
+  background:#ffffff; border:1px solid #d9e3f0; color:#32325d; border-radius:8px;
+}
+body .wz-input:focus,
+body .wz-select:focus{
+  border-color:#0060ff; box-shadow:0 0 0 3px rgba(0,96,255,.12);
+}
+body .wz-eye{color:#8898aa}
+body .wz-eye:hover{color:#0060ff}
+body .wz-btn{
+  background:linear-gradient(144deg,#009aff,#0060ff); color:#fff; border-radius:8px;
+  box-shadow:0 6px 16px rgba(0,96,255,.20);
+}
+body .wz-btn:hover{filter:brightness(1.05); opacity:1}
+body .wz-btn.ghost{
+  background:#fff; border:1px solid #d9e3f0; color:#32325d; box-shadow:none;
+}
+body .wz-btn.danger{
+  background:#fdeceb; border:1px solid #f8cdcc; color:#c93b3d; box-shadow:none;
+}
+body .wz-slot:hover{border-color:#cfe2ff; background:#ecf3fe}
+body .wz-slot[aria-pressed="true"],
+body .wz-slot.on{border-color:#0060ff; background:#ecf3fe}
+body .wz-dot{background:#00b578; box-shadow:0 0 0 3px rgba(0,181,120,.14)}
+body .wz-dot.off{background:#f5484a; box-shadow:0 0 0 3px rgba(245,72,74,.14)}

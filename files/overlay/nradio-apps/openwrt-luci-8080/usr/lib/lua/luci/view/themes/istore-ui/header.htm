@@ -258,7 +258,7 @@
 
 	-- 原厂页面并入网络分组（蜂窝 / SIM / 设备）
 	if buckets.network then
-		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/nradio/cellular", path = { "nradio", "cellular" }, order = 10 }
+		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/cellular", v = "/cgi-bin/luci/nradio/cellular", order = 10 }
 		buckets.network[#buckets.network + 1] = { name = "siminfo", title = "SIM 信息", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/sim", v = "/cgi-bin/luci/nradio/system/sim", order = 11 }
 		buckets.network[#buckets.network + 1] = { name = "deviceinfo", title = "设备信息", url = "/cgi-bin/luci/admin/status/vendor?src=/cgi-bin/luci/nradio/system/device", v = "/cgi-bin/luci/nradio/system/device", order = 12 }
 	end
@@ -292,7 +292,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><%=util.pcdata(title)%> · <%=util.pcdata(model)%></title>
 <link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
-<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=5">
+<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=7">
 <%
 	-- 原厂路由（/nradio/*）内容基于 bootstrap 栅格与 panel，需要在壳内补基础样式 + 适配层
 	if reqstr:match("^/nradio") then
@@ -304,7 +304,11 @@
 <%
 	end
 %>
-<script src="<%=media%>/shell.js?v=5" defer></script>
+<!-- LuCI 基础脚本：本固件的 XHR/dom 在 resources/xhr.js，CBI 在 resources/cbi.js。
+     缺它们会导致概览/无线等页的原厂轮询不执行（数值停在“正在收集数据…”）。 -->
+<script src="/luci-static/resources/cbi.js"></script>
+<script src="/luci-static/resources/xhr.js"></script>
+<script src="<%=media%>/shell.js?v=7" defer></script>
 </head>
 <body class="ios-body" data-model="<%=util.pcdata(model)%>">
 <script>try{if(localStorage.getItem('iosCollapsed')==='1')document.body.classList.add('ios-collapsed')}catch(e){}</script>
