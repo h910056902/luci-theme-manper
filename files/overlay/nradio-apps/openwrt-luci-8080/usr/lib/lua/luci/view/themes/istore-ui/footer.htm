@@ -1,0 +1,24 @@
+<%#
+ istore-ui · 尾模板：只闭合骨架，交互全部在 shell.js
+-%>
+	</main>
+</div><!-- /ios-main -->
+</div><!-- /ios-shell -->
+<script>
+/* 老式 LuCI 页面里的按钮/输入统一到 iStoreOS 组件语义（CBI 生成物无法改模板） */
+(function () {
+	'use strict';
+	Array.prototype.forEach.call(document.querySelectorAll('#maincontent .cbi-button'), function (b) {
+		b.classList.add('ios-btn');
+		if (/apply|save|submit/i.test(b.className)) b.classList.add('primary');
+	});
+	Array.prototype.forEach.call(document.querySelectorAll('#maincontent input[type=text],#maincontent input[type=password],#maincontent select'), function (i) {
+		i.classList.add(i.tagName === 'SELECT' ? 'ios-select' : 'ios-input');
+	});
+	Array.prototype.forEach.call(document.querySelectorAll('#maincontent .cbi-section'), function (s) {
+		s.classList.add('ios-card');
+	});
+})();
+</script>
+</body>
+</html>

@@ -27,10 +27,15 @@ do
 	local ok_mu, m_uci = pcall(require, "luci.model.uci")
 	if ok_mu and m_uci then
 		pcall(function()
-			if m_uci.cursor():get("argon", "@global[0]", "ui_theme") == "myos" then
+			local kp_ui = m_uci.cursor():get("argon", "@global[0]", "ui_theme")
+			if kp_ui == "myos" then
 				active_theme = "myos"
 				-- MYOS 仓库主题 MYOS UI (luci-theme-c2000max-ui) 的静态资源
 				active_media = "/luci-static/c2000max-ui"
+			elseif kp_ui == "istore" then
+				-- 第三套主题（自研，iStoreOS 视觉语言）：浅色 + 蓝色渐变
+				active_theme = "istore"
+				active_media = "/luci-static/istore-ui"
 			end
 		end)
 	end
@@ -79,10 +84,12 @@ function parser.parse(path, ...)
 		-- 只排除「驾驶舱首页」与 manper 旧外壳(避免抢走官方总览/主题)。
 		-- 这样 kp_docker/quickstart/istorerouter/ttyd 等只在实例里存在的页面才不会 404。
 		local kp_whitelist = false
-		if active_theme == "myos" then
+		if active_theme == "myos" or active_theme == "istore" then
 			local kp_excluded = (name == "admin_status/index.htm")
 				or name:match("^themes/bootstrap/")
 				or name:match("^themes/argon/")
+				or (active_theme == "istore" and name:match("^themes/c2000max%-ui/"))
+				or (active_theme == "myos" and name:match("^themes/istore%-ui/"))
 			kp_whitelist = not kp_excluded
 		else
 		kp_whitelist = name:match("^themes/bootstrap/")
@@ -257,27 +264,48 @@ function luci.dispatcher.createtree()
 	--   不裁剪 nradio/nradioadv/authcheck、不注入任何 manper 定制节点,
 	--   调度树与原厂固件完全一致 → 原厂导航(首页/蜂窝/上网/Wi-Fi/终端/应用商店/更多)全部可用。
 	--   仅补两处: 原厂登录页 + 8080 固定入口 /admin/status/details 落地原厂首页。
-	if active_theme == "myos" then
+	if active_theme == "myos" or active_theme == "istore" then
+		-- 两套「保留原厂调度树」的主题：myos（MYOS UI）/ istore（iStoreOS 风格自研）
+		local kp_theme_dir = (active_theme == "istore") and "istore-ui" or "c2000max-ui"
+		local kp_home_tpl  = (active_theme == "istore") and "admin_status/istore_home" or "admin_status/myos_ui"
 		local m_admin = tree.nodes and tree.nodes.admin
 		if m_admin then
 			-- 登录页随主题: 主题模板缺失时自动回退原厂登录页(登录是生命线,不能 500)
 			local ok_fs, lfs = pcall(require, "nixio.fs")
-			local theme_login = "/usr/lib/lua/luci/view/themes/c2000max-ui/sysauth.htm"
-			local priv_login = private_viewdir .. "/themes/c2000max-ui/sysauth.htm"
+			local theme_login = "/usr/lib/lua/luci/view/themes/" .. kp_theme_dir .. "/sysauth.htm"
+			local priv_login = private_viewdir .. "/themes/" .. kp_theme_dir .. "/sysauth.htm"
 			local has_login = ok_fs and lfs and (lfs.access(theme_login) or lfs.access(priv_login))
 			m_admin.sysauth_template = has_login
-				and "themes/c2000max-ui/sysauth"
+				and ("themes/" .. kp_theme_dir .. "/sysauth")
 				or "sysauth"
 			m_admin.nodes = m_admin.nodes or {}
 			local m_status = m_admin.nodes.status
 			if m_status then
 				m_status.nodes = m_status.nodes or {}
-				-- 首页 = MYOS 仪表盘(移植自仓库主题);其余菜单走原厂页面
+				-- 首页 = 该主题的仪表盘；其余菜单走原厂页面
 				m_status.nodes.details = {
 					nodes = {},
-					target = luci.dispatcher.template("admin_status/myos_ui"),
+					target = luci.dispatcher.template(kp_home_tpl),
 					title = "概览",
 					order = 1,
+					leaf = true
+				}
+			end
+			if active_theme == "istore" then
+				-- 第三套主题：侧栏常驻「设置向导」入口（Wi-Fi / SIM 切换 / OpenClash 订阅）
+				m_admin.nodes.network_guide = {
+					nodes = {
+						network = {
+							nodes = {},
+							target = luci.dispatcher.template("admin_status/kp_wizard"),
+							title = "网络设置",
+							order = 1,
+							leaf = true
+						}
+					},
+					target = luci.dispatcher.template("admin_status/kp_wizard"),
+					title = "设置向导",
+					order = 5,
 					leaf = true
 				}
 			end
@@ -467,6 +495,7 @@ function luci.dispatcher.httpdispatch(request, prefix)
 	config.themes = {
 		Bootstrap = "/luci-static/bootstrap",
 		["NRadio 原生(MYOS)"] = "/luci-static/nradio",
+		["iStoreOS 风格(自研)"] = "/luci-static/istore-ui",
 	}
 	return original_httpdispatch(request, prefix)
 end
@@ -483,7 +512,8 @@ if request_method == "GET" and (
 	path_info == "/" or
 	path_info == "/admin" or
 	path_info == "/admin/" or
-	(active_theme ~= "myos" and (
+	-- 厂商路由仅在 manper 模式下拦截（隐藏）；myos / istore 保留原厂页面可访问
+	(active_theme == "manper" and (
 		path_info == "/nradio" or
 		path_info:match("^/nradio/") or
 		path_info == "/nradioadv" or

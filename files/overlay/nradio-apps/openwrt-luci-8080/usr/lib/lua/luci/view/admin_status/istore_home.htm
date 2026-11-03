@@ -1,0 +1,340 @@
+<%#
+ istore-ui·首页（第三套主题）— 浅色卡片式总览
+ 数据：infocd cpestatus / infocd runtime / system.info / UCI wireless / conntrack / arp /
+       /etc/openclash-helper/status.json（自动测速最近结果）
+ 轮询：同一模板 ?state=1 只输出 JSON，前端 10s 拉取并更新数值节点
+-%>
+<%
+	local fs    = require "nixio.fs"
+	local util  = require "luci.util"
+	local jsonc = require "luci.jsonc"
+	local sys   = require "luci.sys"
+	local http  = require "luci.http"
+
+	local function ubus_call(obj, method, args)
+		local cmd = "ubus call " .. obj .. " " .. method
+		if args then cmd = cmd .. " '" .. args .. "'" end
+		local raw = sys.exec(cmd .. " 2>/dev/null") or ""
+		local ok, data = pcall(jsonc.parse, raw)
+		return (ok and type(data) == "table") and data or nil
+	end
+
+	local function num(v)
+		if v == nil then return nil end
+		return tonumber(tostring(v):match("([%-]?%d+%.?%d*)"))
+	end
+
+	local function build_state()
+		local st = {}
+		local ok_sys, si = pcall(util.ubus, "system", "info")
+		st.system = (ok_sys and si) or {}
+
+		-- 蜂窝（取第一张有 RSRP 的卡）
+		local cell
+		for _, slot in ipairs({ "1", "2" }) do
+			local r = ubus_call("infocd", "cpestatus", '{"name":"' .. slot .. '"}')
+			local s = r and r.result and r.result[1] and r.result[1].status
+			if s and s.rsrp and s.rsrp ~= "" then cell = s break end
+			cell = cell or s
+		end
+		local rt = ubus_call("infocd", "runtime")
+		st.runtime = rt or {}
+		local g = (rt and rt.global) or {}
+
+		st.cell = {
+			operator = cell and (cell.sim_company or cell.isp_company) or "",
+			mode     = cell and cell.mode or "",
+			band     = cell and cell.band or "",
+			rsrp     = num(cell and cell.rsrp) or 0,
+			rsrq     = num(cell and cell.rsrq) or 0,
+			sinr     = num(cell and cell.sinr) or 0,
+			pci      = cell and tostring(cell.pci or "") or "",
+			cellid   = cell and tostring(cell.cell or "") or "",
+			sim      = cell and (cell.sim_name or "") or "",
+			temp     = num(cell and cell.model_temp) or num(g.device_temp) or 0,
+			up       = (num(cell and cell.rsrp) or 0) < 0,
+		}
+
+		-- 无线（UCI 合成）
+		local wifi = {}
+		local uci = require "luci.model.uci".cursor()
+		uci:foreach("wireless", "wifi-device", function(dev)
+			local band = dev.band or dev.hwmode or ""
+			local bkey = (band == "2g" or band == "11g" or band == "11b") and "2.4G" or "5G"
+			local ssid, up = "", false
+			uci:foreach("wireless", "wifi-iface", function(ifc)
+				if ifc.device == dev[".name"] then
+					ssid = ifc.ssid or ""
+					up = (ifc.disabled ~= "1") and (dev.disabled ~= "1")
+				end
+			end)
+			if ssid ~= "" then wifi[#wifi + 1] = { band = bkey, ssid = ssid, up = up } end
+		end)
+		st.wifi = wifi
+
+		-- 在线设备 / 会话
+		local seen, clients = {}, 0
+		for _, l in ipairs(util.split(sys.exec("cat /proc/net/arp 2>/dev/null") or "")) do
+			local mac = l:match("%s+0x%x+%s+0x%x+%s+([0-9a-fA-F:]+)%s")
+			if mac and mac ~= "00:00:00:00:00:00" and not seen[mac:lower()] then
+				seen[mac:lower()] = true; clients = clients + 1
+			end
+		end
+		st.clients = clients
+		local cnt = fs.readfile("/proc/sys/net/netfilter/nf_conntrack_count")
+		st.sessions = tonumber(cnt and cnt:gsub("%s", "")) or 0
+
+		-- 存储（overlay 分区）
+		local df = sys.exec("df -k /overlay 2>/dev/null | tail -n 1") or ""
+		local total_k = tonumber(df:match("%s(%d+)%s+%d+%s+%d+")) or 0
+		local used_k  = tonumber(df:match("%s%d+%s+(%d+)")) or 0
+		local avail_k = tonumber(df:match("%s%d+%s+%d+%s+(%d+)")) or 0
+		if total_k == 0 then
+			total_k = tonumber(df:match("%s(%d+)%s+%d+%s+%d+")) or 0
+		end
+		st.disk = { total = total_k, used = used_k, avail = avail_k }
+
+		-- 服务
+		st.svc = {
+			openclash = (sys.call("pidof clash >/dev/null") == 0),
+			docker    = (sys.call("pidof dockerd >/dev/null") == 0),
+			ttyd      = (sys.call("pidof ttyd >/dev/null") == 0),
+		}
+
+		-- 自动测速最近结果
+		local ok_o, oc = pcall(jsonc.parse, fs.readfile("/etc/openclash-helper/status.json") or "")
+		if ok_o and type(oc) == "table" and oc.top and oc.top[1] then
+			st.ocspeed = {
+				best = oc.top[1].n or "",
+				delay = oc.top[1].d or 0,
+				candidates = oc.candidates or 0,
+				group = oc.group or "",
+				ts = oc.ts or 0,
+			}
+		end
+		return st
+	end
+
+	local st = build_state()
+
+	if http.formvalue("state") == "1" then
+		http.prepare_content("application/json")
+		http.write(jsonc.stringify({ cell = st.cell, disk = st.disk, system = { memory = st.system.memory or {}, uptime = st.system.uptime or 0, load = st.system.load or {} }, clients = st.clients, sessions = st.sessions, svc = st.svc }))
+		return
+	end
+
+	-- 展示派生
+	local mem = st.system.memory or {}
+	local mem_total = tonumber(mem.total) or 0
+	local mem_avail = tonumber(mem.available) or 0
+	local mem_used  = math.max(mem_total - mem_avail, 0)
+	local mem_pct   = mem_total > 0 and math.floor(mem_used * 100 / mem_total + 0.5) or 0
+
+	local disk_pct = st.disk.total > 0 and math.floor(st.disk.used * 100 / st.disk.total + 0.5) or 0
+
+	local up = tonumber(st.system.uptime) or 0
+	local function dur(s)
+		local d = math.floor(s / 86400)
+		local h = math.floor((s % 86400) / 3600)
+		local m = math.floor((s % 3600) / 60)
+		if d > 0 then return d .. " 天 " .. h .. " 时" end
+		if h > 0 then return h .. " 时 " .. m .. " 分" end
+		return m .. " 分"
+	end
+
+	local load1 = (st.system.load and st.system.load[1]) and string.format("%.2f", st.system.load[1]) or "--"
+
+	local c = st.cell
+	local rsrp = c.rsrp
+	local sig_pct = 0
+	if rsrp < 0 then sig_pct = math.floor((math.max(math.min(rsrp, -44), -140) + 140) * 100 / 96 + 0.5) end
+	local lvl, lvl_txt, color = "bad", "弱", "#f5484a"
+	if rsrp <= -85 and rsrp < 0 then lvl, lvl_txt, color = "ok", "良好", "#00b578"
+	elseif rsrp <= -105 and rsrp < 0 then lvl, lvl_txt, color = "warn", "一般", "#ff8f1f" end
+	if rsrp == 0 then lvl_txt = "无信号" end
+
+	local function mode_short(m)
+		local s = string.upper(tostring(m or ""))
+		if s:find("NR", 1, true) then
+			if s:find("SA", 1, true) then return "5G SA" end
+			return "5G NSA"
+		end
+		if s:find("LTE", 1, true) or s:find("4G", 1, true) then return "4G LTE" end
+		return tostring(m or "") ~= "" and tostring(m) or "蜂窝"
+	end
+
+	local op = (c.operator ~= "" and c.operator) or "未识别运营商"
+-%>
+<%+header%>
+<div class="ios-grid ios-g2x">
+	<!-- 连接状态 -->
+	<div class="ios-card">
+		<div class="ios-card-h">
+			<h3>连接状态</h3>
+			<span class="ios-badge"><%=util.pcdata(mode_short(c.mode))%><%= c.band ~= "" and (" · " .. util.pcdata(c.band)) or ""%></span>
+			<div class="right">
+				<a class="ios-btn sm" href="/cgi-bin/luci/nradio/cellular">详情 <i class="fas fa-chevron-right"></i></a>
+			</div>
+		</div>
+		<div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+			<div class="ios-ring">
+				<svg viewBox="0 0 100 100" width="112" height="112" aria-hidden="true">
+					<circle class="rt" cx="50" cy="50" r="44" fill="none" stroke-width="9"/>
+					<circle class="rf" cx="50" cy="50" r="44" fill="none" stroke-width="9"
+						stroke="<%=color%>" stroke-dasharray="276.5"
+						stroke-dashoffset="<%=string.format("%.1f", 276.5 * (1 - sig_pct / 100))%>"/>
+				</svg>
+				<div class="ct"><b data-k="rsrp"><%= rsrp ~= 0 and rsrp or "--"%></b><span>dBm · <%=lvl_txt%></span></div>
+			</div>
+			<div style="flex:1;min-width:220px">
+				<div style="font-size:16px;font-weight:700;margin-bottom:2px" data-k="op"><%=util.pcdata(op)%></div>
+				<div style="font-size:12px;color:var(--ink-3);margin-bottom:12px">
+					<i class="fas fa-sim-card" aria-hidden="true"></i> <span data-k="sim"><%=util.pcdata(c.sim ~= "" and c.sim or "SIM 卡")%></span>
+				</div>
+				<div class="ios-grid ios-g4" style="gap:10px;margin:0">
+					<div class="ios-kpi"><span class="k">RSRQ</span><span class="v" style="font-size:17px"><span data-k="rsrq"><%= c.rsrq ~= 0 and c.rsrq or "--"%></span><small>dB</small></span></div>
+					<div class="ios-kpi"><span class="k">SINR</span><span class="v" style="font-size:17px"><span data-k="sinr"><%= c.sinr ~= 0 and c.sinr or "--"%></span><small>dB</small></span></div>
+					<div class="ios-kpi"><span class="k">频段</span><span class="v" style="font-size:17px" data-k="band"><%=util.pcdata(c.band ~= "" and c.band or "--")%></span></div>
+					<div class="ios-kpi"><span class="k">PCI</span><span class="v" style="font-size:17px" data-k="pci"><%=util.pcdata(c.pci ~= "" and c.pci or "--")%></span></div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- 资源 -->
+	<div class="ios-card">
+		<div class="ios-card-h"><h3>资源占用</h3><span class="sub">实时</span></div>
+		<div class="ios-grid ios-g2" style="margin:0;gap:12px">
+			<div class="ios-kpi">
+				<span class="k"><i class="fas fa-memory"></i> 内存</span>
+				<span class="v"><span data-k="mempct"><%=mem_pct%></span><small>%</small></span>
+				<span class="s"><span data-k="memused"><%= math.floor(mem_used / 1024)%></span> / <%= math.floor(mem_total / 1024)%> MB</span>
+				<span class="ios-bar"><i data-k="membar" style="width:<%=mem_pct%>%"></i></span>
+			</div>
+			<div class="ios-kpi">
+				<span class="k"><i class="fas fa-hard-drive"></i> 存储</span>
+				<span class="v"><span data-k="diskpct"><%=disk_pct%></span><small>%</small></span>
+				<span class="s"><span data-k="diskavail"><%= math.floor(st.disk.avail / 1024)%></span> MB 可用</span>
+				<span class="ios-bar"><i data-k="diskbar" style="width:<%=disk_pct%>%"></i></span>
+			</div>
+			<div class="ios-kpi"><span class="k"><i class="fas fa-thermometer-half"></i> 整机温度</span><span class="v"><span data-k="temp"><%= (st.runtime.global and st.runtime.global.device_temp) or c.temp or "--"%></span><small>℃</small></span></div>
+			<div class="ios-kpi"><span class="k"><i class="fas fa-clock"></i> 运行时间</span><span class="v" style="font-size:16px" data-k="uptime"><%=dur(up)%></span><span class="s">负载 <%=load1%></span></div>
+		</div>
+	</div>
+</div>
+
+<div class="ios-grid ios-g3">
+	<!-- Wi-Fi -->
+	<div class="ios-card">
+		<div class="ios-card-h"><h3>Wi-Fi</h3><div class="right"><a class="ios-btn sm" href="<%=luci.dispatcher.build_url("admin", "network", "wireless")%>">配置</a></div></div>
+		<div class="ios-list">
+			<% if #st.wifi == 0 then %>
+			<div class="ios-empty"><i class="fas fa-wifi"></i>暂无无线配置</div>
+			<% else for _, w in ipairs(st.wifi) do %>
+			<div class="ios-li">
+				<div class="ico"><i class="fas fa-wifi"></i></div>
+				<div class="txt"><b><%=util.pcdata(w.ssid)%></b><small><%=util.pcdata(w.band)%> · <%= w.up and "已启用" or "已停用"%></small></div>
+				<div class="rt"><span class="ios-badge <%= w.up and "ok" or ""%>"><%= w.up and "在线" or "关闭"%></span></div>
+			</div>
+			<% end end %>
+		</div>
+	</div>
+
+	<!-- 终端与连接 -->
+	<div class="ios-card">
+		<div class="ios-card-h"><h3>终端与连接</h3></div>
+		<div class="ios-grid ios-g2" style="margin:0;gap:12px">
+			<div class="ios-kpi"><span class="k"><i class="fas fa-users"></i> 在线设备</span><span class="v" data-k="clients"><%=st.clients%></span><span class="s">ARP 表去重</span></div>
+			<div class="ios-kpi"><span class="k"><i class="fas fa-link"></i> 会话数</span><span class="v" data-k="sessions"><%=st.sessions%></span><span class="s">conntrack</span></div>
+		</div>
+		<div class="ios-sep"></div>
+		<div class="ios-list">
+			<div class="ios-li">
+				<div class="ico" style="background:var(--ok-soft);color:var(--ok)"><i class="fas fa-shield-halved"></i></div>
+				<div class="txt"><b>OpenClash</b><small>代理出口</small></div>
+				<div class="rt"><span class="ios-badge <%= st.svc.openclash and "ok" or "bad"%>" data-k="svc-oc"><%= st.svc.openclash and "运行中" or "已停止"%></span></div>
+			</div>
+			<div class="ios-li">
+				<div class="ico" style="background:var(--brand-soft);color:var(--brand)"><i class="fas fa-cube"></i></div>
+				<div class="txt"><b>Docker</b><small>容器引擎</small></div>
+				<div class="rt"><span class="ios-badge <%= st.svc.docker and "ok" or "bad"%>" data-k="svc-docker"><%= st.svc.docker and "运行中" or "已停止"%></span></div>
+			</div>
+		</div>
+	</div>
+
+	<!-- 自动测速 -->
+	<div class="ios-card">
+		<div class="ios-card-h"><h3>自动测速</h3><div class="right"><a class="ios-btn sm" href="<%=luci.dispatcher.build_url("admin", "services", "openclash", "ocspeed")%>">打开</a></div></div>
+		<% if st.ocspeed then %>
+		<div class="ios-kpi" style="margin-bottom:10px">
+			<span class="k"><i class="fas fa-bolt"></i> 最快节点 · <%=util.pcdata(st.ocspeed.group)%></span>
+			<span class="v" style="font-size:15px;word-break:break-all"><%=util.pcdata(st.ocspeed.best)%></span>
+			<span class="s"><%=st.ocspeed.delay%> ms · 候选 <%=st.ocspeed.candidates%> 个</span>
+		</div>
+		<div class="ios-note info"><i class="fas fa-circle-info"></i><span>每 30 分钟自动全量测速并切换到最快节点；故障转移与备用预选可在测速页开启。</span></div>
+		<% else %>
+		<div class="ios-empty"><i class="fas fa-bolt"></i>暂无测速记录</div>
+		<% end %>
+	</div>
+</div>
+
+<script>
+(function () {
+	'use strict';
+	var URL = location.pathname + '?state=1';
+	function set(k, v) {
+		Array.prototype.forEach.call(document.querySelectorAll('[data-k="' + k + '"]'), function (n) { n.textContent = v; });
+	}
+	function bar(k, v) {
+		Array.prototype.forEach.call(document.querySelectorAll('[data-k="' + k + '"]'), function (n) { n.style.width = Math.max(0, Math.min(100, v)) + '%'; });
+	}
+	function dur(s) {
+		var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+		if (d > 0) return d + ' 天 ' + h + ' 时';
+		if (h > 0) return h + ' 时 ' + m + ' 分';
+		return m + ' 分';
+	}
+	function svc(k, on) {
+		Array.prototype.forEach.call(document.querySelectorAll('[data-k="' + k + '"]'), function (n) {
+			n.textContent = on ? '运行中' : '已停止';
+			n.className = 'ios-badge ' + (on ? 'ok' : 'bad');
+		});
+	}
+	function refresh() {
+		if (document.hidden) return;
+		fetch(URL, { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.ok ? r.json() : null; })
+			.then(function (d) {
+				if (!d) return;
+				var c = d.cell || {};
+				if (c.rsrp) set('rsrp', c.rsrp);
+				if (c.rsrq) set('rsrq', c.rsrq);
+				if (c.sinr) set('sinr', c.sinr);
+				if (c.band) set('band', c.band);
+				if (c.pci) set('pci', c.pci);
+				if (c.operator) set('op', c.operator);
+				if (c.sim) set('sim', c.sim);
+				var m = (d.system && d.system.memory) || {};
+				var total = (+m.total || 0), avail = (+m.available || 0);
+				if (total > 0) {
+					var pct = Math.round((total - avail) * 100 / total);
+					set('mempct', pct); bar('membar', pct);
+					set('memused', Math.floor((total - avail) / 1024));
+				}
+				if (d.system && d.system.uptime) set('uptime', dur(+d.system.uptime));
+				if (d.disk && d.disk.total > 0) {
+					var dp = Math.round(d.disk.used * 100 / d.disk.total);
+					set('diskpct', dp); bar('diskbar', dp);
+					set('diskavail', Math.floor(d.disk.avail / 1024));
+				}
+				if (typeof d.clients === 'number') set('clients', d.clients);
+				if (typeof d.sessions === 'number') set('sessions', d.sessions);
+				if (d.svc) { svc('svc-oc', !!d.svc.openclash); svc('svc-docker', !!d.svc.docker); }
+			})
+			.catch(function () {});
+	}
+	setInterval(refresh, 10000);
+	document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
+})();
+</script>
+<%+footer%>

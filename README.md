@@ -10,7 +10,7 @@
 本项目源自一台 nradio 固件路由器上深度定制的 **8080 端口独立 LuCI 实例**（项目代号 `manper`），
 现已将其完整抽取为可分发的离线包，让**其他路由器不用刷机**，SSH 执行一条命令即可获得同款 UI：
 
-- 🎨 **双界面可切换**：`manper 定制风格`（星空登录 + 驾驶舱）↔ `MYOS UI`（移植自 MYOS 官方主题）
+- 🎨 **三界面可切换**：`manper 定制风格`（星空登录 + 驾驶舱）↔ `MYOS UI`（移植自 MYOS 官方主题）↔ `iStoreOS 风格`（自研：浅色卡片 + 蓝色渐变）
 - 📊 **MYOS UI 仪表盘**：5G 信号（RSRP/SINR/频段 n78）、运营商、SIM 卡名称、模组型号/固件/温度、
   内存与存储、在线设备、双频 SSID、会话数、运行时间 —— 全部真实数据，10 秒自动刷新
 - 🌌 **两套登录页**：星空动画页（manper）／MYOS 壁纸卡片页（MYOS UI），随主题切换
@@ -79,22 +79,39 @@ export MANPER_DL_URL=https://ghproxy.com/https://github.com/h910056902/luci-them
 
 本项目属于 **UI/主题级部署**：不动系统分区、不刷机、不改防火墙，卸载即完全还原。
 
-## 🎨 双主题切换（manper / MYOS UI）
+## 🎨 三主题切换（manper / MYOS UI / iStoreOS 风格）
 
-安装后两套界面同时存在于路由器，可在 **8080 界面 → 系统 → Argon 主题设置 → 界面风格** 切换：
+安装后三套界面同时存在于路由器，可在 **8080 界面 → 系统 → Argon 主题设置 → 界面风格** 切换：
 
 | 选项 | 效果 | 静态目录 | 模板 |
 | --- | --- | --- | --- |
 | `manper 定制风格`（默认） | 星空登录页、驾驶舱首页、mwrt 定制层（你的原始定制） | `luci-static/bootstrap/` | `view/themes/bootstrap/` |
 | `MYOS UI` | **上游 MYOS 主题外观**：MYOS 侧栏 + 连接状态仪表盘 + 主题登录页 | `luci-static/c2000max-ui/` | `view/themes/c2000max-ui/` |
+| `iStoreOS 风格`（自研） | 浅色底 + 白卡片 + 蓝色渐变 CTA（取自 iStore 设计语言）：侧栏分组导航、连接/资源/Wi-Fi/服务/测速总览、渐变品牌登录页 | `luci-static/istore-ui/` | `view/themes/istore-ui/` |
 
 切换即时生效（缓存按模式分键）。命令行：
 
 ```sh
 uci set argon.@global[0].ui_theme='myos'     # MYOS UI
 uci set argon.@global[0].ui_theme='manper'   # manper 定制
+uci set argon.@global[0].ui_theme='istore'   # iStoreOS 风格（自研）
 uci commit argon
 ```
+
+### iStoreOS 风格主题（自研，v3）
+
+视觉语言取自 iStore 应用商店（`/www/luci-static/istore/style.css` 实测）：
+主色渐变 `linear-gradient(144deg,#009aff,#0060ff)`、文字 `#32325d`、说明 `#8898aa`、
+卡片 12px 圆角 + 双层柔和阴影、`#ecf3fe` 浅蓝底 —— 不复制任何上游代码，全部重写。
+
+| 组成 | 文件 |
+| --- | --- |
+| 设计系统 | `www/luci-static/istore-ui/istore-ui.css`（token/组件/布局/旧 CBI 适配） |
+| 外壳交互 | `www/luci-static/istore-ui/shell.js`（抽屉菜单/时钟/高亮兜底） |
+| 外壳模板 | `view/themes/istore-ui/{header,footer,sysauth}.htm`（侧栏 + 顶栏 + 渐变登录页） |
+| 首页 | `view/admin_status/istore_home.htm`（连接/资源/Wi-Fi/终端/服务/自动测速，10s 轮询） |
+
+该模式下保留原厂调度树（`/nradio/*` 全部可用），并在侧栏注入「设置向导」与「原厂页面」分组。
 
 ### MYOS UI 是什么（外观移植说明）
 
