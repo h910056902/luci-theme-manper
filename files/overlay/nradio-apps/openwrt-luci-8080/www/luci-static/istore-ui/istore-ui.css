@@ -93,7 +93,7 @@ img{max-width:100%}
   padding:0 20px;position:sticky;top:0;z-index:30;
 }
 .ios-burger{
-  display:none;width:34px;height:34px;border-radius:var(--r-s);border:1px solid var(--line);
+  display:inline-flex;width:34px;height:34px;border-radius:var(--r-s);border:1px solid var(--line);
   background:var(--surface);color:var(--ink-2);align-items:center;justify-content:center;cursor:pointer
 }
 .ios-crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);min-width:0}
@@ -356,7 +356,8 @@ body.ios-collapsed .ios-nav-i:hover::after{
   box-shadow:0 6px 18px rgba(50,50,93,.18);pointer-events:none
 }
 @media(max-width:960px){
-  body.ios-collapsed .ios-side{width:236px;flex:0 0 236px}
+  /* 窄屏：侧栏本身是抽屉，折叠 = 收起抽屉（完全隐藏），由顶栏汉堡重新打开 */
+  body.ios-collapsed .ios-side{transform:translateX(-100%);box-shadow:none}
   body.ios-collapsed .ios-brand{padding:18px 18px 14px;justify-content:flex-start}
   body.ios-collapsed .ios-brand > div{display:block}
   body.ios-collapsed .ios-nav-t{height:auto;margin:10px 0 0;padding:6px 10px 4px;background:transparent;color:var(--ink-3);font-size:11px}
@@ -366,4 +367,5 @@ body.ios-collapsed .ios-nav-i:hover::after{
   body.ios-collapsed .ios-side-f{justify-content:space-between;padding:10px 16px 14px}
   body.ios-collapsed .ios-side-f > span{display:inline}
   body.ios-collapsed .ios-collapse{position:static;width:26px;height:26px;border-radius:8px;box-shadow:none}
+  body.ios-collapsed.ios-drawer .ios-side{transform:translateX(0)}
 }
