@@ -1,0 +1,92 @@
+/* ==========================================================================
+   ios-ops.css · 全站运维层（iKuai 式控制台观感）
+   作用域：只在第三套主题（istore）页面加载，通过 footer 条件引入
+   ========================================================================== */
+
+/* ---------- 顶部运维条 ---------- */
+.ops-bar{
+  display:flex;align-items:stretch;gap:0;flex-wrap:wrap;
+  background:rgba(255,255,255,.92);backdrop-filter:blur(10px);
+  border:1px solid var(--line);border-radius:var(--r-m);
+  box-shadow:var(--sh-1);margin:0 0 14px;overflow:hidden
+}
+.ops-item{
+  flex:1 1 0;min-width:132px;display:flex;flex-direction:column;gap:3px;
+  padding:10px 14px;border-right:1px solid var(--line)
+}
+.ops-item:last-child{border-right:0}
+.ops-item .k{font-size:10.5px;font-weight:600;letter-spacing:.4px;color:var(--ink-3);text-transform:uppercase}
+.ops-item .v{font-size:15px;font-weight:700;color:var(--ink);font-family:var(--mono);
+  font-variant-numeric:tabular-nums;line-height:1.25;display:flex;align-items:center;gap:6px}
+.ops-item .v small{font-size:11px;font-weight:600;color:var(--ink-3);font-family:var(--font)}
+.ops-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:0 0 7px;box-shadow:0 0 0 3px rgba(0,181,120,.14)}
+.ops-dot.bad{background:var(--bad);box-shadow:0 0 0 3px rgba(245,72,74,.14)}
+.ops-dot.warn{background:var(--warn);box-shadow:0 0 0 3px rgba(255,143,31,.14)}
+.ops-spark{width:58px;height:20px;flex:0 0 58px;opacity:.9}
+
+@media(max-width:900px){
+  .ops-item{flex:1 1 45%;min-width:0;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .ops-item:nth-child(even){border-right:0}
+}
+@media(max-width:560px){
+  .ops-item{flex:1 1 100%;border-right:0}
+}
+
+/* ---------- 页面头（CBI 页自动生成） ---------- */
+.ios-content .kp-page-h{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  margin:0 0 14px
+}
+.ios-content .kp-page-h h2{margin:0;font-size:19px;font-weight:700;color:var(--ink);letter-spacing:.2px}
+.ios-content .kp-page-h p{margin:4px 0 0;font-size:12px;color:var(--ink-3)}
+
+/* ---------- 卡片折叠 ---------- */
+.kp-fold-btn{
+  margin-left:auto;display:inline-flex;align-items:center;gap:6px;
+  height:26px;padding:0 10px;border:1px solid var(--line-2);border-radius:999px;
+  background:#fff;color:var(--ink-3);font-size:11.5px;font-weight:600;cursor:pointer
+}
+.kp-fold-btn:hover{border-color:var(--brand-line);color:var(--brand);background:var(--brand-soft)}
+.kp-fold-btn i{font-size:9px;transition:transform .18s}
+fieldset.cbi-section.kp-folded .kp-fold-btn i,
+.kp-card.kp-folded .kp-fold-btn i{transform:rotate(-90deg)}
+fieldset.cbi-section.kp-folded > *:not(legend),
+.kp-card.kp-folded > *:not(.ios-card-h){display:none!important}
+
+/* ---------- 脏标记保存条 ---------- */
+.kp-dirty-bar{
+  position:fixed;left:50%;bottom:18px;transform:translate(-50%,140%);
+  display:flex;align-items:center;gap:12px;z-index:60;
+  padding:10px 14px;border-radius:12px;border:1px solid var(--line);
+  background:rgba(255,255,255,.96);backdrop-filter:blur(12px);
+  box-shadow:0 12px 32px rgba(50,50,93,.16);
+  transition:transform .22s ease-out;font-size:12.5px;color:var(--ink-2)
+}
+.kp-dirty-bar.show{transform:translate(-50%,0)}
+.kp-dirty-bar .dot{width:7px;height:7px;border-radius:50%;background:var(--warn);box-shadow:0 0 0 3px rgba(255,143,31,.16)}
+.kp-dirty-bar b{color:var(--ink);font-weight:600}
+.kp-dirty-bar .ios-btn{height:28px;font-size:12px}
+
+/* ---------- 表格数值对齐 ---------- */
+.ios-content table td,.ios-content table th{font-variant-numeric:tabular-nums}
+.ios-content .cbi-value-field input,.ios-content .cbi-value-field select{font-variant-numeric:tabular-nums}
+
+/* ---------- 空态 ---------- */
+.kp-empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  padding:28px 16px;color:var(--ink-3);font-size:12.5px;text-align:center
+}
+.kp-empty i{font-size:22px;opacity:.5}
+
+/* ---------- 锚点导航（DHCP 等长页面） ---------- */
+.kp-anchors{
+  display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+  margin:0 0 14px;padding:6px;border-radius:999px;
+  background:var(--surface-3);border:1px solid var(--line);width:max-content;max-width:100%;
+  overflow-x:auto
+}
+.kp-anchors a{
+  padding:5px 13px;border-radius:999px;font-size:12px;font-weight:600;
+  color:var(--ink-2);text-decoration:none;white-space:nowrap
+}
+.kp-anchors a:hover{background:#fff;color:var(--brand);box-shadow:0 1px 3px rgba(50,50,93,.10)}

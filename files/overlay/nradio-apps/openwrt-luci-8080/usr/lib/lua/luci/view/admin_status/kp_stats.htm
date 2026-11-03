@@ -1,0 +1,123 @@
+<%#
+ istore-ui · 运维条数据端点（只读）
+ 输出 JSON，供 ios-enhance.js 绘制顶部运维条：
+   wan     : 当前上行接口名 / IPv4 / 是否在线 / 累计收发字节（前端算速率）
+   clients : DHCP 租约数（近似在线终端）
+   sys     : 负载 / 内存占用 / 温度 / CPU / 运行时间
+   cell    : 蜂窝制式 / 频段 / RSRP
+ 用法：/cgi-bin/luci/admin/istore_stats?state=1
+-%>
+<%
+	local http = require "luci.http"
+	local util = require "luci.util"
+
+	local sinfo = util.ubus("system", "info") or {}
+	local rt    = util.ubus("infocd", "runtime") or {}
+	local g     = rt.global or {}
+	local st    = util.ubus("infocd", "cpestatus") or {}
+	local cpe   = (type(st) == "table" and st.result and st.result[1]) or {}
+	local s     = cpe.status or {}
+
+	-- 上行接口：蜂窝是 cpe_4（proto dhcp，device eth3），cpe 本身是 wwan 无地址；
+	-- 打分时「有 IPv4 地址」权重最高，其次名字含 cpe/wan
+	local dump = util.ubus("network.interface", "dump") or {}
+	local wan, wan_name, wan_ip, wan_up, wan_dev = nil, "", "", false, ""
+	for _, iface in ipairs(dump.interface or {}) do
+		local up = (iface.up == true)
+		local ip = ""
+		for _, a in ipairs(iface["ipv4-address"] or {}) do
+			if a.address then ip = a.address break end
+		end
+		local name = iface.interface or ""
+		local score = 0
+		if ip ~= "" then score = score + 4 end
+		if name:find("cpe", 1, true) then score = score + 3 end
+		if name:find("wan", 1, true) then score = score + 2 end
+		if name:find("_4", 1, true) then score = score + 1 end
+		if name == "lan" or name == "loopback" or name == "docker" then score = 0 end
+		if up and score > 0 then
+			if score > (wan and wan.score or 0) then
+				wan = iface; wan.score = score
+				wan_name = name; wan_ip = ip; wan_up = up
+				wan_dev = iface.device or iface.l3_device or ""
+			end
+		end
+	end
+
+	-- 收发字节：优先 /sys/class/net/<dev>/statistics（接口 statistics 在蜂窝下常为 0）
+	local rx, tx = 0, 0
+	if wan_dev ~= "" then
+		local f1 = io.open("/sys/class/net/" .. wan_dev .. "/statistics/rx_bytes")
+		if f1 then rx = tonumber(f1:read("*l")) or 0; f1:close() end
+		local f2 = io.open("/sys/class/net/" .. wan_dev .. "/statistics/tx_bytes")
+		if f2 then tx = tonumber(f2:read("*l")) or 0; f2:close() end
+	end
+	if rx == 0 and wan_name ~= "" then
+		local ist = util.ubus("network.interface." .. wan_name, "status") or {}
+		local stats = ist.statistics or {}
+		rx = tonumber(stats.rx_bytes) or 0
+		tx = tonumber(stats.tx_bytes) or 0
+	end
+
+	-- 终端数：DHCP 租约行数
+	local clients = 0
+	local lf = io.open("/tmp/dhcp.leases")
+	if lf then
+		for _ in lf:lines() do clients = clients + 1 end
+		lf:close()
+	end
+
+	local mem = sinfo.memory or {}
+	local mem_pct = 0
+	if mem.total and mem.total > 0 then
+		mem_pct = math.floor((mem.total - (mem.available or mem.free or 0)) * 100 / mem.total)
+	end
+	local load1 = 0
+	if sinfo.load and sinfo.load[1] then load1 = (tonumber(sinfo.load[1]) or 0) / 65536 end
+
+	-- DHCP 概况（供 DHCP/DNS 页摘要条使用）
+	local dhcp_leases, dhcp_statics, pool_start, pool_limit = 0, 0, 100, 150
+	do
+		local lf2 = io.open("/tmp/dhcp.leases")
+		if lf2 then for _ in lf2:lines() do dhcp_leases = dhcp_leases + 1 end; lf2:close() end
+		local ok_u, m_uci = pcall(require, "luci.model.uci")
+		if ok_u and m_uci then
+			local c = m_uci.cursor()
+			pool_start = tonumber(c:get("dhcp", "lan", "start")) or 100
+			pool_limit = tonumber(c:get("dhcp", "lan", "limit")) or 150
+			c:foreach("dhcp", "host", function() dhcp_statics = dhcp_statics + 1 end)
+		end
+	end
+
+	http.prepare_content("application/json")
+	http.write_json({
+		dhcp = {
+			leases = dhcp_leases,
+			statics = dhcp_statics,
+			start = pool_start,
+			limit = pool_limit,
+			pct = (pool_limit > 0) and math.floor(dhcp_leases * 100 / pool_limit) or 0,
+		},
+		wan = {
+			name = wan_name,
+			ip = wan_ip,
+			up = wan_up and true or false,
+			rx = rx,
+			tx = tx,
+		},
+		clients = clients,
+		sys = {
+			load = string.format("%.2f", load1),
+			mem = tostring(mem_pct),
+			temp = tostring(g.device_temp or ""),
+			cpu = tostring(g.cpu_percent or ""),
+			uptime = tostring(sinfo.uptime or ""),
+		},
+		cell = {
+			mode = tostring(s.mode or ""),
+			band = tostring(s.band or ""),
+			rsrp = tostring(s.rsrp or ""),
+			isp = tostring(s.isp_company or ""),
+		},
+	})
+-%>

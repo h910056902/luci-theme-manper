@@ -296,6 +296,16 @@ function luci.dispatcher.createtree()
 				-- 保证侧栏常驻。挂在 admin/status 下（URL /admin/status/vendor），hidden 不进侧栏。
 				-- mediaurlbase 显式指定为 istore-ui：否则 <%%+header%%> 会按原厂树解析成 nradio 外壳
 				-- （没侧栏，看起来像"跳回了 80 端口/原厂固件"）。
+				-- 运维条数据端点（JSON）：供全站 ios-enhance.js 轮询
+				m_admin.nodes.istore_stats = {
+					nodes = {},
+					target = luci.dispatcher.template("admin_status/kp_stats"),
+					title = "运维数据",
+					order = 9,
+					hidden = true,
+					leaf = true,
+					mediaurlbase = "/luci-static/istore-ui"
+				}
 				-- SIM 信息 / 设备信息：同样自建，直读 cpesel + infocd + system（不再 iframe 包原厂页）
 				m_admin.nodes.sim = {
 					nodes = {},
