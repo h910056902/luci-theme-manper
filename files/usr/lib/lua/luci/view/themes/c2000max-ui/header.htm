@@ -222,6 +222,10 @@ window.L = {
 <link rel="stylesheet" href="<%=media%>/density.css?v=1.0.17">
 <link rel="stylesheet" href="<%=media%>/manper-subpage.css?v=1.0.17">
 <script src="/luci-static/resources/cbi.js"></script>
+<!-- KP-MYOS-XHR：本固件的 XHR/dom 在 /luci-static/resources/xhr.js；
+     缺它会令所有老式 LuCI 页面（OpenClash 概览等）的 XHR.poll 不执行，
+     运行状态永远停在「正在收集数据…/未运行」。位置与 manper 外壳一致。 -->
+<script src="/luci-static/resources/xhr.js?v=1.8.4"></script>
 <script src="<%=media%>/data.js?v=1.0.17"></script>
 <script src="<%=media%>/dashboard.js?v=1.0.17-kp2"></script>
 </head>
