@@ -63,7 +63,20 @@ img{max-width:100%}
 .ios-nav::-webkit-scrollbar{width:6px}
 .ios-nav::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:3px}
 .ios-nav-g{margin-top:10px}
-.ios-nav-t{font-size:11px;font-weight:600;color:var(--ink-3);letter-spacing:.6px;padding:6px 10px 4px}
+/* 分组标题 = 可点击的折叠按钮 */
+.ios-nav-t{
+  display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;
+  padding:7px 10px;border-radius:var(--r-s);cursor:pointer;text-align:left;
+  font-family:var(--font);font-size:11px;font-weight:600;color:var(--ink-3);letter-spacing:.6px;
+  transition:background .15s,color .15s
+}
+.ios-nav-t:hover{background:var(--surface-2);color:var(--ink-2)}
+.ios-nav-t span{flex:1;text-align:left}
+.ios-nav-t .ch{font-size:9px;opacity:.6;transition:transform .18s}
+.ios-nav-g.g-collapsed > .ios-nav-t .ch{transform:rotate(-90deg)}
+/* 分组内容折叠 */
+.ios-nav-c{display:block;margin:2px 0 4px}
+.ios-nav-g.g-collapsed > .ios-nav-c{display:none}
 .ios-nav-i{
   display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--r-s);
   color:var(--ink-2);font-size:12.5px;font-weight:500;text-decoration:none;
@@ -74,14 +87,11 @@ img{max-width:100%}
 .ios-nav-i:hover i{color:var(--brand)}
 .ios-nav-i.active{background:var(--brand-soft);color:var(--brand);font-weight:600}
 .ios-nav-i.active i{color:var(--brand)}
-.ios-nav-c{display:none;padding-left:12px;margin:2px 0 6px}
-.ios-nav-i.active + .ios-nav-c{display:block}
-.ios-nav-c a{
-  display:block;padding:5px 10px;border-radius:6px;color:var(--ink-2);
-  font-size:12px;text-decoration:none
-}
-.ios-nav-c a:hover{background:var(--surface-2);color:var(--brand)}
-.ios-nav-c a.on{color:var(--brand);font-weight:600}
+/* 折叠态（图标栏）下强制展开所有分组，只显示图标 */
+body.ios-collapsed .ios-nav-g.g-collapsed > .ios-nav-c{display:block}
+body.ios-collapsed .ios-nav-g > .ios-nav-t{padding:4px 0;justify-content:center}
+body.ios-collapsed .ios-nav-g > .ios-nav-t span{display:none}
+body.ios-collapsed .ios-nav-g > .ios-nav-t .ch{display:none}
 
 .ios-side-f{padding:10px 16px 14px;border-top:1px solid var(--line);font-size:11px;color:var(--ink-3);display:flex;align-items:center;justify-content:space-between;gap:8px}
 

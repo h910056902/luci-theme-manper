@@ -81,3 +81,33 @@
 		best.classList.add('active');
 	}
 })();
+
+/* ---- 侧栏分组折叠（菜单项级，不是整栏） ---- */
+(function () {
+	var K = 'iosGroups';
+	var saved = {};
+	try { saved = JSON.parse(localStorage.getItem(K) || '{}') || {}; } catch (e) {}
+
+	Array.prototype.forEach.call(document.querySelectorAll('.ios-nav-g[data-group]'), function (g) {
+		var name = g.getAttribute('data-group');
+		var btn = g.querySelector('[data-group-toggle]');
+		if (!btn) return;
+
+		var known = Object.prototype.hasOwnProperty.call(saved, name);
+		var open = known ? !!saved[name] : true;   /* 默认全部展开，用户收起后记忆 */
+		g.classList.toggle('g-collapsed', !open);
+		btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+
+		btn.addEventListener('click', function () {
+			var willOpen = g.classList.contains('g-collapsed');
+			g.classList.toggle('g-collapsed', !willOpen);
+			btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+			saved[name] = willOpen;
+			try { localStorage.setItem(K, JSON.stringify(saved)); } catch (e) {}
+		});
+	});
+
+	/* 当前页所在项滚动到可视范围 */
+	var act = document.querySelector('.ios-nav-i.active');
+	if (act && act.scrollIntoView) { try { act.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+})();
