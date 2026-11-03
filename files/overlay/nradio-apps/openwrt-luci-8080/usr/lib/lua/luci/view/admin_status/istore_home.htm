@@ -56,18 +56,20 @@
 		}
 
 		-- 无线（UCI 合成）
-		local wifi = {}
+		-- 注意：uci:foreach 不能嵌套（内层会打断外层游标），先把 iface 收进表再关联
+		local wifi, ifaces = {}, {}
 		local uci = require "luci.model.uci".cursor()
+		uci:foreach("wireless", "wifi-iface", function(ifc) ifaces[#ifaces + 1] = ifc end)
 		uci:foreach("wireless", "wifi-device", function(dev)
 			local band = dev.band or dev.hwmode or ""
 			local bkey = (band == "2g" or band == "11g" or band == "11b") and "2.4G" or "5G"
 			local ssid, up = "", false
-			uci:foreach("wireless", "wifi-iface", function(ifc)
-				if ifc.device == dev[".name"] then
-					ssid = ifc.ssid or ""
+			for _, ifc in ipairs(ifaces) do
+				if ifc.device == dev[".name"] and (ifc.ssid or "") ~= "" then
+					ssid = ifc.ssid
 					up = (ifc.disabled ~= "1") and (dev.disabled ~= "1")
 				end
-			end)
+			end
 			if ssid ~= "" then wifi[#wifi + 1] = { band = bkey, ssid = ssid, up = up } end
 		end)
 		st.wifi = wifi
@@ -142,7 +144,9 @@
 		return m .. " 分"
 	end
 
-	local load1 = (st.system.load and st.system.load[1]) and string.format("%.2f", st.system.load[1]) or "--"
+	-- ubus system.info 的 load 是 ×65536 的定点整数（2.24 → 146848），需还原
+	local load_raw = (st.system.load and tonumber(st.system.load[1])) or 0
+	local load1 = load_raw > 0 and string.format("%.2f", load_raw / 65536) or "--"
 
 	local c = st.cell
 	local rsrp = c.rsrp
@@ -212,7 +216,7 @@
 				<span class="ios-bar"><i data-k="membar" style="width:<%=mem_pct%>%"></i></span>
 			</div>
 			<div class="ios-kpi">
-				<span class="k"><i class="fas fa-hard-drive"></i> 存储</span>
+				<span class="k"><i class="fas fa-hdd"></i> 存储</span>
 				<span class="v"><span data-k="diskpct"><%=disk_pct%></span><small>%</small></span>
 				<span class="s"><span data-k="diskavail"><%= math.floor(st.disk.avail / 1024)%></span> MB 可用</span>
 				<span class="ios-bar"><i data-k="diskbar" style="width:<%=disk_pct%>%"></i></span>
@@ -250,7 +254,7 @@
 		<div class="ios-sep"></div>
 		<div class="ios-list">
 			<div class="ios-li">
-				<div class="ico" style="background:var(--ok-soft);color:var(--ok)"><i class="fas fa-shield-halved"></i></div>
+				<div class="ico" style="background:var(--ok-soft);color:var(--ok)"><i class="fas fa-shield-alt"></i></div>
 				<div class="txt"><b>OpenClash</b><small>代理出口</small></div>
 				<div class="rt"><span class="ios-badge <%= st.svc.openclash and "ok" or "bad"%>" data-k="svc-oc"><%= st.svc.openclash and "运行中" or "已停止"%></span></div>
 			</div>
@@ -271,7 +275,7 @@
 			<span class="v" style="font-size:15px;word-break:break-all"><%=util.pcdata(st.ocspeed.best)%></span>
 			<span class="s"><%=st.ocspeed.delay%> ms · 候选 <%=st.ocspeed.candidates%> 个</span>
 		</div>
-		<div class="ios-note info"><i class="fas fa-circle-info"></i><span>每 30 分钟自动全量测速并切换到最快节点；故障转移与备用预选可在测速页开启。</span></div>
+		<div class="ios-note info"><i class="fas fa-info-circle"></i><span>每 30 分钟自动全量测速并切换到最快节点；故障转移与备用预选可在测速页开启。</span></div>
 		<% else %>
 		<div class="ios-empty"><i class="fas fa-bolt"></i>暂无测速记录</div>
 		<% end %>
