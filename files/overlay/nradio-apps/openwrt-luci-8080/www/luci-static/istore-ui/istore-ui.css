@@ -556,3 +556,59 @@ body.ios-collapsed .ios-nav-g > .ios-nav-t > .gi{display:none}
 /* ---- 空态 / 说明 ---- */
 .ios-content .cbi-section em,
 .ios-content .cbi-value-description em{color:var(--ink-3);font-style:normal;font-size:11.5px}
+/* ---- 诊断日志输出块（自建网络诊断页） ---- */
+.ios-log{
+  margin:0;padding:12px 14px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--r-s);font-family:var(--mono);font-size:12px;line-height:1.65;
+  color:var(--ink-2);max-height:58vh;overflow:auto;white-space:pre-wrap;word-break:break-all
+}
+/* ---- 移动端防御：日志/代码块不撑宽 ---- */
+@media(max-width:700px){
+  .ios-content{min-width:0}
+  .ios-content pre,.ios-log{max-width:100%;overflow-x:auto}
+  .ios-content .ios-card{min-width:0}
+}
+/* ==========================================================================
+   蜂窝详情（kp_cellular）专用组件
+   ========================================================================== */
+.ios-page-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:2px 2px 14px}
+.ios-page-h h2{margin:0;font-size:18px;font-weight:700;color:var(--ink)}
+.ios-page-h .sub{margin:4px 0 0;font-size:12px;color:var(--ink-3)}
+.ios-page-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+.ios-cell-hero{display:flex;align-items:center;gap:18px;padding:6px 0 10px}
+.ios-ring.solid{
+  --val:0;background:conic-gradient(var(--brand) calc(var(--val) * 1%), var(--surface-3) 0);
+  border-radius:50%;display:grid;place-items:center
+}
+.ios-ring.solid .in{width:84px;height:84px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ios-ring.solid .in b{font-size:21px;font-weight:700;color:var(--ink);font-family:var(--mono);line-height:1.1}
+.ios-ring.solid .in small{font-size:10px;color:var(--ink-3)}
+.ios-cell-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
+.ios-cell-meta .row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--ink-3)}
+.ios-cell-meta .row b{color:var(--ink);font-weight:700}
+
+.ios-kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:4px 0 12px}
+.ios-kpi{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-s);padding:9px 12px;display:flex;flex-direction:column;gap:2px}
+.ios-kpi span{font-size:11px;color:var(--ink-3)}
+.ios-kpi b{font-size:16px;font-weight:700;color:var(--ink);font-family:var(--mono)}
+.ios-kpi b i{font-style:normal;font-size:11px;color:var(--ink-3);font-family:var(--font)}
+
+.ios-kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}
+.ios-kv > div{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.ios-kv > div > span{color:var(--ink-3);flex:0 0 auto}
+.ios-kv > div > b{color:var(--ink);font-weight:600;text-align:right;word-break:break-all;min-width:0}
+.ios-kv b.mono{font-family:var(--mono);font-size:11.5px}
+
+.ios-card.tight{padding-bottom:14px}
+.ios-big{margin-top:2px}
+.ios-big b{font-size:20px;font-weight:700;color:var(--ink);font-family:var(--mono)}
+
+.ios-badge.ok{background:#e7f8f1;border:1px solid #bdeedd;color:#0a8f61}
+.ios-badge.warn{background:#fff4e6;border:1px solid #ffe0b8;color:#b0660a}
+
+@media(max-width:700px){
+  .ios-kv{grid-template-columns:minmax(0,1fr)}
+  .ios-kpi-row{grid-template-columns:repeat(3,1fr)}
+  .ios-cell-hero{gap:12px}
+}

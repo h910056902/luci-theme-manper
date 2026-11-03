@@ -258,7 +258,7 @@
 
 	-- 原厂页面并入网络分组（蜂窝 / SIM / 设备）
 	if buckets.network then
-		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/cellular", v = "/cgi-bin/luci/nradio/cellular", order = 10 }
+		buckets.network[#buckets.network + 1] = { name = "cellular", title = "蜂窝详情", url = "/cgi-bin/luci/admin/cellular", path = { "admin", "cellular" }, order = 10 }
 		buckets.network[#buckets.network + 1] = { name = "siminfo", title = "SIM 信息", url = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/sim", v = "/cgi-bin/luci/nradio/system/sim", order = 11 }
 		buckets.network[#buckets.network + 1] = { name = "deviceinfo", title = "设备信息", url = "/cgi-bin/luci/admin/vendor?src=/cgi-bin/luci/nradio/system/device", v = "/cgi-bin/luci/nradio/system/device", order = 12 }
 	end
