@@ -1,0 +1,555 @@
+<%#
+ KP-THEME v1 · 主题设置（8080 istore 自建视图，整页重设计）
+ 取代原厂 argon-config CBI 长表单：横向分区 Tab + 卡片式字段，一屏不滚动。
+ 保留原页面全部配置项（ui_theme / mode / bing_background / primary / transparency /
+ blur / dark_primary / transparency_dark / blur_dark）与背景素材上传、列表、删除。
+ POST 在本视图内闭环：同源校验 + 字段白名单校验 -> uci:set/commit -> 清索引缓存 -> 重定向。
+ 只在 active_theme == istore 时挂载；manper / myos 仍走原 CBI 页（三个主题选项已齐）。
+-%>
+<%
+	local http = require "luci.http"
+	local sys  = require "luci.sys"
+	local uci  = require "luci.model.uci".cursor()
+	local fs   = require "nixio.fs"
+	local nutil= require "nixio.util"
+	local disp = require "luci.dispatcher"
+	local util = require "luci.util"
+
+	local BGDIR = "/www/luci-static/argon/background/"
+	local function trim(s) return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
+	local function esc(s) return util.pcdata(tostring(s or "")) end
+	local function cfg(k, d)
+		local v = uci:get_first("argon", "global", k)
+		if v == nil or v == "" then return d or "" end
+		return tostring(v)
+	end
+
+	local THEMES = {
+		{ id = "manper", name = "manper 定制",   desc = "星空登录页 · 驾驶舱首页",     tone = "深色" },
+		{ id = "myos",   name = "MYOS UI",       desc = "原厂仪表盘 · 真实数据",       tone = "深色" },
+		{ id = "istore", name = "iStoreOS 风格", desc = "自研单页控制台 · 浅色蓝渐变", tone = "浅色" }
+	}
+	local THEME_NAME = { manper = "manper 定制", myos = "MYOS UI", istore = "iStoreOS 风格" }
+	local C = {
+		ui_theme          = cfg("ui_theme", "istore"),
+		mode              = cfg("mode", "normal"),
+		bing_background   = cfg("bing_background", "0"),
+		primary           = cfg("primary", "#5e72e4"),
+		transparency      = cfg("transparency", "0.5"),
+		blur              = cfg("blur", "10"),
+		dark_primary      = cfg("dark_primary", "#483d8b"),
+		transparency_dark = cfg("transparency_dark", "0.5"),
+		blur_dark         = cfg("blur_dark", "10")
+	}
+
+	-- CSRF：uhttpd CGI 不透传 X-Requested-With，用 Origin / Referer 的 host 比对
+	local function same_origin_ok()
+		local host = (os.getenv("HTTP_HOST") or ""):lower()
+		local src  = (os.getenv("HTTP_ORIGIN") or ""):lower()
+		if src == "" then src = (os.getenv("HTTP_REFERER") or ""):lower() end
+		if src == "" then return true end
+		local h = src:match("^[a-z][a-z0-9+%.%-]*://([^/]+)")
+		return h ~= nil and h == host
+	end
+
+	local function in_list(v, ...)
+		for _, x in ipairs({ ... }) do if v == x then return true end end
+		return false
+	end
+	local function num(v, lo, hi)
+		local n = tonumber(v)
+		return n ~= nil and n >= lo and n <= hi
+	end
+	local function color(v)
+		return #v <= 32 and v:find("[\"'<>]") == nil
+	end
+	local ALLOW = {
+		ui_theme          = function(v) return in_list(v, "manper", "myos", "istore") end,
+		mode              = function(v) return in_list(v, "normal", "light", "dark") end,
+		bing_background   = function(v) return in_list(v, "0", "1") end,
+		primary           = color,
+		dark_primary      = color,
+		transparency      = function(v) return num(v, 0, 1) end,
+		transparency_dark = function(v) return num(v, 0, 1) end,
+		blur              = function(v) return num(v, 0, 100) end,
+		blur_dark         = function(v) return num(v, 0, 100) end
+	}
+
+	fs.mkdir(BGDIR)
+
+	-- 文件上传回调必须在 POST 解析前注册
+	local upfd = nil
+	http.setfilehandler(function(meta, chunk, eof)
+		if not upfd then
+			if not meta or not chunk then return end
+			local name = fs.basename(meta.file or "")
+			if name == "" or not name:lower():match("%.(jpg|jpeg|png|gif|mp4|webm)$") then return end
+			upfd = io.open(BGDIR .. name, "wb")
+			if not upfd then return end
+		end
+		if chunk and upfd then upfd:write(chunk) end
+		if eof and upfd then upfd:close(); upfd = nil end
+	end)
+
+	local action = trim(http.formvalue("kp_action") or "")
+	local saved  = http.formvalue("saved") == "1"
+	if action == "delete" and same_origin_ok() then
+		local name = fs.basename(trim(http.formvalue("kp_file") or ""))
+		if name ~= "" and fs.access(BGDIR .. name) then fs.unlink(BGDIR .. name) end
+	elseif action == "save" and same_origin_ok() then
+		local n = 0
+		for k, ok in pairs(ALLOW) do
+			local v = trim(http.formvalue("kp_" .. k) or "")
+			if v ~= "" and ok(v) then
+				uci:set("argon", "@global[0]", k, v)
+				C[k] = v
+				n = n + 1
+			end
+		end
+		if n > 0 then
+			uci:commit("argon")
+			sys.exec("rm -f /tmp/luci-indexcache-* 2>/dev/null")
+		end
+	end
+	if action ~= "" then
+		http.redirect(disp.build_url("admin", "system", "argon-config") .. "?saved=1")
+		return
+	end
+
+	local TRANSP = { "0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "1" }
+	local function bgfiles()
+		local out = {}
+		local it = fs.glob(BGDIR .. "*")
+		for _, f in ipairs(it and nutil.consume(it) or {}) do
+			local st = fs.stat(f)
+			if st then
+				out[#out + 1] = {
+					name  = fs.basename(f),
+					size  = string.format("%.0f KB", (st.size or 0) / 1024),
+					mtime = os.date("%Y-%m-%d %H:%M", st.mtime or 0)
+				}
+			end
+		end
+		table.sort(out, function(a, b) return a.name < b.name end)
+		return out
+	end
+	local BGFILES = bgfiles()
+-%>
+<%+header%>
+<style type="text/css">
+.th{max-width:1080px;margin:0 auto;padding:8px 0 12px}
+.th-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.th-head h1{margin:0;font-size:20px;font-weight:700;color:#1e2b48;display:inline-flex;align-items:center;gap:10px}
+.th-ic{
+  width:30px;height:30px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;
+  color:#fff;font-size:13px;background:linear-gradient(140deg,#22a9ff,#0060ff 55%,#0047c7);
+  box-shadow:0 5px 14px rgba(0,96,255,.26),inset 0 1px 0 rgba(255,255,255,.3)
+}
+.th-sub{font-size:11.5px;color:#6a7c99}
+.th-badge{
+  margin-left:auto;font-size:11px;font-weight:700;color:#0052d9;
+  background:linear-gradient(135deg,#e9f2ff,#f4f9ff);border:1px solid #cfe2ff;
+  border-radius:999px;padding:4px 11px
+}
+.th-notice{
+  display:flex;align-items:center;gap:8px;margin-bottom:9px;padding:8px 12px;
+  border:1px solid #bdeedd;border-radius:10px;background:#e9f9f2;
+  color:#087a55;font-size:11.5px;font-weight:600
+}
+.th-tabs{
+  display:flex;gap:5px;padding:4px;margin-bottom:10px;width:max-content;max-width:100%;
+  border:1px solid #e3ecf7;border-radius:999px;background:var(--surface-3,#f0f5fb)
+}
+.th-tab{
+  padding:6px 14px;border:0;border-radius:999px;background:transparent;
+  color:#6a7c99;font-family:var(--font,sans-serif);font-size:12px;font-weight:600;
+  cursor:pointer;white-space:nowrap;transition:background .16s,color .16s,box-shadow .16s
+}
+.th-tab i{margin-right:5px}
+.th-tab:hover{color:#0060ff}
+.th-tab.on{
+  background:linear-gradient(135deg,#009aff,#0060ff);color:#fff;
+  box-shadow:0 3px 10px rgba(0,96,255,.28)
+}
+.th-panel{
+  display:none;padding:14px 16px;border:1px solid #e3ecf7;border-radius:14px;
+  background:linear-gradient(150deg,#fff,#fdfeff 48%,#f5faff);
+  box-shadow:0 1px 2px rgba(30,50,90,.045),0 10px 28px rgba(30,50,90,.055);
+  position:relative;min-height:calc(100vh - 300px);align-content:start
+}
+.th-panel.on{display:block}
+.th-panel:after{
+  content:"";position:absolute;left:0;top:0;height:2px;width:46%;
+  border-radius:14px 0 0 0;pointer-events:none;opacity:.65;
+  background:linear-gradient(90deg,#009aff,#0060ff,transparent)
+}
+.th-sec-h{display:flex;align-items:center;gap:10px;margin-bottom:11px}
+.th-sec-h h3{
+  margin:0;font-size:13.5px;font-weight:700;color:#1e2b48;
+  display:inline-flex;align-items:center;gap:8px
+}
+.th-sec-h h3:before{content:"";width:3px;height:13px;border-radius:3px;background:linear-gradient(180deg,#009aff,#0060ff)}
+.th-sec-h span{font-size:11px;color:#6a7c99}
+.th-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.th-card{
+  position:relative;display:flex;align-items:center;gap:10px;padding:11px 12px;
+  border:1px solid #e3ecf7;border-radius:11px;background:linear-gradient(180deg,#fff,#f8fbff);
+  cursor:pointer;transition:transform .16s,box-shadow .16s,border-color .16s
+}
+.th-card input{position:absolute;opacity:0;pointer-events:none}
+.th-card:hover{transform:translateY(-1px);border-color:#cfe2ff;box-shadow:0 6px 16px rgba(0,96,255,.10)}
+.th-card.on{
+  border-color:#0060ff;background:linear-gradient(135deg,#eaf3ff,#f6faff);
+  box-shadow:inset 2px 0 0 #0060ff,0 4px 12px rgba(0,96,255,.10)
+}
+.th-card-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.th-card-t b{font-size:12.5px;color:#1e2b48;white-space:nowrap}
+.th-card-t small{font-size:10px;color:#6a7c99;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.th-card em{
+  display:none;position:absolute;right:8px;top:7px;font-style:normal;
+  font-size:9px;font-weight:700;color:#fff;border-radius:999px;padding:1px 6px;
+  background:linear-gradient(135deg,#009aff,#0060ff)
+}
+.th-card.on em{display:block}
+.tp{position:relative;flex:0 0 48px;width:48px;height:36px;border-radius:6px;overflow:hidden;border:1px solid rgba(0,0,0,.06)}
+.tp i{position:absolute;display:block}
+.tp .s{left:0;top:0;bottom:0;width:10px}
+.tp .t{left:10px;right:0;top:0;height:6px}
+.tp .c1{left:13px;top:10px;width:13px;height:9px;border-radius:2px}
+.tp .c2{left:28px;top:10px;width:17px;height:9px;border-radius:2px}
+.tp .c3{left:13px;top:22px;width:32px;height:9px;border-radius:2px}
+.tp-manper{background:linear-gradient(135deg,#111a3a,#2a1c5a)}
+.tp-manper .s{background:rgba(120,90,255,.6)} .tp-manper .t{background:rgba(255,255,255,.16)}
+.tp-manper .c1,.tp-manper .c2,.tp-manper .c3{background:rgba(150,175,255,.42)}
+.tp-myos{background:linear-gradient(135deg,#0f2233,#1b3a52)}
+.tp-myos .s{background:rgba(0,190,220,.5)} .tp-myos .t{background:rgba(255,255,255,.12)}
+.tp-myos .c1,.tp-myos .c2,.tp-myos .c3{background:rgba(90,205,225,.38)}
+.tp-istore{background:linear-gradient(135deg,#f4f7fb,#fff)}
+.tp-istore .s{background:#d8e9ff} .tp-istore .t{background:#fff;border-bottom:1px solid #e3ecf7}
+.tp-istore .c1{background:#a8d0ff} .tp-istore .c2,.tp-istore .c3{background:#dbeafe}
+.th-hint{
+  margin-top:11px;padding:8px 11px;border-radius:9px;
+  border:1px solid #e6eef8;background:linear-gradient(180deg,#fff,#f6faff);
+  color:#6a7c99;font-size:11px;line-height:1.55;display:flex;align-items:flex-start;gap:7px
+}
+.th-hint i{color:#0060ff;margin-top:2px}
+.th-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.th-field{
+  padding:10px 12px;border:1px solid #e6eef8;border-radius:11px;
+  background:linear-gradient(180deg,#fff,#f8fbff)
+}
+.th-field > label{display:block;font-size:11.5px;font-weight:700;color:#1e2b48;margin-bottom:7px}
+.th-field small{display:block;margin-top:6px;font-size:10px;color:#6a7c99;line-height:1.45}
+.th-ctrl{display:flex;align-items:center;gap:8px}
+.th-input,.th-select{
+  flex:1;min-width:0;height:32px;padding:0 10px;box-sizing:border-box;
+  border:1px solid #dbe6f5;border-radius:9px;background:#fff;color:#1e2b48;
+  font-family:var(--font,sans-serif);font-size:12px;
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.04)
+}
+.th-input:focus,.th-select:focus{outline:none;border-color:#0060ff;box-shadow:0 0 0 3px rgba(0,96,255,.13)}
+.th-color{
+  width:36px;height:32px;padding:2px;border:1px solid #dbe6f5;border-radius:9px;
+  background:#fff;cursor:pointer;flex:0 0 36px
+}
+.th-seg{display:flex;gap:6px;flex-wrap:wrap}
+.th-seg label{
+  display:inline-flex;align-items:center;gap:5px;padding:6px 11px;
+  border:1px solid #e3ecf7;border-radius:999px;background:#fff;
+  font-size:11.5px;color:#5b6b8c;cursor:pointer
+}
+.th-seg label.on{border-color:#0060ff;background:#e9f2ff;color:#0052d9;font-weight:700}
+.th-seg input{position:absolute;opacity:0;pointer-events:none}
+.th-up{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:11px}
+.th-up input[type=file]{font-size:11.5px;color:#5b6b8c}
+.th-files{border:1px solid #e6eef8;border-radius:11px;overflow:hidden;max-height:250px;overflow-y:auto}
+.th-file{
+  display:flex;align-items:center;gap:10px;padding:8px 12px;
+  border-bottom:1px solid #edf2f9;background:linear-gradient(180deg,#fff,#fbfdff);font-size:11.5px
+}
+.th-file:last-child{border-bottom:0}
+.th-file .n{flex:1;min-width:0;color:#1e2b48;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.th-file .s,.th-file .m{color:#6a7c99;font-size:10.5px;white-space:nowrap}
+.th-del{
+  border:1px solid #f4cfcf;border-radius:8px;background:#fdecec;color:#c73b3d;
+  font-size:10.5px;font-weight:600;padding:4px 9px;cursor:pointer
+}
+.th-del:hover{filter:brightness(.97)}
+.th-empty{padding:16px;text-align:center;color:#8898aa;font-size:11.5px}
+.th-foot{
+  display:flex;align-items:center;gap:12px;margin-top:10px;padding:9px 13px;
+  border:1px solid #e6eef8;border-radius:12px;background:rgba(255,255,255,.94)
+}
+.th-foot-msg{flex:1;font-size:10.5px;color:#6a7c99;display:flex;align-items:center;gap:6px}
+.th-foot-msg i{color:#0060ff}
+.th-btn{
+  border:0;border-radius:9px;padding:8px 18px;cursor:pointer;
+  font-family:var(--font,sans-serif);font-size:12px;font-weight:700;color:#fff;
+  background:linear-gradient(135deg,#17a6ff,#0060ff 52%,#0052d9);
+  box-shadow:0 6px 16px rgba(0,96,255,.28),inset 0 1px 0 rgba(255,255,255,.28)
+}
+.th-btn:hover{filter:brightness(1.07)}
+.th-btn.ghost{background:linear-gradient(180deg,#fff,#f8fbff);border:1px solid #dbe6f5;color:#1e2b48;box-shadow:0 1px 2px rgba(30,50,90,.05)}
+.th-summary{
+  position:absolute;bottom:14px;left:16px;right:16px;padding:10px 12px;
+  border:1px solid #e6eef8;border-radius:11px;
+  background:linear-gradient(180deg,#fff,#f6faff)
+}
+.th-sum-h{
+  display:flex;align-items:center;gap:7px;margin-bottom:8px;
+  font-size:11.5px;font-weight:700;color:#1e2b48
+}
+.th-sum-h i{color:#0060ff}
+.th-sum-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.th-sum-grid span{
+  display:flex;flex-direction:column;gap:2px;min-width:0;
+  font-size:11.5px;font-weight:600;color:#1e2b48;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.th-sum-grid b{font-size:10px;font-weight:600;color:#6a7c99}
+.th-hidden-form{display:none}
+@media(max-width:760px){.th-sum-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.th-cards,.th-fields{grid-template-columns:1fr}.th-tabs{overflow-x:auto}}
+</style>
+
+<div class="th">
+	<div class="th-head">
+		<h1><span class="th-ic"><i class="fas fa-palette" aria-hidden="true"></i></span>主题设置</h1>
+		<span class="th-sub">8080 独立实例 · 界面风格与登录页外观</span>
+		<span class="th-badge">当前 <%=esc(THEME_NAME[C.ui_theme] or C.ui_theme)%></span>
+	</div>
+
+	<% if saved then %>
+	<div class="th-notice"><i class="fas fa-check-circle" aria-hidden="true"></i>设置已保存并生效；若切换了界面风格，整站外壳会重新加载。</div>
+	<% end %>
+
+	<div class="th-tabs" role="tablist">
+		<button type="button" class="th-tab on" data-tab="style" role="tab" aria-selected="true"><i class="fas fa-layer-group" aria-hidden="true"></i>界面风格</button>
+		<button type="button" class="th-tab" data-tab="login" role="tab" aria-selected="false"><i class="fas fa-sign-in-alt" aria-hidden="true"></i>登录页外观</button>
+		<button type="button" class="th-tab" data-tab="light" role="tab" aria-selected="false"><i class="fas fa-sun" aria-hidden="true"></i>亮色模式</button>
+		<button type="button" class="th-tab" data-tab="dark" role="tab" aria-selected="false"><i class="fas fa-moon" aria-hidden="true"></i>暗色模式</button>
+		<button type="button" class="th-tab" data-tab="bg" role="tab" aria-selected="false"><i class="fas fa-images" aria-hidden="true"></i>背景素材</button>
+	</div>
+
+	<form method="post" id="kpThemeForm" class="th-form">
+		<input type="hidden" name="kp_action" value="save">
+
+		<div class="th-panel on" data-panel="style">
+			<div class="th-sec-h"><h3>选择 8080 界面风格</h3><span>三套自建主题 · 保存后立即生效</span></div>
+			<div class="th-cards">
+				<% for _, t in ipairs(THEMES) do %>
+				<label class="th-card<%= (C.ui_theme == t.id) and " on" or "" %>">
+					<input type="radio" name="kp_ui_theme" value="<%=t.id%>"<%= (C.ui_theme == t.id) and " checked" or "" %>>
+					<span class="tp tp-<%=t.id%>"><i class="s"></i><i class="t"></i><i class="c1"></i><i class="c2"></i><i class="c3"></i></span>
+					<span class="th-card-t"><b><%=esc(t.name)%></b><small><%=esc(t.desc)%> · <%=esc(t.tone)%></small></span>
+					<em>当前使用</em>
+				</label>
+				<% end %>
+			</div>
+			<div class="th-hint"><i class="fas fa-info-circle" aria-hidden="true"></i><span>切换界面风格会改变整套外壳、侧栏与登录页；保存后页面重新加载。manper / MYOS 下仍可从「主题设置」切回 iStoreOS 风格。</span></div>
+		</div>
+
+		<div class="th-panel" data-panel="login">
+			<div class="th-sec-h"><h3>登录页外观</h3><span>壁纸与明暗策略</span></div>
+			<div class="th-fields">
+				<div class="th-field">
+					<label>壁纸来源</label>
+					<div class="th-seg">
+						<label class="<%= (C.bing_background == "0") and "on" or "" %>"><input type="radio" name="kp_bing_background" value="0"<%= (C.bing_background == "0") and " checked" or "" %>>内置壁纸</label>
+						<label class="<%= (C.bing_background == "1") and "on" or "" %>"><input type="radio" name="kp_bing_background" value="1"<%= (C.bing_background == "1") and " checked" or "" %>>Bing 每日壁纸</label>
+					</div>
+					<small>自定义壁纸可在「背景素材」中上传。</small>
+				</div>
+				<div class="th-field">
+					<label>明暗模式</label>
+					<div class="th-seg">
+						<label class="<%= (C.mode == "normal") and "on" or "" %>"><input type="radio" name="kp_mode" value="normal"<%= (C.mode == "normal") and " checked" or "" %>>跟随系统</label>
+						<label class="<%= (C.mode == "light") and "on" or "" %>"><input type="radio" name="kp_mode" value="light"<%= (C.mode == "light") and " checked" or "" %>>强制亮色</label>
+						<label class="<%= (C.mode == "dark") and "on" or "" %>"><input type="radio" name="kp_mode" value="dark"<%= (C.mode == "dark") and " checked" or "" %>>强制暗色</label>
+					</div>
+					<small>影响 Argon 登录页与部分原厂页面的配色。</small>
+				</div>
+			</div>
+			<div class="th-hint"><i class="fas fa-info-circle" aria-hidden="true"></i><span>iStoreOS 风格外壳固定为浅色，这里的明暗策略主要作用于 Argon 登录页；亮色 / 暗色两组参数分别在下两个分区设置。</span></div>
+		</div>
+
+		<div class="th-panel" data-panel="light">
+			<div class="th-sec-h"><h3>亮色模式参数</h3><span>主色 / 透明度 / 毛玻璃</span></div>
+			<div class="th-fields">
+				<div class="th-field">
+					<label>主色调</label>
+					<div class="th-ctrl"><input class="th-color" type="color" value="<%=esc(C.primary)%>" id="thColorL"><input class="th-input" type="text" name="kp_primary" id="thTextL" value="<%=esc(C.primary)%>"></div>
+					<small>十六进制颜色值，默认 #5e72e4。</small>
+				</div>
+				<div class="th-field">
+					<label>背景透明度</label>
+					<select class="th-select" name="kp_transparency">
+						<% for _, v in ipairs(TRANSP) do %><option value="<%=v%>"<%= (C.transparency == v) and " selected" or "" %>><%=v%></option><% end %>
+					</select>
+					<small>0 全透明 · 1 不透明；推荐 0 或 0.5。</small>
+				</div>
+				<div class="th-field">
+					<label>毛玻璃模糊半径</label>
+					<input class="th-input" type="number" min="0" max="100" name="kp_blur" value="<%=esc(C.blur)%>">
+					<small>数值越大越模糊；推荐清晰 1 / 模糊预设 10。</small>
+				</div>
+			</div>
+		</div>
+
+		<div class="th-panel" data-panel="dark">
+			<div class="th-sec-h"><h3>暗色模式参数</h3><span>主色 / 透明度 / 毛玻璃</span></div>
+			<div class="th-fields">
+				<div class="th-field">
+					<label>主色调</label>
+					<div class="th-ctrl"><input class="th-color" type="color" value="<%=esc(C.dark_primary)%>" id="thColorD"><input class="th-input" type="text" name="kp_dark_primary" id="thTextD" value="<%=esc(C.dark_primary)%>"></div>
+					<small>十六进制颜色值，默认 #483d8b。</small>
+				</div>
+				<div class="th-field">
+					<label>背景透明度</label>
+					<select class="th-select" name="kp_transparency_dark">
+						<% for _, v in ipairs(TRANSP) do %><option value="<%=v%>"<%= (C.transparency_dark == v) and " selected" or "" %>><%=v%></option><% end %>
+					</select>
+					<small>0 全透明 · 1 不透明；推荐 0.5。</small>
+				</div>
+				<div class="th-field">
+					<label>毛玻璃模糊半径</label>
+					<input class="th-input" type="number" min="0" max="100" name="kp_blur_dark" value="<%=esc(C.blur_dark)%>">
+					<small>数值越大越模糊；推荐清晰 1 / 模糊预设 10。</small>
+				</div>
+			</div>
+		</div>
+	</form>
+
+	<form method="post" enctype="multipart/form-data" id="kpBgForm" class="th-panel th-bgform" data-panel="bg">
+		<input type="hidden" name="kp_action" value="upload">
+		<div class="th-sec-h"><h3>背景素材</h3><span>登录页自定义壁纸 / 视频</span></div>
+		<div class="th-up">
+			<input type="file" name="kp_file" accept=".jpg,.jpeg,.png,.gif,.mp4,.webm">
+			<button type="submit" class="th-btn">上传文件</button>
+			<span class="th-sub">支持 jpg / png / gif / mp4 / webm，保存目录 /www/luci-static/argon/background/</span>
+		</div>
+		<div class="th-files">
+			<% if #BGFILES == 0 then %>
+			<div class="th-empty">暂无自定义背景，可使用内置壁纸或上传文件。</div>
+			<% else %>
+			<% for _, f in ipairs(BGFILES) do %>
+			<div class="th-file">
+				<span class="n"><i class="fas fa-image" aria-hidden="true"></i> <%=esc(f.name)%></span>
+				<span class="s"><%=esc(f.size)%></span>
+				<span class="m"><%=esc(f.mtime)%></span>
+				<button type="button" class="th-del" data-name="<%=esc(f.name)%>">删除</button>
+			</div>
+			<% end %>
+			<% end %>
+		</div>
+	</form>
+
+	<form method="post" id="kpDelForm" class="th-hidden-form">
+		<input type="hidden" name="kp_action" value="delete">
+		<input type="hidden" name="kp_file" id="kpDelName" value="">
+	</form>
+
+	<div class="th-foot">
+		<span class="th-foot-msg"><i class="fas fa-info-circle" aria-hidden="true"></i>修改后点击「保存更改」；所有写入都会做来源与字段白名单校验。</span>
+		<button type="submit" form="kpThemeForm" class="th-btn" id="thSave"><i class="fas fa-save" aria-hidden="true"></i> 保存更改</button>
+		<button type="button" class="th-btn ghost" id="thBack">重置为当前值</button>
+	</div>
+</div>
+
+<script type="text/template" id="thSummaryTpl">
+<div class="th-summary">
+	<div class="th-sum-h"><i class="fas fa-clipboard-list" aria-hidden="true"></i>当前配置速览</div>
+	<div class="th-sum-grid">
+		<span><b>界面风格</b><%=esc(THEME_NAME[C.ui_theme] or C.ui_theme)%></span>
+		<span><b>明暗模式</b><%=esc(C.mode == "normal" and "跟随系统" or (C.mode == "light" and "强制亮色" or "强制暗色"))%></span>
+		<span><b>壁纸来源</b><%=esc(C.bing_background == "1" and "Bing 每日" or "内置")%></span>
+		<span><b>亮色主色</b><%=esc(C.primary)%></span>
+		<span><b>暗色主色</b><%=esc(C.dark_primary)%></span>
+		<span><b>毛玻璃 亮 / 暗</b><%=esc(C.blur)%> / <%=esc(C.blur_dark)%></span>
+	</div>
+</div>
+</script>
+
+<script type="text/javascript">
+(function () {
+	'use strict';
+	var tabs = document.querySelectorAll('.th-tab');
+	var panels = document.querySelectorAll('.th-panel');
+	var save = document.getElementById('thSave');
+	var back = document.getElementById('thBack');
+
+	function show(name) {
+		Array.prototype.forEach.call(tabs, function (t) {
+			var on = t.getAttribute('data-tab') === name;
+			t.classList.toggle('on', on);
+			t.setAttribute('aria-selected', on ? 'true' : 'false');
+		});
+		Array.prototype.forEach.call(panels, function (p) {
+			p.classList.toggle('on', p.getAttribute('data-panel') === name);
+		});
+		if (save) save.style.display = name === 'bg' ? 'none' : '';
+		if (back) back.style.display = name === 'bg' ? 'none' : '';
+	}
+	Array.prototype.forEach.call(tabs, function (t) {
+		t.addEventListener('click', function () { show(t.getAttribute('data-tab')); });
+	});
+
+	/* 卡片与分段控件的选中态联动 */
+	function bindCards(cls, inputSel) {
+		Array.prototype.forEach.call(document.querySelectorAll(cls), function (c) {
+			var r = c.querySelector(inputSel);
+			if (!r) return;
+			r.addEventListener('change', function () {
+				var name = r.getAttribute('name');
+				Array.prototype.forEach.call(document.querySelectorAll(inputSel), function (o) {
+					if (o.getAttribute('name') !== name) return;
+					var box = o.parentNode;
+					if (box && box.classList) box.classList.toggle('on', o.checked);
+				});
+			});
+		});
+	}
+	bindCards('.th-card', 'input[type=radio]');
+	bindCards('.th-seg label', 'input[type=radio]');
+
+	/* 颜色选择器与文本框双向同步 */
+	function bindColor(cid, tid) {
+		var c = document.getElementById(cid), t = document.getElementById(tid);
+		if (!c || !t) return;
+		c.addEventListener('input', function () { t.value = c.value; });
+		t.addEventListener('input', function () {
+			if (/^#[0-9a-fA-F]{6}$/.test(t.value)) c.value = t.value;
+		});
+	}
+	bindColor('thColorL', 'thTextL');
+	bindColor('thColorD', 'thTextD');
+
+	/* 删除背景文件：按钮在上传表单内，提交到外部独立表单，避免嵌套 form */
+	var bg = document.getElementById('kpBgForm');
+	var delName = document.getElementById('kpDelName');
+	var delForm = document.getElementById('kpDelForm');
+	if (bg && delName && delForm) {
+		bg.addEventListener('click', function (ev) {
+			var b = ev.target;
+			while (b && b !== bg && (!b.classList || !b.classList.contains('th-del'))) b = b.parentNode;
+			if (!b || b === bg) return;
+			delName.value = b.getAttribute('data-name') || '';
+			if (delName.value && window.confirm('确认删除该背景文件？')) delForm.submit();
+		});
+	}
+
+	/* 配置速览：贴到每个分区面板底部，避免大面板中部空旷 */
+	var tpl = document.getElementById('thSummaryTpl');
+	if (tpl) {
+		Array.prototype.forEach.call(document.querySelectorAll('.th-panel[data-panel]'), function (p) {
+			if (p.getAttribute('data-panel') === 'bg' || p.querySelector('.th-summary')) return;
+			if (p.insertAdjacentHTML) p.insertAdjacentHTML('beforeend', tpl.textContent);
+		});
+	}
+
+	/* 重置为服务端当前值 */
+	if (back) back.addEventListener('click', function () { location.reload(); });
+	show('style');
+})();
+</script>
+<%+footer%>

@@ -304,6 +304,19 @@ function luci.dispatcher.createtree()
 						mediaurlbase = "/luci-static/istore-ui"
 					}
 				end
+				-- 主题设置：整页重设计的自建视图（分区 Tab + 卡片式字段，一屏不滚动）。
+				-- 只在 istore 下挂载；manper / myos 仍用原 CBI 页，三主题选项齐全可切回。
+				local m_system = m_admin.nodes.system
+				if m_system and m_system.nodes then
+					m_system.nodes["argon-config"] = {
+						nodes = {},
+						target = luci.dispatcher.template("admin_status/kp_theme"),
+						title = "主题设置",
+						order = 90,
+						leaf = true,
+						mediaurlbase = "/luci-static/istore-ui"
+					}
+				end
 				-- 原厂页面容器：自带完整 HTML 的页面（/nradio/system/sim 等）用 iframe 包壳，
 				-- 保证侧栏常驻。挂在 admin/status 下（URL /admin/status/vendor），hidden 不进侧栏。
 				-- mediaurlbase 显式指定为 istore-ui：否则 <%%+header%%> 会按原厂树解析成 nradio 外壳
