@@ -137,9 +137,26 @@
 			}
 		}
 	}
+	/* 最近访问：命令面板排序依据，最多 6 条 */
+	var KREC = 'iosRecent';
+	var recent = [];
+	try { recent = JSON.parse(localStorage.getItem(KREC) || '[]') || []; } catch (e) { recent = []; }
+	function pushRecent(url) {
+		if (!url) return;
+		var u = String(url).replace(/[?#].*$/, '');
+		recent = [u].concat(recent.filter(function (x) { return x !== u; })).slice(0, 6);
+		try { localStorage.setItem(KREC, JSON.stringify(recent)); } catch (e) {}
+	}
+	function recentRank(url) {
+		var i = recent.indexOf(String(url || '').replace(/[?#].*$/, ''));
+		return i < 0 ? 99 : i;
+	}
+
 	setActive(location.pathname + location.search);
 	document.addEventListener('ios:navigate', function (ev) {
-		setActive(ev.detail && ev.detail.url);
+		var u = ev.detail && ev.detail.url;
+		setActive(u);
+		pushRecent(u);
 	});
 
 	/* ---------- 常用收藏 ---------- */
@@ -212,7 +229,6 @@
 		if (nav) nav.classList.toggle('searching', q !== '');
 		var visible = 0;
 		Array.prototype.forEach.call(document.querySelectorAll('.ios-nav-g'), function (g) {
-			if (g.id === 'iosFav') return;
 			var any = false;
 			Array.prototype.forEach.call(g.querySelectorAll('.ios-nav-i[data-path]'), function (a) {
 				var label = (a.getAttribute('data-label') || '').toLowerCase();
@@ -273,7 +289,7 @@
 		if (dot) dot.className = 'ops-dot' + (on ? '' : ' bad');
 	}
 	function poll() {
-		if (document.body.classList.contains('ios-embed')) return;
+		if (document.hidden || document.body.classList.contains('ios-embed')) return;
 		fetch(STATS, { credentials: 'same-origin', cache: 'no-store' })
 			.then(function (r) { return r.ok ? r.json() : null; })
 			.then(function (d) { paintShell(d); })
@@ -281,6 +297,7 @@
 	}
 	poll();
 	setInterval(poll, 5000);
+	document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
 
 	/* ---------- 命令面板 ---------- */
 	var cmd = document.createElement('div');
@@ -314,6 +331,8 @@
 		rows.sort(function (a, b) {
 			var fa = isFav(a.url) ? 0 : 1, fb = isFav(b.url) ? 0 : 1;
 			if (fa !== fb) return fa - fb;
+			var ra = recentRank(a.url), rb = recentRank(b.url);
+			if (ra !== rb) return ra - rb;
 			return 0;
 		});
 		cmdItems = rows;
@@ -330,6 +349,7 @@
 			el.setAttribute('data-path', d.url);
 			el.innerHTML = '<i class="fas ' + d.icon + '" aria-hidden="true"></i>' +
 				'<span class="lb">' + d.label + '</span>' +
+				(recentRank(d.url) < 99 ? '<span class="rc">最近</span>' : '') +
 				'<span class="gp">' + d.group + '</span>' +
 				(isFav(d.url) ? '<i class="fas fa-star fav"></i>' : '');
 			cmdList.appendChild(el);

@@ -256,3 +256,38 @@ body.ios-fit textarea#syslog,body.ios-fit textarea.ios-log{
   border:2px solid transparent;background-clip:padding-box
 }
 ::-webkit-scrollbar-thumb:hover{background:rgba(0,96,255,.35);background-clip:padding-box}
+
+/* ---------------------------- 设置向导：独立快捷入口 ---------------------------- */
+/* 原来它孤零零贴在「系统」分组末尾，和普通菜单项长得一样，显得突兀。
+   改成有分隔线、淡蓝渐变底、图标色块与「向导」标签的独立入口。 */
+.ios-nav-g.ios-nav-guide{margin-top:10px;padding-top:9px;border-top:1px dashed #dbe6f5}
+.ios-nav-guide .ios-nav-i{
+  background:linear-gradient(135deg,#eaf3ff,#f6faff);
+  border:1px solid #d7e7fb;color:var(--brand-3);font-weight:600;
+  box-shadow:0 2px 8px rgba(0,96,255,.06)
+}
+.ios-nav-guide .ios-nav-i > i:first-child{
+  width:20px;height:20px;line-height:19px;flex:0 0 20px;
+  border-radius:7px;background:#fff;border:1px solid #dceafb;
+  text-align:center;font-size:10.5px;color:var(--brand)
+}
+.ios-nav-guide .ios-nav-i:hover{
+  background:linear-gradient(135deg,#e2efff,#f0f7ff);border-color:var(--brand-line)
+}
+.ios-nav-guide .ios-nav-i.active{
+  box-shadow:inset 2px 0 0 var(--brand),0 3px 10px rgba(0,96,255,.12)
+}
+.ios-nav-guide .guide-tag{
+  margin-left:auto;font-size:9.5px;font-weight:700;letter-spacing:.4px;
+  color:var(--brand);background:#fff;border:1px solid #dceafb;
+  border-radius:999px;padding:1px 6px
+}
+.ios-nav-guide .ios-nav-i .fav-btn{display:none}
+body.ios-collapsed .ios-nav-guide .guide-tag{display:none}
+body.ios-collapsed .ios-nav-g.ios-nav-guide{margin-top:8px;padding-top:8px}
+
+/* 命令面板：最近访问标记 */
+.ios-cmd-item .rc{
+  font-size:10px;font-weight:700;color:var(--brand);
+  background:var(--brand-soft);border-radius:999px;padding:1px 7px
+}

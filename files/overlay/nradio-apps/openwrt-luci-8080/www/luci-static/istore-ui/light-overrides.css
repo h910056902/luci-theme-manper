@@ -153,3 +153,62 @@ body .wz-slot[aria-pressed="true"],
 body .wz-slot.on{border-color:#0060ff; background:#ecf3fe}
 body .wz-dot{background:#00b578; box-shadow:0 0 0 3px rgba(0,181,120,.14)}
 body .wz-dot.off{background:#f5484a; box-shadow:0 0 0 3px rgba(245,72,74,.14)}
+
+/* ======================= ③ 向导页对齐视觉升级层 ======================= */
+/* 原 .P 只有 860px，右侧大片空白；卡片仍是旧版纯白 12px，与 ios-look.css 不一致 */
+body .P{max-width:min(1080px,100%);padding:10px 0 24px;gap:12px}
+body .wz-head{padding:2px 2px 4px}
+body .wz-head h1{
+  font-size:20px;font-weight:700;color:var(--ink-deep,#1e2b48);
+  display:inline-flex;align-items:center;gap:10px;letter-spacing:.2px
+}
+body .wz-title-ic{
+  width:28px;height:28px;flex:0 0 28px;border-radius:9px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:13px;color:#fff;
+  background:linear-gradient(140deg,#22a9ff,#0060ff 55%,#0047c7);
+  box-shadow:0 5px 14px rgba(0,96,255,.26),inset 0 1px 0 rgba(255,255,255,.30)
+}
+body .wz-card{
+  position:relative;
+  background:linear-gradient(150deg,#ffffff,#fdfeff 48%,#f5faff);
+  border:1px solid #e3ecf7;border-radius:14px;
+  box-shadow:0 1px 2px rgba(30,50,90,.045),0 10px 28px rgba(30,50,90,.055);
+  transition:box-shadow .2s,transform .2s,border-color .2s
+}
+body .wz-card:hover{
+  box-shadow:0 2px 4px rgba(30,50,90,.05),0 16px 34px rgba(0,96,255,.10);
+  border-color:#d5e5fa;transform:translateY(-1px)
+}
+body .wz-card:after{
+  content:"";position:absolute;left:0;top:0;height:2px;width:46%;
+  border-radius:14px 0 0 0;pointer-events:none;opacity:.65;
+  background:linear-gradient(90deg,#009aff,#0060ff,transparent)
+}
+body .wz-card h2{color:var(--ink-deep,#1e2b48);font-size:14px;font-weight:700}
+body .wz-card h2 .wz-no{
+  background:linear-gradient(135deg,#17a6ff,#0060ff 52%,#0052d9);
+  box-shadow:0 3px 8px rgba(0,96,255,.24)
+}
+body .wz-input,body .wz-select{
+  border-radius:9px;border-color:#dbe6f5;background:#fff;
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.04)
+}
+body .wz-btn{
+  border:0;border-radius:9px;color:#fff;font-weight:600;
+  background:linear-gradient(135deg,#17a6ff,#0060ff 52%,#0052d9);
+  box-shadow:0 6px 16px rgba(0,96,255,.28),inset 0 1px 0 rgba(255,255,255,.28)
+}
+body .wz-btn:hover{filter:brightness(1.07);opacity:1}
+body .wz-btn.ghost{
+  background:linear-gradient(180deg,#fff,#f8fbff);border:1px solid #dbe6f5;
+  color:var(--ink-deep,#1e2b48);box-shadow:0 1px 2px rgba(30,50,90,.05)
+}
+body .wz-row,body .wz-sim-now,body .wz-slot{
+  background:linear-gradient(180deg,#fff,#f8fbff);
+  border:1px solid #e6eef8;border-radius:11px
+}
+body .wz-tip{color:var(--ink-mute,#6a7c99)}
+body .wz-head .wz-back{
+  border-radius:999px;background:linear-gradient(180deg,#fff,#f7fbff);
+  border-color:#e4edf9
+}
