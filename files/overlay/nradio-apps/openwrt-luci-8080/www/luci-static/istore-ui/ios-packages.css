@@ -1,0 +1,190 @@
+/* ==========================================================================
+   ios-packages.css · 软件包页整页重构层
+   仅在 /admin/system/packages* 由 footer 条件加载，因此可以放心使用页面级选择器。
+   目标：把原厂「白框堆叠 + 整条蓝色大按钮 + 裸表格」重构成三张分区卡片：
+     ① 系统概览（提示 / 刷新列表 / 空间用量）
+     ② 安装与过滤（两个工具行）
+     ③ 软件包列表（胶囊 tab + sticky 表头 + 块内滚动）
+   不改任何 opkg 表单字段与写操作，页面级依旧不滚动。
+   加载顺序在 ios-cbi-compat.css 之后，可覆盖其中的零散补丁。
+   ========================================================================== */
+
+/* ---------------------------- 分区基元 ---------------------------- */
+#maincontent fieldset.cbi-section:has(> fieldset.cbi-section-node){
+  display:flex;flex-direction:column;gap:12px;
+  margin:0 0 10px;padding:0;border:0;background:transparent;box-shadow:none
+}
+#maincontent fieldset.cbi-section:has(> fieldset.cbi-section-node) > fieldset.cbi-section-node{
+  position:relative;margin:0;padding:13px 16px 12px;
+  border:1px solid #e3ecf7;border-radius:14px;
+  background:linear-gradient(150deg,#fff,#fdfeff 48%,#f5faff);
+  box-shadow:0 1px 2px rgba(30,50,90,.045),0 10px 28px rgba(30,50,90,.055)
+}
+#maincontent fieldset.cbi-section:has(> fieldset.cbi-section-node) > fieldset.cbi-section-node:after{
+  content:"";position:absolute;left:0;top:0;height:2px;width:42%;
+  border-radius:14px 0 0 0;pointer-events:none;opacity:.65;
+  background:linear-gradient(90deg,#009aff,#0060ff,transparent)
+}
+/* 纯 CSS 生成分区标题，不动服务端模板 */
+#maincontent fieldset.cbi-section-node:before{
+  display:block;margin:0 0 10px;font-size:12.5px;font-weight:700;color:#1e2b48;
+  letter-spacing:.2px
+}
+#maincontent fieldset.cbi-section:has(> fieldset.cbi-section-node) > fieldset.cbi-section-node:nth-of-type(1):before{
+  content:"系统概览";display:flex;align-items:center;gap:8px
+}
+#maincontent fieldset.cbi-section:has(> fieldset.cbi-section-node) > fieldset.cbi-section-node:nth-of-type(2):before{
+  content:"安装与过滤";display:flex;align-items:center;gap:8px
+}
+#maincontent fieldset.cbi-section:has(> fieldset.cbi-section-node) > fieldset.cbi-section-node:before{
+  /* 标题左侧蓝色竖条 */
+  border-left:3px solid #0060ff;padding-left:8px;line-height:14px
+}
+
+/* ---------------------------- ① 系统概览 ---------------------------- */
+/* 提示/过滤提示行 + 刷新列表按钮：按 name 定位，installed 与 available 两态通用 */
+#maincontent .cbi-value:has(input[name="update"]),
+#maincontent .cbi-value:has(input.cbi-button-reset){
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:0 0 10px;margin:0;border-bottom:1px solid #edf2f9;
+  font-size:11.5px;color:#6a7c99
+}
+#maincontent .cbi-value:has(input[name="update"]) br,
+#maincontent .cbi-value:has(input.cbi-button-reset) br{display:none}
+#maincontent input[name="update"]{
+  width:auto!important;max-width:180px!important;min-width:0!important;
+  height:32px!important;padding:0 16px!important;margin-left:0!important;
+  font-size:11.5px!important;font-weight:700!important;
+  border-radius:9px!important;flex:0 0 auto;
+  box-shadow:0 5px 14px rgba(0,96,255,.24)!important
+}
+#maincontent input.cbi-button-reset{
+  width:auto!important;max-width:130px!important;min-width:0!important;
+  height:28px!important;padding:0 12px!important;margin-left:0!important;
+  font-size:11px!important;border-radius:8px!important;flex:0 0 auto
+}
+/* 空间用量：一行文字 + 品牌化进度条 */
+#maincontent .cbi-value:has(> div[style*="height:10px"]){
+  display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;
+  padding:10px 0 0;margin:0;border:0;
+  font-size:11.5px;color:#5b6b8c
+}
+#maincontent .cbi-value:has(> div[style*="height:10px"]) strong{
+  color:#1e2b48;font-weight:700;font-variant-numeric:tabular-nums
+}
+#maincontent .cbi-value > div[style*="height:10px"]{
+  flex:1 1 100%;width:100%!important;max-width:100%;height:8px!important;
+  margin:8px 0 2px!important;border:0!important;border-radius:999px!important;
+  background:linear-gradient(90deg,#dde9f7,#eaf2fc)!important;
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.07);overflow:hidden
+}
+#maincontent .cbi-value > div[style*="height:10px"] > div{
+  height:100%!important;border:0!important;border-radius:999px!important;
+  background:linear-gradient(90deg,#ffa63d,#f5544a)!important
+}
+
+/* ---------------------------- ② 安装与过滤 ---------------------------- */
+#maincontent fieldset.cbi-section-node:nth-of-type(2) .cbi-value{
+  display:flex;align-items:center;gap:12px;
+  padding:7px 0;margin:0;border:0
+}
+#maincontent fieldset.cbi-section-node:nth-of-type(2) .cbi-value + .cbi-value{
+  border-top:1px solid #edf2f9
+}
+#maincontent fieldset.cbi-section-node:nth-of-type(2) .cbi-value-title{
+  flex:0 0 132px;min-width:0;color:#1e2b48;font-size:11.5px;font-weight:600
+}
+#maincontent fieldset.cbi-section-node:nth-of-type(2) .cbi-value-field{
+  display:flex;align-items:center;gap:9px;flex:1 1 auto;min-width:0
+}
+#maincontent input[name="url"],#maincontent input[name="query"]{
+  flex:1 1 auto;min-width:180px;max-width:none;height:34px;
+  padding:0 11px;box-sizing:border-box;
+  border:1px solid #cfe0f2;border-radius:9px;background:#f5f9ff;
+  color:#1e2b48;font-family:var(--font,sans-serif);font-size:12px;
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.04)
+}
+#maincontent input[name="url"]:focus,#maincontent input[name="query"]:focus{
+  outline:none;border-color:#0060ff;background:#fff;
+  box-shadow:0 0 0 3px rgba(0,96,255,.13)
+}
+#maincontent input[name="go"]{
+  flex:0 0 auto;height:34px;padding:0 16px;
+  border-radius:9px;font-size:11.5px;font-weight:700;
+  box-shadow:0 5px 14px rgba(0,96,255,.22)
+}
+#maincontent input[name="search"]{
+  flex:0 0 auto;height:34px;padding:0 15px;
+  border:1px solid #dbe6f5!important;border-radius:9px;
+  background:linear-gradient(180deg,#fff,#f8fbff)!important;color:#0052d9!important;
+  font-size:11.5px;font-weight:600;box-shadow:0 1px 2px rgba(30,50,90,.05)
+}
+
+/* ---------------------------- 页签与状态标题 ---------------------------- */
+#maincontent ul.cbi-tabmenu{margin:0 0 10px}
+#maincontent h3{
+  display:flex;align-items:center;gap:8px;
+  margin:12px 0 8px;font-size:11px;font-weight:700;letter-spacing:.6px;color:#6a7c99
+}
+#maincontent h3:before{content:"";width:3px;height:11px;border-radius:3px;background:linear-gradient(180deg,#009aff,#0060ff)}
+
+/* ---------------------------- ③ 软件包列表 ---------------------------- */
+#maincontent fieldset.cbi-section:has(table.cbi-section-table){
+  position:relative;margin:0;padding:0;
+  border:1px solid #e3ecf7;border-radius:14px;
+  background:linear-gradient(180deg,#fff,#fbfdff);
+  box-shadow:0 1px 2px rgba(30,50,90,.045),0 10px 28px rgba(30,50,90,.055);
+  max-height:calc(100vh - 410px);min-height:150px;
+  overflow-y:auto;overflow-x:hidden;
+  scrollbar-width:thin;scrollbar-color:rgba(110,145,190,.42) transparent
+}
+body.ios-embed #maincontent fieldset.cbi-section:has(table.cbi-section-table){
+  max-height:calc(100vh - 370px)
+}
+#maincontent fieldset.cbi-section:has(table.cbi-section-table)::-webkit-scrollbar{width:8px}
+#maincontent fieldset.cbi-section:has(table.cbi-section-table)::-webkit-scrollbar-track{background:transparent}
+#maincontent fieldset.cbi-section:has(table.cbi-section-table)::-webkit-scrollbar-thumb{
+  background:rgba(110,145,190,.38);border-radius:8px;
+  border:2px solid transparent;background-clip:padding-box
+}
+#maincontent table.cbi-section-table{
+  width:100%;margin:0;border-collapse:separate;border-spacing:0;background:transparent
+}
+/* 表头是 tbody 里的首行 tr.cbi-section-table-titles（没有 thead），用 sticky 固定 */
+#maincontent table.cbi-section-table tr.cbi-section-table-titles th{
+  position:sticky;top:0;z-index:3;
+  padding:10px 12px;border-bottom:1px solid #e3ecf7;
+  background:linear-gradient(180deg,#f7faff,#eef4fc);
+  color:#5b6b8c;font-size:10.5px;font-weight:700;letter-spacing:.5px;text-align:left
+}
+#maincontent table.cbi-section-table td{
+  padding:7px 12px;border-bottom:1px solid #edf2f9;
+  color:#1e2b48;font-size:11.5px;vertical-align:middle
+}
+#maincontent table.cbi-section-table tbody tr:nth-child(even) td{background:rgba(246,250,255,.62)}
+#maincontent table.cbi-section-table tbody tr:hover td{background:rgba(0,96,255,.045)}
+#maincontent table.cbi-section-table tr:last-child td{border-bottom:0}
+#maincontent table.cbi-section-table th:first-child,
+#maincontent table.cbi-section-table td:first-child{width:88px}
+#maincontent table.cbi-section-table th:last-child,
+#maincontent table.cbi-section-table td:last-child{width:150px}
+
+/* 行内移除：危险色小胶囊 */
+#maincontent table.cbi-section-table form.inline{margin:0;display:flex}
+#maincontent table.cbi-section-table a[onclick]{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-height:25px;padding:0 11px;border-radius:8px;
+  border:1px solid #f4cfcf;background:#fdecec;color:#c73b3d;
+  font-size:10.5px;font-weight:600;text-decoration:none;
+  transition:filter .15s,box-shadow .15s
+}
+#maincontent table.cbi-section-table a[onclick]:hover{
+  filter:brightness(.97);text-decoration:none;box-shadow:0 2px 8px rgba(199,59,61,.16)
+}
+
+/* 窄屏：工具行改为纵向，表格卡片留更多高度 */
+@media(max-width:900px){
+  #maincontent fieldset.cbi-section-node:nth-of-type(2) .cbi-value{flex-wrap:wrap}
+  #maincontent fieldset.cbi-section-node:nth-of-type(2) .cbi-value-title{flex:1 1 100%}
+  #maincontent input[name="url"],#maincontent input[name="query"]{max-width:none}
+}

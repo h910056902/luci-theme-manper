@@ -117,20 +117,102 @@
 /* 原生复选/单选 */
 .ios-content input[type="checkbox"],.ios-content input[type="radio"]{accent-color:#0060ff}
 
+/* ---------------------------- 软件包页（opkg / packages） ---------------------------- */
+/* 实测该页有三处原厂「裸结构」，主题此前完全没有覆盖：
+   1) 下载/过滤输入框是 <input type=text name=url|query>，没有 cbi-input-text 类名
+   2) 空闲空间进度条是内联 style 的红绿块（border:1px solid #000 / #80C080 / #F08080）
+   3) 每行「移除」是裸 <a onclick="...Remove...">，不是按钮 */
+/* 不论有没有类名都统一：这些页的输入框可能被追加 ios-input（width:100% 会拉满整行） */
+.ios-content .cbi-value-field > input[type="text"],
+.ios-content .cbi-value-field > input[type="password"],
+.ios-content .cbi-value-field > input[type="number"]{
+  width:auto;height:32px;min-width:220px;max-width:320px;padding:0 10px;box-sizing:border-box;
+  border:1px solid #cfe0f2;border-radius:9px;background:#f5f9ff;
+  color:var(--ink-deep,#1e2b48);font-family:var(--font,sans-serif);font-size:12px;
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.04)
+}
+.ios-content .cbi-value-field > input[type="text"]:focus,
+.ios-content .cbi-value-field > input[type="password"]:focus,
+.ios-content .cbi-value-field > input[type="number"]:focus{
+  outline:none;border-color:#0060ff;background:#fff;
+  box-shadow:0 0 0 3px rgba(0,96,255,.13)
+}
+
+/* 空闲空间：裸文本 + 内联红绿进度条，改成一行排版 + 品牌化进度条 */
+.ios-content .cbi-value:has(> div[style*="height:10px"]){
+  display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:9px 0
+}
+.ios-content .cbi-value > div[style*="height:10px"]{
+  flex:1 1 100%;width:100%!important;max-width:360px;height:8px!important;
+  margin:6px 0 2px!important;border:0!important;border-radius:999px!important;
+  background:linear-gradient(90deg,#e9f1fb,#f4f8fd)!important;
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.07);overflow:hidden
+}
+.ios-content .cbi-value > div[style*="height:10px"] > div{
+  height:100%!important;border:0!important;
+  background:linear-gradient(90deg,#ffa63d,#f5544a)!important;
+  border-radius:999px!important
+}
+.ios-content .cbi-value:has(> div[style*="height:10px"]) strong{color:var(--ink-deep,#1e2b48)}
+
+/* 表格行内操作：裸 <a> 做成小胶囊，移除类用危险色 */
+.ios-content .cbi-section-table a[onclick],
+.ios-content .cbi-section-table a[href="#"]{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-height:26px;padding:0 11px;border-radius:8px;
+  border:1px solid #dbe6f5;background:linear-gradient(180deg,#fff,#f8fbff);
+  color:#0052d9;font-size:11px;font-weight:600;text-decoration:none;
+  box-shadow:0 1px 2px rgba(30,50,90,.05);transition:border-color .15s,color .15s,box-shadow .15s
+}
+.ios-content .cbi-section-table a[onclick]:hover,
+.ios-content .cbi-section-table a[href="#"]:hover{
+  border-color:#0060ff;box-shadow:0 4px 12px rgba(0,96,255,.12);text-decoration:none
+}
+.ios-content .cbi-section-table a[onclick*="Remove"],
+.ios-content .cbi-section-table a[onclick*="移除"]{
+  border-color:#f4cfcf;background:#fdecec;color:#c73b3d
+}
+.ios-content .cbi-section-table a[onclick*="Remove"]:hover,
+.ios-content .cbi-section-table a[onclick*="移除"]:hover{border-color:#e9a8a8}
+
+/* 列宽：操作列与版本列固定，名称列自适应 */
+.ios-content .cbi-section-table th:first-child,
+.ios-content .cbi-section-table td:first-child{width:92px}
+.ios-content .cbi-section-table th:last-child,
+.ios-content .cbi-section-table td:last-child{width:132px}
+
 /* ---------------------------- iStore 全应用列表可达性 ---------------------------- */
 /* 「全部软件」列表实测高达 17780px，页面级 overflow:hidden 会把绝大部分应用裁掉。
-   给应用区块内滚动：页面级仍不滚动，滚动条只出现在应用卡片区内，
-   用户可向下浏览全部应用。用 :has(ul.tabs) 限定在带页签的 iStore 页面。 */
-.ios-content:has(ul.tabs) #app{
-  max-height:calc(100vh - 190px);
+   实测 DOM：#app > ul.tabs + fieldset.cbi-section；fieldset 内依次为
+   form.search / .tags-container / .sort-container / .containers(124 个卡片子节点)。
+   因此只让 .containers 滚动，搜索框、标签、排序与页签始终固定可见；
+   页面级仍不滚动。用 :has(ul.tabs) 限定在带页签的 iStore 页面。 */
+.ios-content:has(ul.tabs) #app{max-height:none;overflow:visible;padding-right:0}
+.ios-content:has(ul.tabs) #app > ul.tabs{
+  position:sticky;top:0;z-index:6;
+  background:rgba(244,247,251,.96);backdrop-filter:blur(10px)
+}
+.ios-content:has(ul.tabs) #app > .cbi-section{
+  display:flex;flex-direction:column;
+  max-height:calc(100vh - 210px);
+  overflow:hidden;margin-bottom:0
+}
+body.ios-embed .ios-content:has(ul.tabs) #app > .cbi-section{max-height:calc(100vh - 170px)}
+.ios-content:has(ul.tabs) #app > .cbi-section > .search,
+.ios-content:has(ul.tabs) #app > .cbi-section > .tags-container,
+.ios-content:has(ul.tabs) #app > .cbi-section > .sort-container{flex:0 0 auto}
+.ios-content:has(ul.tabs) #app .containers{
+  flex:1 1 auto;min-height:0;
   overflow-y:auto;overflow-x:hidden;
   padding-right:4px;
   scrollbar-width:thin;scrollbar-color:rgba(110,145,190,.42) transparent
 }
-body.ios-embed .ios-content:has(ul.tabs) #app{max-height:calc(100vh - 150px)}
-.ios-content:has(ul.tabs) #app::-webkit-scrollbar{width:8px}
-.ios-content:has(ul.tabs) #app::-webkit-scrollbar-thumb{
+.ios-content:has(ul.tabs) #app .containers::-webkit-scrollbar{width:8px}
+.ios-content:has(ul.tabs) #app .containers::-webkit-scrollbar-track{background:transparent}
+.ios-content:has(ul.tabs) #app .containers::-webkit-scrollbar-thumb{
   background:rgba(110,145,190,.38);border-radius:8px;
   border:2px solid transparent;background-clip:padding-box
 }
-.ios-content:has(ul.tabs) #app::-webkit-scrollbar-thumb:hover{background:rgba(0,96,255,.4);background-clip:padding-box}
+.ios-content:has(ul.tabs) #app .containers::-webkit-scrollbar-thumb:hover{
+  background:rgba(0,96,255,.4);background-clip:padding-box
+}

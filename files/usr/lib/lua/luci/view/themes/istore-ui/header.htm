@@ -310,7 +310,7 @@
 <link rel="stylesheet" href="<%=media%>/ios-spa.css?v=1">
 <link rel="stylesheet" href="<%=media%>/ios-fit.css?v=1">
 <link rel="stylesheet" href="<%=media%>/ios-look.css?v=4">
-<link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=2">
+<link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=6">
 <%
 	if reqstr:match("^/nradio") then
 %>
@@ -325,6 +325,7 @@
 <%
 	end
 %>
+<script>window.jQuery || document.write('<script src="/luci-static/nradio/js/jquery.min.js"><\/script>');</script>
 <script src="/luci-static/resources/cbi.js"></script>
 <script src="/luci-static/resources/xhr.js"></script>
 </head>
@@ -346,7 +347,7 @@
 <link rel="stylesheet" href="<%=media%>/ios-ops.css?v=2">
 <link rel="stylesheet" href="<%=media%>/ios-fit.css?v=1">
 <link rel="stylesheet" href="<%=media%>/ios-look.css?v=4">
-<link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=2">
+<link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=6">
 <%
 	-- 原厂路由（/nradio/*）内容基于 bootstrap 栅格与 panel，需要在壳内补基础样式 + 适配层
 	if reqstr:match("^/nradio") then
@@ -365,6 +366,7 @@
 %>
 <!-- LuCI 基础脚本：本固件的 XHR/dom 在 resources/xhr.js，CBI 在 resources/cbi.js。
      缺它们会导致概览/无线等页的原厂轮询不执行（数值停在“正在收集数据…”）。 -->
+<script>window.jQuery || document.write('<script src="/luci-static/nradio/js/jquery.min.js"><\/script>');</script>
 <script src="/luci-static/resources/cbi.js"></script>
 <script src="/luci-static/resources/xhr.js"></script>
 <script src="<%=media%>/shell.js?v=9" defer></script>
