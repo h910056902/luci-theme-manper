@@ -57,6 +57,9 @@
 
 	/* ---------- 脏标记保存条 ---------- */
 	function dirtyWatch() {
+		/* 自建主题设置页有自己的分区表单、保存条与上传状态反馈，
+		   全局脏条会与它重复（选个文件就弹「有未保存的改动」），故跳过。 */
+		if (/\/system\/argon-config/.test(location.pathname)) return;
 		var form = $('#maincontent');
 		if (!form || form.getAttribute('data-kp-dirty')) return;
 		form.setAttribute('data-kp-dirty', '1');

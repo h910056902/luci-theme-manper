@@ -1,0 +1,136 @@
+/* ==========================================================================
+   ios-cbi-compat.css · 原厂 CBI 基础类兼容层
+   istore 主题不加载原厂 cascade.css，导致第三方 LuCI 应用里依赖这些类的
+   元素退化为裸 HTML：iStore 的 <ul class="tabs"><li class="cbi-tab"> 变成
+   竖排 bullet 列表、<input class="hidden"> 变成可见的「保存」按钮等。
+   这里只补必需类并用 istore 视觉语言重绘，不引入整份原厂 CSS（避免配色冲突）。
+   加载顺序：在 ios-look.css 之后、light-overrides.css 之前。
+   ========================================================================== */
+
+/* ---------------------------- 隐藏语义 ---------------------------- */
+.ios-content .hidden,
+.ios-content input[type=submit].hidden{display:none!important}
+
+/* ---------------------------- 页签菜单（iStore / 原厂 CBI） ---------------------------- */
+.ios-content ul.tabs,
+.ios-content .cbi-tabmenu{
+  display:flex;align-items:center;flex-wrap:wrap;gap:4px;
+  margin:0 0 12px;padding:4px;
+  list-style:none;list-style-type:none;
+  border:1px solid #e3ecf7;border-radius:999px;
+  background:linear-gradient(180deg,#f8fbff,#eff5fd);
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.035)
+}
+.ios-content ul.tabs > li,
+.ios-content .cbi-tabmenu > li{
+  display:block;float:none;list-style:none;list-style-type:none;
+  margin:0;padding:0;border:0;background:transparent
+}
+.ios-content ul.tabs > li::marker,
+.ios-content .cbi-tabmenu > li::marker{content:""}
+.ios-content ul.tabs > li > a,
+.ios-content .cbi-tabmenu > li > a{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:6px 14px;border:0;border-radius:999px;
+  background:transparent;color:#6a7c99;
+  font-family:var(--font,sans-serif);font-size:12px;font-weight:600;
+  text-decoration:none;white-space:nowrap;
+  transition:background .16s,color .16s,box-shadow .16s
+}
+.ios-content ul.tabs > li > a:hover,
+.ios-content .cbi-tabmenu > li > a:hover{
+  background:rgba(255,255,255,.85);color:#0060ff;text-decoration:none
+}
+.ios-content ul.tabs > li.active > a,
+.ios-content ul.tabs > li.cbi-tab > a,
+.ios-content .cbi-tabmenu > li.cbi-tab > a{
+  background:linear-gradient(135deg,#009aff,#0060ff);
+  color:#fff;box-shadow:0 3px 10px rgba(0,96,255,.28)
+}
+.ios-content ul.tabs > li.cbi-tab-disabled > a,
+.ios-content .cbi-tabmenu > li.cbi-tab-disabled > a{opacity:.45;cursor:not-allowed}
+
+/* ---------------------------- 第三方页标题与版本徽标 ---------------------------- */
+.ios-content h2[name="content"]{
+  margin:0 0 10px;font-size:16px;font-weight:700;
+  color:var(--ink-deep,#1e2b48);letter-spacing:.2px;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap
+}
+.ios-content h2[name="content"] a{
+  font-size:11px;font-weight:600;color:#0060ff;text-decoration:none;
+  padding:2px 8px;border-radius:999px;
+  background:linear-gradient(135deg,#e9f2ff,#f4f9ff);border:1px solid #cfe2ff
+}
+.ios-content h2[name="content"] a:hover{text-decoration:underline}
+
+/* ---------------------------- 原厂提示与状态文本 ---------------------------- */
+.ios-content .cbi-map-descr,
+.ios-content .cbi-section-descr{color:var(--ink-mute,#6a7c99);font-size:11.5px;line-height:1.55}
+.ios-content .cbi-section-table th{
+  background:linear-gradient(180deg,#f7faff,#eef4fc);
+  color:#5b6b8c;font-size:10.5px;letter-spacing:.5px
+}
+.ios-content .cbi-section-table tr:hover td{background:rgba(0,96,255,.035)}
+.ios-content .cbi-value > .cbi-value-title{color:var(--ink-deep,#1e2b48);font-weight:600}
+.ios-content .cbi-value > .cbi-value-description{color:var(--ink-mute,#6a7c99)}
+
+/* ---------------------------- 第三方应用的原生控件 ---------------------------- */
+/* iStore 等 Vue 应用输出的是无 CBI 类名的原生控件（如 .local-input-field），
+   istore 主题此前只主题化了 .cbi-input-select，导致下拉框/文件按钮保持浏览器默认灰框。 */
+
+/* 原生 select：排除已单独设计的选择器，避免覆盖自建页 */
+.ios-content select:not(.cbi-input-select):not(.th-select):not(.ios-select):not(.wz-select){
+  appearance:none;-webkit-appearance:none;
+  min-height:32px;padding:0 28px 0 10px;
+  border:1px solid #dbe6f5;border-radius:9px;
+  background-color:#fff;color:var(--ink-deep,#1e2b48);
+  font-family:var(--font,sans-serif);font-size:12px;
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.04);
+  background-image:
+    linear-gradient(45deg,transparent 50%,#0060ff 50%),
+    linear-gradient(135deg,#0060ff 50%,transparent 50%);
+  background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;
+  background-size:5px 5px,5px 5px;
+  background-repeat:no-repeat
+}
+.ios-content select:not(.cbi-input-select):not(.th-select):not(.ios-select):not(.wz-select):focus{
+  outline:none;border-color:#0060ff;box-shadow:0 0 0 3px rgba(0,96,255,.13)
+}
+.ios-content select option{color:#1e2b48;background:#fff}
+
+/* 原生文件选择按钮（flashops / reset / OpenClash / iStore 维护与手动安装页） */
+.ios-content input[type="file"]{font-size:11.5px;color:var(--ink-mute,#6a7c99);max-width:100%}
+.ios-content input[type="file"]::file-selector-button{
+  margin-right:9px;padding:7px 13px;
+  border:1px solid #dbe6f5;border-radius:9px;
+  background:linear-gradient(180deg,#fff,#f8fbff);
+  color:#1e2b48;font-family:var(--font,sans-serif);font-size:11.5px;font-weight:600;
+  cursor:pointer;box-shadow:0 1px 2px rgba(30,50,90,.05);
+  transition:border-color .15s,color .15s,box-shadow .15s
+}
+.ios-content input[type="file"]::file-selector-button:hover{
+  border-color:#0060ff;color:#0052d9;box-shadow:0 4px 12px rgba(0,96,255,.12)
+}
+/* 主题设置页用 label 代理的隐藏 input 不参与 */
+.ios-content input.th-fileinput{pointer-events:none}
+
+/* 原生复选/单选 */
+.ios-content input[type="checkbox"],.ios-content input[type="radio"]{accent-color:#0060ff}
+
+/* ---------------------------- iStore 全应用列表可达性 ---------------------------- */
+/* 「全部软件」列表实测高达 17780px，页面级 overflow:hidden 会把绝大部分应用裁掉。
+   给应用区块内滚动：页面级仍不滚动，滚动条只出现在应用卡片区内，
+   用户可向下浏览全部应用。用 :has(ul.tabs) 限定在带页签的 iStore 页面。 */
+.ios-content:has(ul.tabs) #app{
+  max-height:calc(100vh - 190px);
+  overflow-y:auto;overflow-x:hidden;
+  padding-right:4px;
+  scrollbar-width:thin;scrollbar-color:rgba(110,145,190,.42) transparent
+}
+body.ios-embed .ios-content:has(ul.tabs) #app{max-height:calc(100vh - 150px)}
+.ios-content:has(ul.tabs) #app::-webkit-scrollbar{width:8px}
+.ios-content:has(ul.tabs) #app::-webkit-scrollbar-thumb{
+  background:rgba(110,145,190,.38);border-radius:8px;
+  border:2px solid transparent;background-clip:padding-box
+}
+.ios-content:has(ul.tabs) #app::-webkit-scrollbar-thumb:hover{background:rgba(0,96,255,.4);background-clip:padding-box}
