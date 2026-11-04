@@ -303,6 +303,58 @@ body{background:var(--wz-bg)}
 .wz-foot{font-size:11px;color:var(--wz-t2);text-align:center;padding-top:2px}
 .wz-foot a{color:#c7b9ff;text-decoration:none}
 .wz-foot a:hover{text-decoration:underline}
+/* ---- v2 布局：概览条 + 2 列网格，让一屏容纳更多配置 ---- */
+.wz-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:2px 0 0}
+.wz-kpi{
+  position:relative;display:flex;flex-direction:column;gap:2px;padding:9px 12px;
+  border:1px solid var(--wz-bd);border-radius:12px;
+  background:linear-gradient(150deg,#fff,#f8fbff);
+  box-shadow:0 1px 2px rgba(30,50,90,.04),0 6px 18px rgba(30,50,90,.04)
+}
+.wz-kpi:after{
+  content:"";position:absolute;left:0;top:0;height:2px;width:52%;border-radius:12px 0 0 0;
+  background:linear-gradient(90deg,#009aff,#0060ff,transparent);opacity:.6;pointer-events:none
+}
+.wz-kpi .k{font-size:10.5px;font-weight:600;letter-spacing:.4px;color:var(--wz-t2);display:flex;align-items:center;gap:6px}
+.wz-kpi .k i{color:var(--wz-ac)}
+.wz-kpi .v{font-size:17px;font-weight:700;color:var(--wz-t1);line-height:1.2;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wz-kpi .v small{font-size:10.5px;font-weight:600;color:var(--wz-t2)}
+.wz-kpi .s{font-size:10px;color:var(--wz-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wz-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.wz-span2{grid-column:1/-1}
+.wz-card h2 .wz-no{font-size:11px}
+.wz-lan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.wz-lan-item{background:var(--wz-c2);border:1px solid var(--wz-bd);border-radius:9px;padding:7px 10px;min-width:0}
+.wz-lan-item .k{font-size:10.5px;color:var(--wz-t2)}
+.wz-lan-item .v{font-size:12.5px;font-weight:700;color:var(--wz-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wz-lan-acts{display:flex;gap:8px;flex-wrap:wrap}
+.wz-lan-acts .wz-btn{font-size:11px;padding:7px 12px;text-decoration:none;display:inline-flex;align-items:center}
+.wz-links{display:flex;flex-wrap:wrap;gap:7px}
+.wz-link{
+  display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:9px;
+  border:1px solid var(--wz-bd);background:linear-gradient(180deg,#fff,#f8fbff);
+  color:var(--wz-t1);text-decoration:none;font-size:11.5px;font-weight:600;
+  transition:transform .15s,box-shadow .15s,border-color .15s,color .15s
+}
+.wz-link:hover{transform:translateY(-1px);border-color:#cfe2ff;color:#0060ff;box-shadow:0 5px 14px rgba(0,96,255,.12)}
+.wz-link i{color:var(--wz-ac);font-size:11px}
+.wz-sub-extra{font-size:10.5px;color:var(--wz-t2);margin:0}
+.wz-hint{
+  margin-left:auto;display:inline-flex;align-items:center;gap:5px;
+  font-size:10.5px;font-weight:500;color:var(--wz-t2);white-space:nowrap;cursor:help
+}
+.wz-hint i{color:var(--wz-ac)}
+.wz-note-line{
+  display:flex;align-items:flex-start;gap:7px;padding:7px 10px;
+  border:1px solid var(--wz-bd);border-radius:9px;background:var(--wz-c2);
+  font-size:10.5px;line-height:1.5;color:var(--wz-t2)
+}
+.wz-note-line i{color:var(--wz-ac);margin-top:2px}
+@media (max-width:900px){
+	.wz-grid{grid-template-columns:1fr}
+	.wz-span2{grid-column:auto}
+	.wz-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
 @media (max-width:640px){
 	.wz-row{grid-template-columns:1fr 1fr}
 	.wz-row .wz-band{grid-column:1/-1}
@@ -316,15 +368,40 @@ body{background:var(--wz-bg)}
 	<h1><span class="wz-title-ic"><i class="fas fa-compass" aria-hidden="true"></i></span>网络设置向导</h1>
 	<a class="wz-back" href="<%=pcdata(home_url)%>"><i class="fas fa-home" aria-hidden="true"></i>返回首页</a>
 </div>
-<div class="wz-sub">三步搞定最常用的网络配置 · 改动即时生效，出问题可随时回到本页调整</div>
+<div class="wz-sub">常用网络配置集中在本页 · 改动即时生效，出问题可随时回到本页调整</div>
 
-<div class="wz-card" id="card-wifi">
-	<h2><span class="wz-no">1</span>Wi-Fi 快速配置</h2>
-	<p class="wz-tip">修改 Wi-Fi 名称或密码后点击「保存」。<b>若你正通过 Wi-Fi 管理路由器，保存后会短暂断开约 10 秒</b>，属正常现象。</p>
+<div class="wz-kpis" data-fit-label="实时状态" role="group" aria-label="设备实时状态" aria-live="polite">
+	<div class="wz-kpi">
+		<span class="k"><i class="fas fa-globe" aria-hidden="true"></i>上行链路</span>
+		<span class="v" id="wz-k-wan">--</span>
+		<span class="s" id="wz-k-wan-s">检测中…</span>
+	</div>
+	<div class="wz-kpi">
+		<span class="k"><i class="fas fa-users" aria-hidden="true"></i>在线终端</span>
+		<span class="v"><span id="wz-k-clients">--</span><small> 台</small></span>
+		<span class="s">DHCP 租约 / ARP 表</span>
+	</div>
+	<div class="wz-kpi">
+		<span class="k"><i class="fas fa-memory" aria-hidden="true"></i>内存占用</span>
+		<span class="v"><span id="wz-k-mem">--</span><small>%</small></span>
+		<span class="s">负载 <span id="wz-k-load">--</span></span>
+	</div>
+	<div class="wz-kpi">
+		<span class="k"><i class="fas fa-thermometer-half" aria-hidden="true"></i>设备温度</span>
+		<span class="v"><span id="wz-k-temp">--</span><small>℃</small></span>
+		<span class="s" id="wz-k-cell">蜂窝状态读取中…</span>
+	</div>
+</div>
+
+<div class="wz-grid">
+<div class="wz-card wz-span2" id="card-wifi" data-fit-label="Wi-Fi 配置">
+	<h2><span class="wz-no">1</span>Wi-Fi 快速配置
+		<span class="wz-hint" title="若你正通过 Wi-Fi 管理路由器，保存后无线会重启并短暂断开约 10 秒，属正常现象。"><i class="fas fa-info-circle" aria-hidden="true"></i>保存后无线会短暂重启</span>
+	</h2>
 	<div id="wifi-rows"></div>
 </div>
 
-<div class="wz-card" id="card-sim">
+<div class="wz-card" id="card-sim" data-fit-label="SIM 切换">
 	<h2><span class="wz-no">2</span>SIM 流量卡切换<span class="wz-chip" id="sim-chip">读取中…</span></h2>
 	<div class="wz-sim-now" id="sim-now"><span class="wz-dot" id="sim-dot"></span><span id="sim-now-txt">正在读取蜂窝状态…</span></div>
 	<div class="wz-slots" id="sim-slots"></div>
@@ -335,7 +412,7 @@ body{background:var(--wz-bg)}
 	</div>
 </div>
 
-<div class="wz-card" id="card-oc">
+<div class="wz-card" id="card-oc" data-fit-label="代理订阅">
 	<h2><span class="wz-no">3</span>OpenClash 快速订阅<span class="wz-chip" id="oc-chip">读取中…</span></h2>
 	<p class="wz-tip">粘贴机场订阅链接（Clash 格式），保存后自动下载并校验配置，成功后自动重启代理。当前配置：<b id="oc-cfg" style="color:var(--wz-t1)">-</b></p>
 	<div class="wz-oc-row">
@@ -345,10 +422,42 @@ body{background:var(--wz-bg)}
 		</div>
 		<button type="button" class="wz-btn" id="oc-go"><i class="fas fa-cloud-download-alt" aria-hidden="true"></i> 保存并更新</button>
 	</div>
+	<div class="wz-note-line"><i class="fas fa-lightbulb" aria-hidden="true"></i><span>订阅在后台下载校验，进度显示在本页日志；成功后代理自动重启，一般需 10–60 秒。</span></div>
 	<div class="wz-log" id="oc-log" aria-live="polite"></div>
 </div>
 
-<div class="wz-foot">
+<div class="wz-card" id="card-lan" data-fit-label="局域网">
+	<h2><span class="wz-no">4</span>局域网与 DHCP<span class="wz-chip">自动获取</span></h2>
+	<div class="wz-lan-grid">
+		<div class="wz-lan-item"><div class="k">管理地址</div><div class="v" id="wz-lan-ip">--</div></div>
+		<div class="wz-lan-item"><div class="k">地址池范围</div><div class="v" id="wz-lan-pool">--</div></div>
+		<div class="wz-lan-item"><div class="k">动态租约</div><div class="v" id="wz-lan-leases">--</div></div>
+		<div class="wz-lan-item"><div class="k">地址池占用</div><div class="v" id="wz-lan-pct">--</div></div>
+	</div>
+	<div class="wz-lan-acts">
+		<a class="wz-btn ghost" href="/cgi-bin/luci/admin/network/dhcp"><i class="fas fa-server" aria-hidden="true"></i> DHCP / DNS 设置</a>
+		<a class="wz-btn ghost" href="/cgi-bin/luci/admin/network/network"><i class="fas fa-network-wired" aria-hidden="true"></i> 接口总览</a>
+	</div>
+</div>
+
+<div class="wz-card" id="card-links" data-fit-label="更多设置">
+	<h2><span class="wz-no">5</span>更多设置与维护</h2>
+	<div class="wz-links" role="navigation" aria-label="常用设置入口">
+		<a class="wz-link" href="/cgi-bin/luci/admin/network/wireless"><i class="fas fa-wifi" aria-hidden="true"></i>无线高级</a>
+		<a class="wz-link" href="/cgi-bin/luci/admin/status/iptables"><i class="fas fa-shield-alt" aria-hidden="true"></i>防火墙</a>
+		<a class="wz-link" href="/cgi-bin/luci/admin/network/diagnostics"><i class="fas fa-stethoscope" aria-hidden="true"></i>网络诊断</a>
+		<a class="wz-link" href="/cgi-bin/luci/admin/network/hosts"><i class="fas fa-tags" aria-hidden="true"></i>主机名</a>
+		<a class="wz-link" href="/cgi-bin/luci/admin/system/system"><i class="fas fa-cog" aria-hidden="true"></i>系统属性</a>
+		<a class="wz-link" href="/cgi-bin/luci/admin/system/packages"><i class="fas fa-box-open" aria-hidden="true"></i>软件包</a>
+		<a class="wz-link" href="/cgi-bin/luci/admin/system/flashops"><i class="fas fa-save" aria-hidden="true"></i>备份 / 刷机</a>
+		<a class="wz-link" href="/cgi-bin/luci/admin/system/reboot"><i class="fas fa-redo" aria-hidden="true"></i>重启设备</a>
+		<a class="wz-link" href="/cgi-bin/luci/admin/status/overview"><i class="fas fa-microchip" aria-hidden="true"></i>系统信息</a>
+	</div>
+	<p class="wz-sub-extra">以上入口都在左侧菜单中，也可按 Ctrl+K 直接搜索跳转。</p>
+</div>
+</div><!-- /wz-grid -->
+
+<div class="wz-foot" data-fit-label="其他向导">
 	需要 PPPoE 宽带拨号 / 静态 IP 等传统上网设置？<a href="<%=pcdata(vendor_url)%>">打开原厂上网向导</a>
 </div>
 </div>
@@ -413,6 +522,33 @@ body{background:var(--wz-bg)}
 		});
 	}
 	renderWifi(S.wifi);
+
+	/* ---------- 新增：实时概览 + 局域网 / DHCP ----------
+	   复用壳层同一个 istore_stats 端点，不新增后端采集链路。 */
+	function wzSet(id, v) { var e = $(id); if (e) e.textContent = (v == null ? '--' : String(v)); }
+	function fillStats(d) {
+		if (!d) return;
+		var wan = d.wan || {}, s = d.sys || {}, dh = d.dhcp || {}, c = d.cell || {};
+		wzSet('wz-k-wan', wan.ip || '未连接');
+		wzSet('wz-k-wan-s', wan.up ? ((wan.name || 'WAN') + ' · 在线') : '链路未连接');
+		wzSet('wz-k-clients', d.clients != null ? d.clients : '--');
+		wzSet('wz-k-mem', s.mem || '--');
+		wzSet('wz-k-load', s.load || '--');
+		wzSet('wz-k-temp', s.temp || '--');
+		wzSet('wz-k-cell', c.mode ? (c.mode + (c.band ? ' · ' + c.band : '')) : '蜂窝状态 --');
+		wzSet('wz-lan-ip', location.hostname);
+		wzSet('wz-lan-pool', dh.start != null ? (dh.start + ' – ' + (dh.start + dh.limit - 1)) : '--');
+		wzSet('wz-lan-leases', dh.leases != null ? (dh.leases + ' 条') : '--');
+		wzSet('wz-lan-pct', dh.pct != null ? (dh.pct + '%') : '--');
+	}
+	function pullStats() {
+		fetch('/cgi-bin/luci/admin/istore_stats?state=1', { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.ok ? r.json() : null; })
+			.then(fillStats).catch(function () {});
+	}
+	pullStats();
+	setInterval(function () { if (!document.hidden) pullStats(); }, 10000);
+	document.addEventListener('visibilitychange', function () { if (!document.hidden) pullStats(); });
 
 	/* ---------- 2. SIM ---------- */
 	var simTimer = null;

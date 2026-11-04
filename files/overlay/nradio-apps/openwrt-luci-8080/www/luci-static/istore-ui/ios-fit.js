@@ -27,6 +27,21 @@
 	}
 
 	function collect() {
+		/* 网络设置向导是 .wz-* 结构，不在通用选择器里。低视口时按
+		   「状态条 + 每张配置卡 + 页脚」分段；被隐藏的卡会从 grid 中移除，
+		   标题与副标题始终保留，页面级仍不滚动。 */
+		var wzGrid = host.querySelector('.wz-grid');
+		if (wzGrid) {
+			var wzBlocks = [];
+			var kpis = host.querySelector('.wz-kpis');
+			if (kpis) wzBlocks.push(kpis);
+			Array.prototype.forEach.call(wzGrid.children, function (c) {
+				if (visible(c) && c.classList.contains('wz-card')) wzBlocks.push(c);
+			});
+			var foot = host.querySelector('.wz-foot');
+			if (foot) wzBlocks.push(foot);
+			if (wzBlocks.length > 2) return wzBlocks;
+		}
 		var sels = '.ios-grid, .ios-card, .cbi-section, .panel, .ops-bar, .kp-anchors, table.cbi-section-table';
 		var all = Array.prototype.slice.call(host.querySelectorAll(sels)).filter(visible);
 		/* 只保留最外层块，避免父子同时被分页 */
@@ -47,7 +62,10 @@
 	function available() {
 		var cs = window.getComputedStyle(host);
 		var pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-		return Math.max(260, host.clientHeight - pad - 48);
+		/* host 可能被内容撑得比视口还高（实测 1280x720 下为 738），
+		   用真实视口高度兜底，否则分段贪心会按错误高度算。 */
+		var vp = window.innerHeight - (embed ? 0 : 56);
+		return Math.max(260, Math.min(host.clientHeight, vp) - pad - 48);
 	}
 
 	function reset() {
@@ -65,15 +83,33 @@
 		cached = blocks;
 		var avail = available();
 		var overflow = host.scrollHeight - (host.clientHeight - 8);
+		var isWizard = !!host.querySelector('.wz-grid');
+		/* #maincontent 带 overflow:hidden 时 scrollHeight 会低估真实内容高度。
+		   实测 5 张向导卡在内容高 <700px 的视口（如 1280x720）即使缩到 87% 也放不下，
+		   这类矮视口直接走页内分段，保证卡片不被裁掉且页面级不滚动。 */
+		var forcePaged = isWizard && window.innerHeight < 740;
 
 		/* 紧凑后已在一屏内：无需分段 */
-		if (overflow <= 4) return;
+		if (!forcePaged && overflow <= 4) return;
 
 		/* 轻度溢出：整体等比缩到一屏（最小 87%），优先保留「全部内容同屏可见」 */
-		if (overflow <= 150) {
+		if (!forcePaged && overflow <= 150) {
 			var scale = Math.max(0.87, (host.clientHeight - 8) / host.scrollHeight);
 			host.style.zoom = scale.toFixed(3);
-			return;
+			/* 向导页按卡片实际位置复核：缩放后仍有卡被裁，就撤销缩放改走分段 */
+			var wz = host.querySelector('.wz-grid');
+			if (wz) {
+				var cs = wz.querySelectorAll(':scope > .wz-card');
+				var last = cs.length ? cs[cs.length - 1] : null;
+				var hr = host.getBoundingClientRect();
+				if (last && last.getBoundingClientRect().bottom > hr.bottom + 2) {
+					host.style.zoom = '';
+				} else {
+					return;
+				}
+			} else {
+				return;
+			}
 		}
 
 		if (blocks.length < 2) {
@@ -132,6 +168,11 @@
 	function start() {
 		/* 等 ios-enhance.js 的折叠/DHCP 摘要条完成后再测量 */
 		setTimeout(build, embed ? 420 : 320);
+		/* 向导页的 Wi-Fi/SIM/订阅行由页面 JS 异步填充，首测时卡片还没长高；
+		   延迟再复核一次，避免低视口下误判「已一屏」而把底部卡裁掉。 */
+		if (host.querySelector('.wz-grid')) {
+			setTimeout(function () { reset(); build(); }, 1700);
+		}
 	}
 
 	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

@@ -286,6 +286,17 @@ body.ios-fit textarea#syslog,body.ios-fit textarea.ios-log{
 body.ios-collapsed .ios-nav-guide .guide-tag{display:none}
 body.ios-collapsed .ios-nav-g.ios-nav-guide{margin-top:8px;padding-top:8px}
 
+/* 折叠态也保持手风琴：原规则强制展开全部分组，34 个图标塞不进 72px 侧栏 */
+body.ios-collapsed .ios-nav-g.g-collapsed > .ios-nav-c{display:none}
+body.ios-collapsed .ios-nav-t{
+  height:22px;margin:5px 0;padding:0;background:transparent;
+  color:var(--brand-2);font-size:0;justify-content:center;overflow:visible
+}
+body.ios-collapsed .ios-nav-g > .ios-nav-t > .gi{display:inline-flex!important;font-size:12px}
+body.ios-collapsed .ios-nav-t .ch{display:none}
+body.ios-collapsed .ios-nav-g.g-collapsed > .ios-nav-t{opacity:.55}
+body.ios-collapsed .ios-nav-g:not(.g-collapsed) > .ios-nav-t{opacity:1}
+
 /* 命令面板：最近访问标记 */
 .ios-cmd-item .rc{
   font-size:10px;font-weight:700;color:var(--brand);
