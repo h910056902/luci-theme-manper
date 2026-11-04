@@ -297,6 +297,81 @@ body.ios-collapsed .ios-nav-t .ch{display:none}
 body.ios-collapsed .ios-nav-g.g-collapsed > .ios-nav-t{opacity:.55}
 body.ios-collapsed .ios-nav-g:not(.g-collapsed) > .ios-nav-t{opacity:1}
 
+/* ---------------------------- 主题设置页：自建主题卡片 ---------------------------- */
+.ios-theme-picker{
+  position:relative;margin:0 0 10px;padding:10px 14px;
+  border:1px solid #e3ecf7;border-radius:14px;
+  background:linear-gradient(150deg,#fff,#fdfeff 48%,#f5faff);
+  box-shadow:var(--sh-card)
+}
+.ios-theme-picker:after{
+  content:"";position:absolute;left:0;top:0;height:2px;width:46%;
+  border-radius:14px 0 0 0;pointer-events:none;opacity:.65;
+  background:linear-gradient(90deg,#009aff,#0060ff,transparent)
+}
+.ios-theme-h{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.ios-theme-h h3{
+  margin:0;font-size:13px;font-weight:700;color:var(--ink-deep);
+  display:inline-flex;align-items:center;gap:8px
+}
+.ios-theme-h h3:before{content:"";width:3px;height:13px;border-radius:3px;background:var(--brand-grad)}
+.ios-theme-h .sub{font-size:11px;color:var(--ink-mute)}
+.ios-theme-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.ios-theme-card{
+  position:relative;display:flex;align-items:center;gap:9px;padding:8px 10px;
+  border:1px solid #e3ecf7;border-radius:11px;
+  background:linear-gradient(180deg,#fff,#f8fbff);
+  text-align:left;cursor:pointer;font-family:var(--font);
+  transition:transform .16s,box-shadow .16s,border-color .16s
+}
+.ios-theme-card:hover{transform:translateY(-1px);border-color:var(--brand-line);box-shadow:0 6px 16px rgba(0,96,255,.10)}
+.ios-theme-card.on{
+  border-color:var(--brand);background:linear-gradient(135deg,#eaf3ff,#f6faff);
+  box-shadow:inset 2px 0 0 var(--brand),0 4px 12px rgba(0,96,255,.10)
+}
+.ios-theme-card .tt{display:flex;flex-direction:column;gap:1px;min-width:0}
+.ios-theme-card b{font-size:12px;color:var(--ink-deep);white-space:nowrap}
+.ios-theme-card small{font-size:10px;color:var(--ink-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ios-theme-card em{
+  display:none;position:absolute;right:7px;top:6px;font-style:normal;
+  font-size:9px;font-weight:700;color:#fff;background:var(--brand-grad);
+  border-radius:999px;padding:1px 6px
+}
+.ios-theme-card.on em{display:block}
+/* 纯 CSS 迷你预览：抽象三套主题的配色与骨架 */
+.tp{position:relative;flex:0 0 46px;width:46px;height:34px;border-radius:6px;overflow:hidden;border:1px solid rgba(0,0,0,.06)}
+.tp i{position:absolute;display:block}
+.tp .tp-side{left:0;top:0;bottom:0;width:9px}
+.tp .tp-top{left:9px;right:0;top:0;height:6px}
+.tp .tp-c1{left:12px;top:10px;width:12px;height:9px;border-radius:2px}
+.tp .tp-c2{left:26px;top:10px;width:16px;height:9px;border-radius:2px}
+.tp .tp-c3{left:12px;top:22px;width:30px;height:8px;border-radius:2px}
+.tp-manper{background:linear-gradient(135deg,#111a3a,#2a1c5a)}
+.tp-manper .tp-side{background:rgba(120,90,255,.55)}
+.tp-manper .tp-top{background:rgba(255,255,255,.14)}
+.tp-manper .tp-c1,.tp-manper .tp-c2,.tp-manper .tp-c3{background:rgba(140,170,255,.35)}
+.tp-myos{background:linear-gradient(135deg,#0f2233,#1b3a52)}
+.tp-myos .tp-side{background:rgba(0,190,220,.45)}
+.tp-myos .tp-top{background:rgba(255,255,255,.10)}
+.tp-myos .tp-c1,.tp-myos .tp-c2,.tp-myos .tp-c3{background:rgba(90,200,220,.30)}
+.tp-istore{background:linear-gradient(135deg,#f4f7fb,#fff)}
+.tp-istore .tp-side{background:#e8f2ff}
+.tp-istore .tp-top{background:#fff;border-bottom:1px solid #e3ecf7}
+.tp-istore .tp-c1{background:#cfe6ff}
+.tp-istore .tp-c2,.tp-istore .tp-c3{background:#e6f0fc}
+.ios-theme-tip{
+  margin-top:8px;font-size:10.5px;color:var(--ink-mute);
+  display:flex;align-items:center;gap:6px
+}
+.ios-theme-tip i{color:var(--brand)}
+/* 该页表单收紧，抵消卡片选择器新增的纵向高度 */
+.ios-content:has(.ios-theme-picker) .cbi-value{padding:4px 0}
+.ios-content:has(.ios-theme-picker) .cbi-value-description{font-size:10.5px;margin:0}
+.ios-content:has(.ios-theme-picker) .cbi-input-text,
+.ios-content:has(.ios-theme-picker) .cbi-input-select{height:30px;font-size:12px}
+.ios-content:has(.ios-theme-picker) .cbi-section{padding:8px 14px 10px}
+@media(max-width:760px){.ios-theme-grid{grid-template-columns:1fr}}
+
 /* 命令面板：最近访问标记 */
 .ios-cmd-item .rc{
   font-size:10px;font-weight:700;color:var(--brand);

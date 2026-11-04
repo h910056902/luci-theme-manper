@@ -67,13 +67,16 @@ o:value('1', translate('Bing Wallpapers'))
 o.default = bing_background
 o.rmempty = false
 
--- manper 双主题开关: 切换 8080 实例界面风格(manper 定制层 / 原版 argon)
+-- 8080 自建三主题开关: manper 定制 / MYOS UI / iStoreOS 风格(自研单页控制台)
+-- 注意必须列出 istore，否则当前为 istore 时 CBI 下拉会回退成 manper，
+-- 用户既看不到真实主题，也无法在页面上切回自研主题。
 o = s:option(ListValue, 'ui_theme', translate('UI Theme (8080)'))
-o:value('manper', 'manper 定制风格(星空登录页 / 驾驶舱首页)')
-o:value('myos', 'MYOS UI(移植自 MYOS 官方主题, 含真实数据仪表盘)')
+o:value('manper', 'manper 定制风格（星空登录页 / 驾驶舱首页）')
+o:value('myos', 'MYOS UI（移植自 MYOS 官方主题 / 真实数据仪表盘）')
+o:value('istore', 'iStoreOS 风格（自研单页控制台 / 浅色卡片 / 蓝色渐变）')
 o.default = ui_theme
 o.rmempty = false
-o.description = translate('Switch the 8080 UI between manper customized theme and vanilla luci-theme-argon. Takes effect immediately after saving.')
+o.description = translate('选择 8080 独立实例的界面风格，保存后立即生效（页面会重新加载）。istore 为本项目自研主题。')
 
 
 o = s:option(ListValue, 'mode', translate('Theme mode'))

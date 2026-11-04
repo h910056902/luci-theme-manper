@@ -150,6 +150,70 @@
 		strip.parentNode.insertBefore(nav, strip.nextSibling);
 	}
 
+	/* ---------- 主题设置页：三套自建主题的卡片式选择 ---------- */
+	function themeModule(host) {
+		var sel = document.querySelector('select[id$=".ui_theme"]') ||
+			document.getElementById('cbid.config.1.ui_theme');
+		if (!sel || host.getAttribute('data-kp-theme')) return;
+		host.setAttribute('data-kp-theme', '1');
+
+		var THEMES = [
+			{ id: 'manper', name: 'manper 定制',   desc: '星空登录 · 驾驶舱首页' },
+			{ id: 'myos',   name: 'MYOS UI',       desc: '原厂仪表盘 · 真实数据' },
+			{ id: 'istore', name: 'iStoreOS 风格', desc: '自研单页控制台 · 浅色蓝渐变' }
+		];
+		var cur = sel.value;
+		/* model 未同步时 istore 不在 option 里，按已加载样式表兜底，避免保存写错值 */
+		if (['manper', 'myos', 'istore'].indexOf(cur) < 0) {
+			cur = document.querySelector('link[href*="istore-ui/istore-ui.css"]') ? 'istore' : 'manper';
+			var op = document.createElement('option');
+			op.value = cur; op.textContent = cur;
+			sel.appendChild(op);
+			sel.value = cur;
+		}
+
+		var row = sel.closest ? sel.closest('.cbi-value') : null;
+		var box = document.createElement('div');
+		box.className = 'ios-theme-picker';
+		box.innerHTML = '<div class="ios-theme-h"><h3>8080 界面风格</h3>' +
+			'<span class="sub">三套自建主题 · 选择后点「保存更改」生效</span></div>' +
+			'<div class="ios-theme-grid">' +
+			THEMES.map(function (t) {
+				return '<button type="button" class="ios-theme-card" data-theme="' + t.id + '">' +
+					'<span class="tp tp-' + t.id + '"><i class="tp-side"></i><i class="tp-top"></i>' +
+					'<i class="tp-c1"></i><i class="tp-c2"></i><i class="tp-c3"></i></span>' +
+					'<span class="tt"><b>' + t.name + '</b><small>' + t.desc + '</small></span>' +
+					'<em>当前使用</em></button>';
+			}).join('') + '</div>' +
+			'<div class="ios-theme-tip"><i class="fas fa-info-circle" aria-hidden="true"></i>' +
+			'切换后整套外壳与登录页都会变化；保存会重新加载页面，其他改动请先提交。</div>';
+
+		if (row) {
+			row.parentNode.insertBefore(box, row);
+			row.style.display = 'none';
+		} else {
+			host.insertBefore(box, host.firstChild);
+		}
+
+		function sync() {
+			Array.prototype.forEach.call(box.querySelectorAll('.ios-theme-card'), function (c) {
+				var on = c.getAttribute('data-theme') === sel.value;
+				c.classList.toggle('on', on);
+				c.setAttribute('aria-pressed', on ? 'true' : 'false');
+			});
+		}
+		box.addEventListener('click', function (ev) {
+			var c = ev.target;
+			while (c && c !== box && (!c.classList || !c.classList.contains('ios-theme-card'))) c = c.parentNode;
+			if (!c || c === box) return;
+			sel.value = c.getAttribute('data-theme');
+			try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+			sync();
+		});
+		sel.addEventListener('change', sync);
+		sync();
+	}
+
 	/* ---------- 启动 ---------- */
 	function init() {
 		var host = document.getElementById('maincontent');
@@ -159,6 +223,7 @@
 		dirtyWatch();
 		dedupeActions();
 		if (/\/network\/dhcp/.test(location.pathname)) dhcpModule(host);
+		if (/\/system\/argon-config/.test(location.pathname)) themeModule(host);
 	}
 
 	if (document.readyState === 'loading') {
