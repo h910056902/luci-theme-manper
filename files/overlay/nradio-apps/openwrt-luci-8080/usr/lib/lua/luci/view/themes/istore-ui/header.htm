@@ -1,8 +1,10 @@
 <%#
  istore-ui · 第三套主题外壳（自研，iStoreOS 视觉语言）
- · 左侧白色侧栏（分组 + 二级菜单） / 顶部工具条 / 浅色内容区
+ · 左侧白色侧栏（分组 + 二级菜单 + 搜索 + 常用） / 顶部吸顶页头（面包屑 + 实时指标） / 浅色内容区
+ · 单页控制台：侧栏常驻，内容区由 ios-spa.js 用单 iframe 无刷新切换；首屏仍走服务端渲染
+ · 嵌入模式（_embed=1）：只输出精简骨架，供 iframe 内部页面使用；脱离外壳直接打开时自动回跳
  · 媒体目录 /luci-static/istore-ui，模板目录 themes/istore-ui（= mediaurlbase 的 basename）
- · 菜单直接由 dispatcher 树服务端渲染，无前端框架依赖；shell.js 只做抽屉/时钟/高亮兜底
+ · 菜单直接由 dispatcher 树服务端渲染，无前端框架依赖
 -%>
 <%
 	local disp = require "luci.dispatcher"
@@ -43,6 +45,18 @@
 	local function node_url(parts)
 		return "/cgi-bin/luci/" .. table.concat(parts, "/")
 	end
+
+	-- 嵌入模式判定：只认 8080 + istore，且不碰 POST body（避免影响 CBI 表单解析）
+	local function qs_has_embed()
+		local qs = http.getenv("QUERY_STRING") or ""
+		if qs == "" then return false end
+		for pair in (qs .. "&"):gmatch("([^&]*)&") do
+			if pair == "_embed=1" then return true end
+		end
+		return false
+	end
+	local embed = (tostring(http.getenv("SERVER_PORT") or "") == "8080")
+		and (qs_has_embed() or tostring(http.getcookie("ios_embed") or "") == "1")
 
 	-- 一级分组 → 二级页面。iStoreOS 侧栏是「分组标题 + 条目」两层结构，
 	-- 更深的层级不展开（保持侧栏干净），子页面通过页内 Tab 导航。
@@ -115,7 +129,6 @@
 		{ "统计", "fa-chart-line" }, { "图表", "fa-chart-line" },
 		{ "退出", "fa-sign-out-alt" }, { "logout", "fa-sign-out-alt" },
 		{ "向导", "fa-magic" }, { "wizard", "fa-magic" },
-		{ "重启", "fa-redo" },
 	}
 	local function icon_of(name, title)
 		local k = tostring(name or ""):lower()
@@ -127,18 +140,6 @@
 		end
 		return "fa-circle-dot"
 	end
-
-	-- 原厂页面并入对应分组（不再单独成组）；自带完整 HTML 的页面走 iframe 容器保留侧栏
-	local vsrc = http.formvalue("src") or ""
-	local EXTRA = {
-		status = {
-			{ t = "蜂窝详情", h = "/cgi-bin/luci/nradio/cellular", i = "fa-signal", p = { "nradio", "cellular" } },
-		},
-		network = {
-			{ t = "SIM 信息", h = "/cgi-bin/luci/admin/sim", i = "fa-sim-card", p = { "admin", "sim" } },
-			{ t = "设备信息", h = "/cgi-bin/luci/admin/device", i = "fa-microchip", p = { "admin", "device" } },
-		},
-	}
 
 	local tree = disp.node()
 	local admin = tree and tree.nodes and tree.nodes.admin
@@ -158,7 +159,7 @@
 	end
 
 	-- ===================== 侧栏菜单（2026-11-03 重置） =====================
-	-- 目标：固定 5 个分组 + 中文标题 + 去重 + 有意义的排序；未识别节点进「其他」兜底
+	-- 目标：固定 4 个分组 + 中文标题 + 去重 + 有意义的排序；未识别节点进「其他」兜底
 	local TITLE_CN = {
 		details = "仪表盘", overview = "概览", firewall = "防火墙", routes = "路由表",
 		dmesg = "内核日志", log = "系统日志", processes = "进程", realtime = "实时图表",
@@ -283,8 +284,20 @@
 		end
 	end
 
+	-- 侧栏静态手风琴：服务端就只展开当前页所在分组，JS 未加载时也不会溢出
+	local active_group = nil
+	for _, g in ipairs(GROUPS) do
+		for _, it in ipairs(buckets[g.key] or {}) do
+			if not active_group and it.path and is_active(it.path) then active_group = g.key end
+		end
+	end
+	if not active_group then active_group = "status" end
+
 	local title = node and node.title and tr(util.striptags(node.title)) or "首页"
 	http.prepare_content("text/html; charset=UTF-8")
+
+	-- ===================== 嵌入模式：精简骨架 =====================
+	if embed then
 -%><!DOCTYPE html>
 <html lang="<%=luci.i18n.context.lang%>">
 <head>
@@ -292,7 +305,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><%=util.pcdata(title)%> · <%=util.pcdata(model)%></title>
 <link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
-<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=8">
+<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=9">
+<link rel="stylesheet" href="<%=media%>/ios-ops.css?v=2">
+<link rel="stylesheet" href="<%=media%>/ios-spa.css?v=1">
+<link rel="stylesheet" href="<%=media%>/ios-fit.css?v=1">
+<%
+	if reqstr:match("^/nradio") then
+%>
+<link rel="stylesheet" href="<%=media%>/css/cascade.min.css">
+<link rel="stylesheet" href="<%=media%>/css/main.min.css">
+<link rel="stylesheet" href="<%=media%>/css/nradio.min.css">
+<link rel="stylesheet" href="<%=media%>/vendor-adapter.css">
+<script src="<%=media%>/js/jquery.min.js"></script>
+<script src="<%=media%>/js/bootstrap.min.js"></script>
+<script src="<%=media%>/js/main.min.js"></script>
+<script src="<%=media%>/js/nradio.min.js"></script>
+<%
+	end
+%>
+<script src="/luci-static/resources/cbi.js"></script>
+<script src="/luci-static/resources/xhr.js"></script>
+</head>
+<body class="ios-body ios-embed" data-embed="1" data-home="<%=homeurl%>">
+<main class="ios-content ios-embed-content" id="maincontent">
+<%
+		return
+	end
+-%>
+<!DOCTYPE html>
+<html lang="<%=luci.i18n.context.lang%>">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><%=util.pcdata(title)%> · <%=util.pcdata(model)%></title>
+<link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
+<link rel="stylesheet" href="<%=media%>/istore-ui.css?v=9">
+<link rel="stylesheet" href="<%=media%>/ios-spa.css?v=1">
+<link rel="stylesheet" href="<%=media%>/ios-ops.css?v=2">
+<link rel="stylesheet" href="<%=media%>/ios-fit.css?v=1">
 <%
 	-- 原厂路由（/nradio/*）内容基于 bootstrap 栅格与 panel，需要在壳内补基础样式 + 适配层
 	if reqstr:match("^/nradio") then
@@ -313,9 +363,10 @@
      缺它们会导致概览/无线等页的原厂轮询不执行（数值停在“正在收集数据…”）。 -->
 <script src="/luci-static/resources/cbi.js"></script>
 <script src="/luci-static/resources/xhr.js"></script>
-<script src="<%=media%>/shell.js?v=7" defer></script>
+<script src="<%=media%>/shell.js?v=8" defer></script>
+<script src="<%=media%>/ios-spa.js?v=2" defer></script>
 </head>
-<body class="ios-body" data-model="<%=util.pcdata(model)%>">
+<body class="ios-body" data-model="<%=util.pcdata(model)%>" data-home="<%=homeurl%>" data-embed="0">
 <script>try{if(localStorage.getItem('iosCollapsed')==='1')document.body.classList.add('ios-collapsed')}catch(e){}</script>
 <div class="ios-shell">
 <a href="#maincontent" class="ios-skip" style="position:absolute;left:-9999px">跳到内容</a>
@@ -328,24 +379,36 @@
 			<i class="fas fa-angle-double-left" aria-hidden="true"></i>
 		</button>
 	</div>
+	<div class="ios-search" id="iosSearchBox">
+		<i class="fas fa-search" aria-hidden="true"></i>
+		<input id="iosSearch" type="search" placeholder="搜索菜单…" autocomplete="off" spellcheck="false" aria-label="搜索菜单">
+		<kbd>Ctrl K</kbd>
+	</div>
 	<nav class="ios-nav" aria-label="主导航">
+		<div class="ios-nav-g ios-fav" id="iosFav" hidden>
+			<div class="ios-nav-t is-static">
+				<i class="fas fa-star gi" aria-hidden="true"></i><span>常用</span>
+			</div>
+			<div class="ios-nav-c" id="iosFavList"></div>
+		</div>
 		<%
 			for _, g in ipairs(GROUPS) do
 				local items = buckets[g.key]
 				if items and #items > 0 then
 		%>
-		<div class="ios-nav-g" data-group="<%=g.key%>">
-			<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="true">
+		<div class="ios-nav-g<%= (g.key ~= active_group) and " g-collapsed" or "" %>" data-group="<%=g.key%>">
+			<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="<%= (g.key == active_group) and "true" or "false" %>">
 				<i class="fas <%=g.icon%> gi" aria-hidden="true"></i>
 				<span><%=util.pcdata(g.title)%></span><i class="fas fa-chevron-down ch" aria-hidden="true"></i>
 			</button>
 			<div class="ios-nav-c">
 				<%
 					for _, it in ipairs(items) do
-						local on = (it.v and vsrc == it.v) or (it.path and is_active(it.path))
+						local on = it.path and is_active(it.path)
+						local icon = icon_of(it.name, it.title)
 				%>
-				<a class="ios-nav-i<%= on and " active" or ""%>" href="<%=it.url%>" data-path="<%=it.url%>" data-label="<%=util.pcdata(it.title)%>">
-					<i class="fas <%=icon_of(it.name, it.title)%>" aria-hidden="true"></i><span><%=util.pcdata(it.title)%></span>
+				<a class="ios-nav-i<%= on and " active" or ""%>" href="<%=it.url%>" data-path="<%=it.url%>" data-label="<%=util.pcdata(it.title)%>" data-icon="<%=icon%>" data-group="<%=g.key%>" data-gtitle="<%=util.pcdata(g.title)%>">
+					<i class="fas <%=icon%>" aria-hidden="true"></i><span><%=util.pcdata(it.title)%></span>
 				</a>
 				<%
 					end
@@ -359,8 +422,8 @@
 			-- 「其他」兜底：未映射的顶级节点原样保留，避免入口丢失
 			if #other > 0 then
 		%>
-		<div class="ios-nav-g" data-group="other">
-			<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="true">
+		<div class="ios-nav-g g-collapsed" data-group="other">
+			<button class="ios-nav-t" type="button" data-group-toggle aria-expanded="false">
 				<i class="fas fa-ellipsis-h gi" aria-hidden="true"></i><span>其他</span><i class="fas fa-chevron-down ch" aria-hidden="true"></i>
 			</button>
 			<div class="ios-nav-c">
@@ -369,7 +432,7 @@
 					local otitle = tr(util.striptags(top.node.title)) or top.name
 					if #top.kids == 0 then
 			%>
-				<a class="ios-nav-i<%= is_active({ "admin", top.name }) and " active" or ""%>" href="<%=node_url({ "admin", top.name })%>" data-path="<%=node_url({ "admin", top.name })%>" data-label="<%=util.pcdata(otitle)%>">
+				<a class="ios-nav-i<%= is_active({ "admin", top.name }) and " active" or ""%>" href="<%=node_url({ "admin", top.name })%>" data-path="<%=node_url({ "admin", top.name })%>" data-label="<%=util.pcdata(otitle)%>" data-icon="<%=icon_of(top.name, otitle)%>" data-group="other" data-gtitle="其他">
 					<i class="fas <%=icon_of(top.name, otitle)%>" aria-hidden="true"></i><span><%=util.pcdata(otitle)%></span>
 				</a>
 			<%
@@ -377,9 +440,10 @@
 						for _, k in ipairs(top.kids) do
 							local kp = { "admin", top.name, k.name }
 							local kt = tr(util.striptags(k.node.title)) or k.name
+							local ki = icon_of(k.name, kt)
 			%>
-				<a class="ios-nav-i<%= is_active(kp) and " active" or ""%>" href="<%=node_url(kp)%>" data-path="<%=node_url(kp)%>" data-label="<%=util.pcdata(kt)%>">
-					<i class="fas <%=icon_of(k.name, kt)%>" aria-hidden="true"></i><span><%=util.pcdata(kt)%></span>
+				<a class="ios-nav-i<%= is_active(kp) and " active" or ""%>" href="<%=node_url(kp)%>" data-path="<%=node_url(kp)%>" data-label="<%=util.pcdata(kt)%>" data-icon="<%=ki%>" data-group="other" data-gtitle="其他">
+					<i class="fas <%=ki%>" aria-hidden="true"></i><span><%=util.pcdata(kt)%></span>
 				</a>
 			<%
 						end
@@ -394,14 +458,21 @@
 			if guide_url then
 		%>
 		<div class="ios-nav-g">
-			<a class="ios-nav-i<%= guide_active and " active" or ""%>" href="<%=guide_url%>" data-path="<%=guide_url%>" data-label="设置向导">
+			<a class="ios-nav-i<%= guide_active and " active" or ""%>" href="<%=guide_url%>" data-path="<%=guide_url%>" data-label="设置向导" data-icon="fa-magic" data-group="guide" data-gtitle="设置向导">
 				<i class="fas fa-magic" aria-hidden="true"></i><span>设置向导</span>
 			</a>
 		</div>
 		<%
 			end
 		%>
+		<div class="ios-nav-empty" id="iosNavEmpty" hidden>没有匹配的菜单</div>
 	</nav>
+	<div class="ios-side-stats" id="iosSideStats">
+		<div class="ss-row"><i class="fas fa-globe" aria-hidden="true"></i><span>WAN</span><b id="ssWan">--</b></div>
+		<div class="ss-row"><i class="fas fa-users" aria-hidden="true"></i><span>终端</span><b id="ssClients">--</b></div>
+		<div class="ss-row"><i class="fas fa-tachometer-alt" aria-hidden="true"></i><span>负载</span><b id="ssLoad">--</b></div>
+		<div class="ss-row"><i class="fas fa-thermometer-half" aria-hidden="true"></i><span>温度</span><b id="ssTemp">--</b></div>
+	</div>
 	<div class="ios-side-f">
 		<span><i class="fas fa-microchip" aria-hidden="true"></i> <%=util.pcdata(model)%></span>
 		<a href="/cgi-bin/luci/admin/logout" title="退出登录"><i class="fas fa-sign-out-alt" aria-hidden="true"></i></a>
@@ -416,12 +487,28 @@
 		<div class="ios-crumb">
 			<i class="fas fa-home" aria-hidden="true" style="color:var(--ink-3)"></i>
 			<span class="sep">/</span>
-			<b><%=util.pcdata(title)%></b>
+			<b id="iosCrumbTitle"><%=util.pcdata(title)%></b>
+		</div>
+		<div class="ios-top-stats" id="iosTopStats">
+			<span class="ts-item" title="上行链路"><i class="fas fa-globe" aria-hidden="true"></i><b id="tsWan">--</b></span>
+			<span class="ts-item" title="实时速率"><i class="fas fa-arrow-down" aria-hidden="true"></i><b id="tsRate">0 B/s</b></span>
+			<span class="ts-item hide-sm" title="在线终端"><i class="fas fa-users" aria-hidden="true"></i><b id="tsClients">--</b></span>
+			<span class="ts-item hide-sm" title="系统负载"><i class="fas fa-tachometer-alt" aria-hidden="true"></i><b id="tsLoad">--</b></span>
+			<span class="ts-item hide-sm" title="设备温度"><i class="fas fa-thermometer-half" aria-hidden="true"></i><b id="tsTemp">--</b></span>
 		</div>
 		<div class="ios-top-r">
 			<span class="ios-chip hide-sm"><i class="fas fa-microchip" aria-hidden="true"></i><%=util.pcdata(model)%></span>
-			<span class="ios-chip brand hide-sm"><i class="fas fa-palette" aria-hidden="true"></i>iStoreOS</span>
 			<span class="ios-chip"><i class="fas fa-clock" aria-hidden="true"></i><span id="iosClock">--:--</span></span>
+			<button class="ios-icon-btn" id="iosCmdBtn" type="button" title="搜索页面 (Ctrl+K)" aria-label="搜索页面">
+				<i class="fas fa-search" aria-hidden="true"></i>
+			</button>
 		</div>
 	</header>
+	<div class="ios-view" id="iosView" hidden aria-hidden="true">
+		<div class="ios-skeleton" id="iosSkeleton">
+			<span class="sk-hint" id="iosSkHint">正在加载页面…</span>
+			<span class="sk-bar"></span><span class="sk-bar w70"></span><span class="sk-bar w45"></span>
+		</div>
+		<iframe class="ios-frame" id="iosFrame" title="页面内容" src="about:blank"></iframe>
+	</div>
 	<main class="ios-content" id="maincontent">

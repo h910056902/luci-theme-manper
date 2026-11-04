@@ -292,6 +292,18 @@ function luci.dispatcher.createtree()
 				}
 			end
 			if active_theme == "istore" then
+				-- 系统日志：固件跑 rsyslogd，官方 admin_status/syslog 只读 logread（恒为空），
+				-- 换成自建兼容视图（回退 /var/log/messages），只影响 istore 主题。
+				if m_status and m_status.nodes then
+					m_status.nodes.syslog = {
+						nodes = {},
+						target = luci.dispatcher.template("admin_status/kp_syslog"),
+						title = "系统日志",
+						order = 6,
+						leaf = true,
+						mediaurlbase = "/luci-static/istore-ui"
+					}
+				end
 				-- 原厂页面容器：自带完整 HTML 的页面（/nradio/system/sim 等）用 iframe 包壳，
 				-- 保证侧栏常驻。挂在 admin/status 下（URL /admin/status/vendor），hidden 不进侧栏。
 				-- mediaurlbase 显式指定为 istore-ui：否则 <%%+header%%> 会按原厂树解析成 nradio 外壳

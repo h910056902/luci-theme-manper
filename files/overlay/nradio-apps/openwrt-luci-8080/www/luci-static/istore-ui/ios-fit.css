@@ -1,0 +1,98 @@
+/* ==========================================================================
+   ios-fit.css · 一屏适配层
+   · 紧凑化所有卡片/表单间距，让常规页面自然落在一屏内
+   · 页面级不滚动；超长页面由 ios-fit.js 生成「页内分段」切换
+   · 嵌入态（iframe 内）与壳页共用
+   ========================================================================== */
+
+/* 静态兜底：不依赖 JS 加 class，所有 istore 页面天然不滚动 */
+html,body.ios-body{overflow:hidden!important}
+body.ios-body #maincontent{height:calc(100vh - 56px);overflow:hidden}
+body.ios-embed #maincontent{height:100vh;overflow:hidden}
+html.ios-fit-root,html.ios-fit-root body{overflow:hidden!important}
+body.ios-fit #maincontent{height:calc(100vh - 56px);overflow:hidden}
+body.ios-fit.ios-embed #maincontent{height:100vh;overflow:hidden}
+
+/* ---------------------------- 紧凑布局 ---------------------------- */
+body.ios-fit .ios-card{margin-bottom:10px;padding:11px 14px}
+body.ios-fit .ios-card.tight{padding:9px 12px}
+body.ios-fit .ios-card.flush{padding:0}
+body.ios-fit .ios-card-h{margin:-1px 0 8px}
+body.ios-fit .ios-sep{margin:8px -14px}
+body.ios-fit .ios-grid{gap:10px;margin-bottom:10px}
+body.ios-fit .ios-kpi{gap:2px}
+body.ios-fit .ios-kpi .v{font-size:19px}
+body.ios-fit .ios-kpi .s{font-size:11px}
+body.ios-fit .ios-bar{margin-top:6px}
+body.ios-fit .ios-ring{width:84px;height:84px;flex:0 0 84px}
+body.ios-fit .ios-ring svg{width:84px;height:84px}
+body.ios-fit .ios-ring .ct b{font-size:19px}
+body.ios-fit .ios-list .ios-li{padding:6px 8px}
+body.ios-fit .ios-quick{gap:8px}
+body.ios-fit .ios-quick a{padding:9px 11px;gap:3px}
+body.ios-fit .ios-quick .qi{width:24px;height:24px;font-size:11.5px}
+body.ios-fit .ios-note{padding:8px 10px}
+
+body.ios-fit .ios-content .cbi-section{padding:8px 14px 10px;margin-bottom:10px}
+body.ios-fit .ios-content .cbi-section > h3{padding:8px 14px;margin:0 -14px 8px}
+body.ios-fit .ios-content fieldset.cbi-section > legend{margin-bottom:6px}
+body.ios-fit .ios-content .cbi-value{padding:6px 0}
+body.ios-fit .ios-content .cbi-value-description{margin-top:0}
+body.ios-fit .ios-content .cbi-map > h2:first-child,
+body.ios-fit .ios-content > h2:first-child{margin:0 0 10px;font-size:16px}
+body.ios-fit .ios-content .cbi-map-descr,
+body.ios-fit .ios-content .cbi-section-descr{margin:-4px 0 8px}
+body.ios-fit .ios-content .cbi-page-actions{margin:8px 0 0;padding:8px 12px}
+body.ios-fit .ops-bar{margin-bottom:10px}
+body.ios-fit .kp-anchors{margin-bottom:10px}
+
+/* 总览页：三列内容区进一步收紧 */
+body.ios-fit .ios-g3{gap:10px}
+body.ios-fit .ios-g2x{gap:10px}
+
+/* ---------------------------- 页内分段导航 ---------------------------- */
+.ios-segnav{
+  display:flex;align-items:center;gap:5px;flex-wrap:nowrap;
+  width:max-content;max-width:100%;margin:0 0 10px;padding:4px;
+  border:1px solid var(--line);border-radius:999px;background:var(--surface-3);
+  overflow-x:auto;scrollbar-width:none;
+}
+.ios-segnav::-webkit-scrollbar{display:none}
+.ios-seg{
+  flex:0 0 auto;padding:5px 13px;border:0;border-radius:999px;background:transparent;
+  color:var(--ink-2);font-family:var(--font);font-size:12px;font-weight:600;
+  cursor:pointer;white-space:nowrap;transition:background .15s,color .15s,box-shadow .15s;
+}
+.ios-seg:hover{color:var(--brand)}
+.ios-seg.on{background:#fff;color:var(--brand);box-shadow:0 1px 3px rgba(50,50,93,.12)}
+.ios-fit-tip{
+  display:inline-flex;align-items:center;gap:5px;margin-left:4px;
+  font-size:11px;color:var(--ink-3);white-space:nowrap
+}
+
+/* 分段内单块过长时保留可达性（仅块内滚动，页面不滚） */
+body.ios-fit-paged #maincontent > .cbi-section,
+body.ios-fit-paged #maincontent > .ios-card,
+body.ios-fit-paged #maincontent .cbi-map > .cbi-section{
+  max-height:calc(100vh - 158px);overflow:auto;
+}
+body.ios-fit-single #maincontent .cbi-section,
+body.ios-fit-single #maincontent .ios-card{max-height:calc(100vh - 118px);overflow:auto}
+
+/* 日志页：官方视图用 rows=行数 撑出超高 textarea，会破坏一屏布局。
+   统一限制高度，仅日志框内部可滚动，页面本身不动。 */
+body.ios-fit textarea#syslog,
+body.ios-fit textarea.ios-log{
+  display:block;width:100%;height:calc(100vh - 196px);min-height:200px;
+  overflow:auto;resize:none;white-space:pre;
+  font-family:var(--mono);font-size:11.5px;line-height:1.6;
+  border:0;border-top:1px solid var(--line);border-radius:0;
+  padding:10px 14px;background:var(--surface-2);color:var(--ink-2)
+}
+body.ios-embed textarea#syslog,
+body.ios-embed textarea.ios-log{height:calc(100vh - 152px)}
+
+@media(max-width:760px){
+  body.ios-fit .ios-ring{width:70px;height:70px;flex-basis:70px}
+  body.ios-fit .ios-ring svg{width:70px;height:70px}
+}

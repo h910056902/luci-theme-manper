@@ -1,87 +1,20 @@
 /* ==========================================================================
-   ios-enhance.js · 全站运维层
-   · 顶部运维条（WAN/IPv4/实时速率/终端数/CPU·内存/温度）
+   ios-enhance.js · 页面增强层（壳页与嵌入页都执行）
    · 长卡片折叠（高级项默认收起）
    · 表单脏标记保存条
-   仅第三套主题（istore）加载；幂等，重复执行无副作用。
+   · DHCP/DNS 摘要条 + 锚点导航
+   · 重复操作条去重
+   运维指标（WAN/速率/终端/负载/温度）统一由 shell.js 在外壳轮询，本文件不再重复拉取。
    ========================================================================== */
 (function () {
 	'use strict';
-	if (window.__kpOpsLoaded) return;
-	window.__kpOpsLoaded = true;
-	if (window.top !== window) return;              /* iframe 内不执行 */
+	if (window.__kpEnhanceLoaded) return;
+	window.__kpEnhanceLoaded = true;
 
-	var STATS = '/cgi-bin/luci/admin/istore_stats?state=1';
-	var POLL = 5000;
-	var prev = { rx: null, tx: null, ts: 0 };
+	var IN_EMBED = document.body.classList.contains('ios-embed');
 
 	function $(s, r) { return (r || document).querySelector(s); }
 	function $$(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
-	function esc(v) { return String(v == null ? '' : v); }
-
-	function fmtRate(bytesPerSec) {
-		if (!isFinite(bytesPerSec) || bytesPerSec < 0) return '0 B/s';
-		var u = ['B/s', 'KB/s', 'MB/s', 'GB/s'], n = bytesPerSec, i = 0;
-		while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-		return (i === 0 ? Math.round(n) : n.toFixed(1)) + ' ' + u[i];
-	}
-
-	/* ---------- 运维条 ---------- */
-	function buildBar(host) {
-		var bar = document.createElement('div');
-		bar.className = 'ops-bar';
-		bar.id = 'kpOpsBar';
-		bar.innerHTML = [
-			'<div class="ops-item"><span class="k">上行链路</span>',
-			'<span class="v" id="opsLink"><i class="ops-dot warn"></i><span>检测中…</span></span></div>',
-			'<div class="ops-item"><span class="k">实时速率</span>',
-			'<span class="v" id="opsRate">↓ 0 B/s <small>↑ 0 B/s</small></span></div>',
-			'<div class="ops-item"><span class="k">在线终端</span>',
-			'<span class="v" id="opsClients">— <small>台</small></span></div>',
-			'<div class="ops-item"><span class="k">负载 / 内存</span>',
-			'<span class="v" id="opsSys">—</span></div>',
-			'<div class="ops-item"><span class="k">设备温度</span>',
-			'<span class="v" id="opsTemp">— <small>℃</small></span></div>'
-		].join('');
-		if (host.firstChild) host.insertBefore(bar, host.firstChild);
-		else host.appendChild(bar);
-		return bar;
-	}
-
-	function paint(d) {
-		var link = $('#opsLink');
-		if (link && d.wan) {
-			var on = d.wan.up && d.wan.ip;
-			link.innerHTML = '<i class="ops-dot ' + (on ? '' : 'bad') + '"></i><span>' +
-				esc(on ? d.wan.ip : '未连接') + '</span>';
-		}
-		if (d.wan && typeof d.wan.rx === 'number') {
-			var now = Date.now();
-			if (prev.rx !== null && prev.ts) {
-				var dt = (now - prev.ts) / 1000;
-				if (dt > 0.5) {
-					var drx = Math.max(0, d.wan.rx - prev.rx) / dt;
-					var dtx = Math.max(0, d.wan.tx - prev.tx) / dt;
-					var r = $('#opsRate');
-					if (r) r.innerHTML = '↓ ' + fmtRate(drx) + ' <small>↑ ' + fmtRate(dtx) + '</small>';
-				}
-			}
-			prev.rx = d.wan.rx; prev.tx = d.wan.tx; prev.ts = now;
-		}
-		var cl = $('#opsClients');
-		if (cl && d.clients != null) cl.innerHTML = d.clients + ' <small>台</small>';
-		var sy = $('#opsSys');
-		if (sy && d.sys) sy.innerHTML = esc(d.sys.load) + ' <small>/ ' + esc(d.sys.mem) + '%</small>';
-		var tp = $('#opsTemp');
-		if (tp) tp.innerHTML = (d.sys && d.sys.temp ? esc(d.sys.temp) : '—') + ' <small>℃</small>';
-	}
-
-	function poll() {
-		fetch(STATS, { credentials: 'same-origin', cache: 'no-store' })
-			.then(function (r) { return r.ok ? r.json() : null; })
-			.then(function (d) { if (d) paint(d); })
-			.catch(function () {});
-	}
 
 	/* ---------- 长卡片折叠 ---------- */
 	function foldLongSections() {
@@ -113,11 +46,12 @@
 		});
 	}
 
-	/* ---------- 顶部重复操作条去重（LuCI 有时在标题上方也渲染一份） ---------- */
+	/* ---------- 重复操作条去重（保留最后一个） ---------- */
 	function dedupeActions() {
-		var acts = ('#maincontent .cbi-page-actions');
-		if (acts.length > 1) {
-			for (var i = 0; i < acts.length - 1; i++) acts[i].style.display = 'none';
+		var acts = document.querySelectorAll('#maincontent .cbi-page-actions');
+		if (!acts || acts.length < 2) return;
+		for (var i = 0; i < acts.length - 1; i++) {
+			acts[i].style.display = 'none';
 		}
 	}
 
@@ -134,11 +68,8 @@
 			'<button type="button" class="ios-btn" id="kpDirtyReset">撤销</button>' +
 			'<button type="button" class="ios-btn primary" id="kpDirtySave">保存并应用</button>';
 
-		var dirty = false, timer = null;
-		function show(on) {
-			dirty = on;
-			bar.classList.toggle('show', on);
-		}
+		var timer = null;
+		function show(on) { bar.classList.toggle('show', on); }
 		form.addEventListener('change', function (e) {
 			var t = e.target;
 			if (!t || !/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
@@ -152,7 +83,11 @@
 			var btn = $('#maincontent .cbi-button-apply, #maincontent .cbi-button-save');
 			if (btn) btn.click(); else show(false);
 		});
-		if (reset) reset.addEventListener('click', function () { location.reload(); });
+		if (reset) reset.addEventListener('click', function () {
+			if (IN_EMBED) location.reload();
+			else if (window.IosSpa && window.IosSpa.active()) window.IosSpa.reload();
+			else location.reload();
+		});
 	}
 
 	/* ---------- DHCP/DNS 专项：摘要条 + 锚点导航 ---------- */
@@ -169,9 +104,7 @@
 			'<div class="ops-item"><span class="k">地址池</span><span class="v" id="kpPool">—</span></div>',
 			'<div class="ops-item"><span class="k">池占用</span><span class="v" id="kpPoolPct">—</span></div>'
 		].join('');
-		var ops = document.getElementById('kpOpsBar');
-		if (ops && ops.nextSibling) host.insertBefore(strip, ops.nextSibling);
-		else host.insertBefore(strip, host.firstChild);
+		host.insertBefore(strip, host.firstChild);
 
 		function paintDhcp(d) {
 			if (!d || !d.dhcp) return;
@@ -184,14 +117,14 @@
 			if (c) c.textContent = d.dhcp.start + ' – ' + (d.dhcp.start + d.dhcp.limit - 1);
 			if (e) e.innerHTML = d.dhcp.pct + '% <small>' + d.dhcp.leases + '/' + d.dhcp.limit + '</small>';
 		}
-		fetch(STATS, { credentials: 'same-origin', cache: 'no-store' })
-			.then(function (r) { return r.ok ? r.json() : null; })
-			.then(paintDhcp).catch(function () {});
-		setInterval(function () {
+		var STATS = '/cgi-bin/luci/admin/istore_stats?state=1';
+		function pull() {
 			fetch(STATS, { credentials: 'same-origin', cache: 'no-store' })
 				.then(function (r) { return r.ok ? r.json() : null; })
 				.then(paintDhcp).catch(function () {});
-		}, 15000);
+		}
+		pull();
+		setInterval(pull, 15000);
 
 		/* 锚点导航 */
 		var secs = $$('#maincontent fieldset.cbi-section, #maincontent .cbi-section').filter(function (s) {
@@ -222,10 +155,6 @@
 		var host = document.getElementById('maincontent');
 		if (!host) host = document.querySelector('.ios-content');
 		if (!host) return;
-		/* 自建页（有 .ios-page-h）不再插运维条，避免重复 */
-		if (!host.querySelector('.ios-page-h')) buildBar(host);
-		poll();
-		setInterval(poll, POLL);
 		foldLongSections();
 		dirtyWatch();
 		dedupeActions();

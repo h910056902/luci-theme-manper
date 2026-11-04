@@ -55,6 +55,28 @@
 			up       = (num(cell and cell.rsrp) or 0) < 0,
 		}
 
+		-- 上行接口：蜂窝 cpe_4 优先（cpe 本身是 wwan 无地址），打分时「有 IPv4」权重最高
+		local wan = { name = "", ip = "", up = false }
+		local dump = ubus_call("network.interface", "dump") or {}
+		local best_score = -1
+		for _, ifc in ipairs(dump.interface or {}) do
+			local ip = ""
+			for _, a in ipairs(ifc["ipv4-address"] or {}) do
+				if a.address then ip = a.address break end
+			end
+			local name = ifc.interface or ""
+			local score = 0
+			if ip ~= "" then score = score + 4 end
+			if name:find("cpe", 1, true) then score = score + 3 end
+			if name:find("wan", 1, true) then score = score + 2 end
+			if name == "lan" or name == "loopback" or name == "docker" then score = 0 end
+			if ifc.up and score > best_score then
+				best_score = score
+				wan = { name = name, ip = ip, up = true }
+			end
+		end
+		st.wan = wan
+
 		-- 无线（UCI 合成）
 		-- 注意：uci:foreach 不能嵌套（内层会打断外层游标），先把 iface 收进表再关联
 		local wifi, ifaces = {}, {}
@@ -121,7 +143,7 @@
 
 	if http.formvalue("state") == "1" then
 		http.prepare_content("application/json")
-		http.write(jsonc.stringify({ cell = st.cell, disk = st.disk, system = { memory = st.system.memory or {}, uptime = st.system.uptime or 0, load = st.system.load or {} }, clients = st.clients, sessions = st.sessions, svc = st.svc }))
+		http.write(jsonc.stringify({ wan = st.wan, cell = st.cell, disk = st.disk, system = { memory = st.system.memory or {}, uptime = st.system.uptime or 0, load = st.system.load or {} }, clients = st.clients, sessions = st.sessions, svc = st.svc }))
 		return
 	end
 
@@ -170,7 +192,40 @@
 	local op = (c.operator ~= "" and c.operator) or "未识别运营商"
 -%>
 <%+header%>
-<div class="ios-grid ios-g2x">
+<%# 一屏总览：四宫格 KPI + 连接/资源/Wi-Fi/终端/服务/入口 %>
+<div class="ios-grid ios-g4" data-fit-label="总览指标" style="margin-bottom:16px">
+	<div class="ios-card tight">
+		<div class="ios-kpi">
+			<span class="k"><i class="fas fa-globe"></i> 上行链路</span>
+			<span class="v" style="font-size:17px" data-k="wanip"><%=util.pcdata(st.wan.ip ~= "" and st.wan.ip or "未连接")%></span>
+			<span class="s"><span class="ios-badge <%= st.wan.up and "ok" or "bad"%>" data-k="wanbadge"><%= st.wan.up and "在线" or "离线"%></span> <span data-k="wanname"><%=util.pcdata(st.wan.name ~= "" and st.wan.name or "—")%></span></span>
+		</div>
+	</div>
+	<div class="ios-card tight">
+		<div class="ios-kpi">
+			<span class="k"><i class="fas fa-users"></i> 在线终端</span>
+			<span class="v" data-k="clients"><%=st.clients%><small>台</small></span>
+			<span class="s">ARP 去重 · 会话 <span data-k="sessions"><%=st.sessions%></span></span>
+		</div>
+	</div>
+	<div class="ios-card tight">
+		<div class="ios-kpi">
+			<span class="k"><i class="fas fa-memory"></i> 内存占用</span>
+			<span class="v"><span data-k="mempct"><%=mem_pct%></span><small>%</small></span>
+			<span class="s"><span data-k="memused"><%= math.floor(mem_used / 1024)%></span> / <%= math.floor(mem_total / 1024)%> MB</span>
+			<span class="ios-bar"><i data-k="membar" style="width:<%=mem_pct%>%"></i></span>
+		</div>
+	</div>
+	<div class="ios-card tight">
+		<div class="ios-kpi">
+			<span class="k"><i class="fas fa-thermometer-half"></i> 设备温度</span>
+			<span class="v"><span data-k="temp"><%= (st.runtime.global and st.runtime.global.device_temp) or c.temp or "--"%></span><small>℃</small></span>
+			<span class="s">运行 <span data-k="uptime"><%=dur(up)%></span> · 负载 <%=load1%></span>
+		</div>
+	</div>
+</div>
+
+<div class="ios-grid ios-g2x" data-fit-label="链路与资源">
 	<!-- 连接状态 -->
 	<div class="ios-card">
 		<div class="ios-card-h">
@@ -227,7 +282,7 @@
 	</div>
 </div>
 
-<div class="ios-grid ios-g3">
+<div class="ios-grid ios-g3" data-fit-label="终端与服务">
 	<!-- Wi-Fi -->
 	<div class="ios-card">
 		<div class="ios-card-h"><h3>Wi-Fi</h3><div class="right"><a class="ios-btn sm" href="<%=luci.dispatcher.build_url("admin", "network", "wireless")%>">配置</a></div></div>
@@ -263,6 +318,11 @@
 				<div class="txt"><b>Docker</b><small>容器引擎</small></div>
 				<div class="rt"><span class="ios-badge <%= st.svc.docker and "ok" or "bad"%>" data-k="svc-docker"><%= st.svc.docker and "运行中" or "已停止"%></span></div>
 			</div>
+			<div class="ios-li">
+				<div class="ico" style="background:var(--surface-3);color:var(--ink-2)"><i class="fas fa-terminal"></i></div>
+				<div class="txt"><b>终端</b><small>Web SSH</small></div>
+				<div class="rt"><span class="ios-badge <%= st.svc.ttyd and "ok" or "bad"%>" data-k="svc-ttyd"><%= st.svc.ttyd and "运行中" or "已停止"%></span></div>
+			</div>
 		</div>
 	</div>
 
@@ -279,6 +339,21 @@
 		<% else %>
 		<div class="ios-empty"><i class="fas fa-bolt"></i>暂无测速记录</div>
 		<% end %>
+	</div>
+</div>
+
+<div class="ios-card" data-fit-label="常用入口">
+	<div class="ios-card-h"><h3>常用入口</h3><span class="sub">侧栏搜索与 Ctrl+K 也可直达</span></div>
+	<div class="ios-quick">
+		<a href="/cgi-bin/luci/admin/network/wireless"><span class="qi"><i class="fas fa-wifi"></i></span><b>无线设置</b><small>SSID / 信道 / 功率</small></a>
+		<a href="/cgi-bin/luci/admin/network/dhcp"><span class="qi"><i class="fas fa-server"></i></span><b>DHCP / DNS</b><small>地址池与租约</small></a>
+		<a href="/cgi-bin/luci/admin/network/firewall"><span class="qi"><i class="fas fa-shield-alt"></i></span><b>防火墙</b><small>端口与转发</small></a>
+		<a href="/cgi-bin/luci/admin/cellular"><span class="qi"><i class="fas fa-signal"></i></span><b>蜂窝详情</b><small>信号与小区</small></a>
+		<a href="/cgi-bin/luci/admin/sim"><span class="qi"><i class="fas fa-sim-card"></i></span><b>SIM 信息</b><small>卡号与状态</small></a>
+		<a href="/cgi-bin/luci/admin/device"><span class="qi"><i class="fas fa-microchip"></i></span><b>设备信息</b><small>型号与固件</small></a>
+		<a href="/cgi-bin/luci/admin/services/openclash"><span class="qi"><i class="fas fa-shield-alt"></i></span><b>OpenClash</b><small>订阅与分流</small></a>
+		<a href="/cgi-bin/luci/admin/system/software"><span class="qi"><i class="fas fa-box-open"></i></span><b>软件包</b><small>安装与升级</small></a>
+		<a href="/cgi-bin/luci/admin/system/system"><span class="qi"><i class="fas fa-cog"></i></span><b>系统属性</b><small>主机名与时间</small></a>
 	</div>
 </div>
 
@@ -333,7 +408,19 @@
 				}
 				if (typeof d.clients === 'number') set('clients', d.clients);
 				if (typeof d.sessions === 'number') set('sessions', d.sessions);
-				if (d.svc) { svc('svc-oc', !!d.svc.openclash); svc('svc-docker', !!d.svc.docker); }
+				if (d.wan) {
+					set('wanip', d.wan.ip || '未连接');
+					set('wanname', d.wan.name || '—');
+					Array.prototype.forEach.call(document.querySelectorAll('[data-k="wanbadge"]'), function (n) {
+						n.textContent = d.wan.up ? '在线' : '离线';
+						n.className = 'ios-badge ' + (d.wan.up ? 'ok' : 'bad');
+					});
+				}
+				if (d.svc) {
+					svc('svc-oc', !!d.svc.openclash);
+					svc('svc-docker', !!d.svc.docker);
+					svc('svc-ttyd', !!d.svc.ttyd);
+				}
 			})
 			.catch(function () {});
 	}

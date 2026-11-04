@@ -1,19 +1,109 @@
 <%#
- istore-ui · 尾模板：只闭合骨架，交互全部在 shell.js
+ istore-ui · 尾模板：闭合骨架，交互在 shell.js / ios-spa.js / ios-enhance.js
  浅色皮肤在页面自身 <style> 之后加载，才能覆盖内置深色 token
+ 嵌入模式（_embed=1）：只闭合内容容器 + 输出页面增强与脱壳保护
 -%>
 <%
+	local http = require "luci.http"
 	local _req = "/" .. table.concat((require "luci.dispatcher").context.requestpath or {}, "/")
 	local _light = _req:find("/services/openclash/ocspeed", 1, true) or _req:find("network_guide", 1, true)
-	if _light then
+
+	local function qs_has_embed()
+		local qs = http.getenv("QUERY_STRING") or ""
+		if qs == "" then return false end
+		for pair in (qs .. "&"):gmatch("([^&]*)&") do
+			if pair == "_embed=1" then return true end
+		end
+		return false
+	end
+	local embed = (tostring(http.getenv("SERVER_PORT") or "") == "8080")
+		and (qs_has_embed() or tostring(http.getcookie("ios_embed") or "") == "1")
+
+	if embed then
 %>
-<link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=1">
+<% if _light then %><link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=1"><% end %>
+</main>
+<script src="/luci-static/istore-ui/ios-enhance.js?v=2" defer></script>
+<script>
+/* 嵌入态：脱壳保护 + 内部链接/表单保持 _embed + 向父窗口回报状态 */
+(function () {
+	'use strict';
+	function stripEmbed(u) {
+		return String(u || '').replace(/([?&])_embed=1(?=&|$)/, '$1').replace(/[?&]$/, '');
+	}
+	/* 不在 iframe 内却被直接打开（复制了带 _embed 的地址）→ 回到完整页，避免残缺骨架 */
+	if (window.top === window) {
+		try { location.replace(stripEmbed(location.href)); return; } catch (e) {}
+	}
+	function withEmbed(u) {
+		if (!u || u.indexOf('/cgi-bin/luci/') !== 0) return u;
+		if (u.indexOf('_embed=1') >= 0) return u;
+		return u + (u.indexOf('?') >= 0 ? '&' : '?') + '_embed=1';
+	}
+	document.addEventListener('click', function (ev) {
+		if (ev.defaultPrevented || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
+		var a = ev.target;
+		while (a && a.tagName !== 'A') a = a.parentNode;
+		if (!a) return;
+		if (a.target && a.target !== '_self') return;
+		var href = a.getAttribute('href') || '';
+		if (!href || href.charAt(0) === '#' || /^(javascript|mailto|tel):/i.test(href)) return;
+		var u;
+		try { u = new URL(a.href); } catch (e) { return; }
+		if (u.origin !== location.origin) return;
+		if (u.pathname.indexOf('/cgi-bin/luci/') !== 0) return;
+		ev.preventDefault();
+		location.href = withEmbed(u.pathname + u.search + u.hash);
+	}, true);
+	document.addEventListener('submit', function (ev) {
+		var f = ev.target;
+		if (!f || !f.getAttribute) return;
+		var act = f.getAttribute('action') || location.pathname;
+		if (act.indexOf('/cgi-bin/luci/') === 0) {
+			var next = withEmbed(act);
+			if (next !== act) f.setAttribute('action', next);
+		}
+	}, true);
+	function post(type, extra) {
+		var msg = { type: type, url: location.pathname + location.search, title: document.title };
+		if (extra) for (var k in extra) { if (extra.hasOwnProperty(k)) msg[k] = extra[k]; }
+		try { window.parent.postMessage(msg, '*'); } catch (e) {}
+	}
+	function ready() { post('ready'); }
+	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);
+	else ready();
+	window.addEventListener('load', ready);
+	window.addEventListener('beforeunload', function () { post('leave'); });
+	window.iosEmbedPost = post;
+})();
+</script>
+<script>
+/* CBI 生成物统一到 iStoreOS 组件语义 */
+(function () {
+	'use strict';
+	Array.prototype.forEach.call(document.querySelectorAll('#maincontent .cbi-button'), function (b) {
+		b.classList.add('ios-btn');
+		if (/apply|save|submit/i.test(b.className)) b.classList.add('primary');
+	});
+	Array.prototype.forEach.call(document.querySelectorAll('#maincontent input[type=text],#maincontent input[type=password],#maincontent select'), function (i) {
+		i.classList.add(i.tagName === 'SELECT' ? 'ios-select' : 'ios-input');
+	});
+	Array.prototype.forEach.call(document.querySelectorAll('#maincontent .cbi-section'), function (s) {
+		s.classList.add('ios-card');
+	});
+})();
+</script>
+<script src="/luci-static/istore-ui/ios-fit.js?v=4"></script>
+</body>
+</html>
 <%
+		return
 	end
 %>
-<%# 全站运维层：顶部运维条 / 卡片折叠 / 脏标记保存条 %>
-<link rel="stylesheet" href="/luci-static/istore-ui/ios-ops.css?v=1">
-<script src="/luci-static/istore-ui/ios-enhance.js?v=1" defer></script>
+<% if _light then %><link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=1"><% end %>
+<%# 全站运维层：卡片折叠 / 脏标记保存条（运维指标已并入吸顶页头） %>
+<link rel="stylesheet" href="/luci-static/istore-ui/ios-ops.css?v=2">
+<script src="/luci-static/istore-ui/ios-enhance.js?v=2" defer></script>
 	</main>
 </div><!-- /ios-main -->
 </div><!-- /ios-shell -->
@@ -33,5 +123,6 @@
 	});
 })();
 </script>
+<script src="/luci-static/istore-ui/ios-fit.js?v=4"></script>
 </body>
 </html>

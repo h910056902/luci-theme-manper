@@ -19,6 +19,19 @@
 		src = "/cgi-bin/luci/nradio/cellular"
 	end
 
+	-- 嵌入态（单页 iframe 内）：直接 302 到原厂页，避免 iframe 套 iframe 与双滚动条
+	do
+		local qs = http.getenv("QUERY_STRING") or ""
+		local is_embed = false
+		for pair in (qs .. "&"):gmatch("([^&]*)&") do
+			if pair == "_embed=1" then is_embed = true end
+		end
+		if is_embed then
+			http.redirect(src)
+			return
+		end
+	end
+
 	local title = "原厂页面"
 	if src:find("/system/sim", 1, true) then title = "SIM 信息"
 	elseif src:find("/system/device", 1, true) then title = "设备信息"
