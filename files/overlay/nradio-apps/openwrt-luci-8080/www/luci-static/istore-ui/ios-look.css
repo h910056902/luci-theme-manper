@@ -1,0 +1,258 @@
+/* ==========================================================================
+   ios-look.css · 视觉升级层 v1（「深蓝锚点 + 玻璃渐变」运维控制台）
+   设计目标：
+     1) 解决原界面「全浅灰、发飘、无层次」—— 引入深蓝灰文字层与品牌渐变锚点
+     2) 卡片/按钮/表格/表单统一质感：极淡渐变面、柔和双层阴影、内高光、克制 hover
+     3) 顶栏与侧栏加玻璃感与渐变细线，当前菜单项加左侧品牌竖条
+     4) 常用入口改横向紧凑 chips，让首页真正一屏容纳全部 9 个入口
+   约束：只覆写颜色/阴影/圆角/字重/伪元素，不改变顶栏 56px、侧栏 236px、
+        一屏高度与 overflow 规则，保证「不滑动 / 侧栏固定」不被破坏。
+   加载顺序：必须在 istore-ui.css / ios-spa.css / ios-fit.css 之后。
+   ========================================================================== */
+
+:root{
+  --ink-deep:#1e2b48;
+  --ink-mute:#6a7c99;
+  --brand-3:#0052d9;
+  --card-grad:linear-gradient(150deg,#ffffff 0%,#fdfeff 48%,#f5faff 100%);
+  --sh-card:0 1px 2px rgba(30,50,90,.045),0 10px 28px rgba(30,50,90,.055);
+  --sh-card-hover:0 2px 4px rgba(30,50,90,.05),0 16px 34px rgba(0,96,255,.10);
+}
+
+/* ---------------------------- 顶栏 ---------------------------- */
+.ios-top{
+  background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(247,251,255,.88));
+  backdrop-filter:blur(18px) saturate(160%);
+  border-bottom:1px solid #e2ebf7;
+  box-shadow:0 4px 18px rgba(30,50,90,.045);
+}
+.ios-top:after{
+  content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;
+  background:linear-gradient(90deg,transparent,#009aff 12%,#0060ff 52%,#0052d9 82%,transparent);
+  opacity:.5;pointer-events:none
+}
+.ios-crumb b{font-size:15px;font-weight:700;color:var(--ink-deep);letter-spacing:.2px}
+.ios-crumb > i{color:var(--brand-2)}
+.ts-item{
+  padding:3px 9px;border-radius:999px;border:1px solid #e4edf9;
+  background:linear-gradient(180deg,#f8fbff,#f0f6fd);font-size:11px
+}
+.ts-item i{color:var(--brand-2)}
+.ts-item b{color:var(--ink-deep);font-weight:700}
+.ios-chip{background:linear-gradient(180deg,#fff,#f5f9ff);border-color:#e4edf9}
+.ios-chip.brand{background:linear-gradient(135deg,#e9f2ff,#f2f8ff);border-color:#cfe2ff}
+.ios-icon-btn{background:linear-gradient(180deg,#fff,#f7faff);border-color:#e4edf9}
+.ios-icon-btn:hover{background:linear-gradient(135deg,#eaf3ff,#f3f8ff)}
+
+/* ---------------------------- 侧栏 ---------------------------- */
+.ios-side{
+  background:linear-gradient(180deg,#ffffff 0%,#fbfdff 62%,#f5faff 100%);
+  border-right:1px solid #e3ecf8;
+  box-shadow:6px 0 26px rgba(30,50,90,.035);
+}
+.ios-logo{
+  background:linear-gradient(140deg,#22a9ff,#0060ff 55%,#0047c7);
+  box-shadow:0 6px 16px rgba(0,96,255,.30),inset 0 1px 0 rgba(255,255,255,.35);
+}
+.ios-brand b{color:var(--ink-deep);font-size:15px;letter-spacing:.3px}
+.ios-brand small{color:#93a4bd}
+.ios-collapse{background:#fff;border-color:#e4edf9}
+.ios-search{background:linear-gradient(180deg,#f6faff,#fff);border-radius:10px;border-color:#e1eaf6}
+.ios-search:focus-within{
+  border-color:var(--brand-line);
+  box-shadow:0 0 0 3px rgba(0,96,255,.12),0 5px 16px rgba(0,96,255,.09);
+}
+.ios-nav-t{font-size:10px;letter-spacing:1.1px;color:#8a9ab2}
+.ios-nav-t .gi{color:var(--brand-2);opacity:.85}
+.ios-nav-i{border-radius:9px;color:var(--ink-mute)}
+.ios-nav-i i{color:#9aabc2}
+.ios-nav-i:hover{background:linear-gradient(90deg,#f0f6ff,#f7fbff);color:var(--brand)}
+.ios-nav-i.active{
+  background:linear-gradient(90deg,#e6f1ff 0%,#f2f8ff 100%);
+  color:var(--brand-3);font-weight:700;
+  box-shadow:inset 2px 0 0 var(--brand),0 2px 8px rgba(0,96,255,.07);
+}
+.ios-nav-i.active i{color:var(--brand)}
+.ios-nav-g.ios-fav > .ios-nav-t .gi{color:#f0a20a}
+.ios-side-stats{background:linear-gradient(135deg,#f4f9ff,#fff);border-top:1px solid #e6eef9}
+.ss-row b{color:var(--ink-deep)}
+.ss-row i{color:var(--brand-2)}
+.ios-side-f{border-top:1px solid #e6eef9}
+
+/* ---------------------------- 卡片 ---------------------------- */
+.ios-card,.ios-content .cbi-section{
+  background:var(--card-grad);
+  border:1px solid #e3ecf7;
+  border-radius:14px;
+  box-shadow:var(--sh-card);
+}
+.ios-card{position:relative;transition:box-shadow .2s,transform .2s,border-color .2s}
+.ios-card:hover{box-shadow:var(--sh-card-hover);border-color:#d5e5fa;transform:translateY(-1px)}
+.ios-card:after{
+  content:"";position:absolute;left:0;top:0;height:2px;width:46%;
+  border-radius:14px 0 0 0;
+  background:linear-gradient(90deg,var(--brand-2),var(--brand),transparent);
+  opacity:.65;pointer-events:none
+}
+.ios-card.flush:after{display:none}
+.ios-card-h h3{
+  font-size:13.5px;font-weight:700;color:var(--ink-deep);letter-spacing:.2px;
+  display:inline-flex;align-items:center;gap:8px
+}
+.ios-card-h h3:before{
+  content:"";width:3px;height:13px;border-radius:3px;
+  background:var(--brand-grad);flex:0 0 3px
+}
+.ios-card-h .sub{color:var(--ink-mute)}
+.ios-sep{background:linear-gradient(90deg,transparent,#e8eff8 20%,#e8eff8 80%,transparent)}
+
+/* ---------------------------- KPI / 进度 / 信号环 ---------------------------- */
+.ios-kpi .k{font-size:10.5px;letter-spacing:.5px;color:var(--ink-mute);font-weight:600}
+.ios-kpi .k i{color:var(--brand-2)}
+.ios-kpi .v{font-size:21px;color:var(--ink-deep);font-weight:700;letter-spacing:-.4px}
+.ios-kpi .s{color:var(--ink-mute)}
+.ios-bar{
+  background:linear-gradient(90deg,#e9f1fb,#f4f8fd);
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.05)
+}
+.ios-bar > i{
+  background:linear-gradient(90deg,#12abff,#0060ff 65%,#0052d9);
+  box-shadow:0 0 8px rgba(0,96,255,.30)
+}
+.ios-ring .ct b{color:var(--ink-deep)}
+.ios-note.info{background:linear-gradient(135deg,#eaf3ff,#f4f9ff);border-color:#cfe2ff}
+
+/* ---------------------------- 徽章 ---------------------------- */
+.ios-badge{border:1px solid transparent;letter-spacing:.2px;font-weight:700}
+.ios-badge.ok{background:#e6f8f1;border-color:#bdeedd;color:#087a55}
+.ios-badge.warn{background:#fff3e4;border-color:#ffdfb5;color:#a8630a}
+.ios-badge.bad{background:#fdecec;border-color:#f8cccc;color:#c73b3d}
+.ios-badge.brand{background:#e9f2ff;border-color:#cfe2ff;color:var(--brand-3)}
+
+/* ---------------------------- 按钮 ---------------------------- */
+.ios-btn,.ios-content .cbi-button{
+  border-radius:9px;border-color:#dbe6f5;color:var(--ink-deep);font-weight:600;
+  background:linear-gradient(180deg,#fff,#f8fbff);
+  box-shadow:0 1px 2px rgba(30,50,90,.05);
+  transition:transform .15s,box-shadow .15s,border-color .15s,filter .15s
+}
+.ios-btn:hover,.ios-content .cbi-button:hover{
+  border-color:var(--brand-line);color:var(--brand-3);
+  box-shadow:0 4px 12px rgba(0,96,255,.12);transform:translateY(-1px)
+}
+.ios-btn.primary,.ios-content .cbi-button-apply,
+.ios-content .cbi-button-save,.ios-content .cbi-button-positive{
+  background:linear-gradient(135deg,#17a6ff,#0060ff 52%,#0052d9);
+  border-color:transparent;color:#fff;
+  box-shadow:0 6px 16px rgba(0,96,255,.28),inset 0 1px 0 rgba(255,255,255,.28)
+}
+.ios-btn.primary:hover{filter:brightness(1.07);color:#fff}
+.ios-content .cbi-button-reset,.ios-content .cbi-button-negative{
+  background:linear-gradient(180deg,#fff,#fdf3f3);color:#c73b3d;border-color:#f4cfcf
+}
+
+/* ---------------------------- 输入 ---------------------------- */
+.ios-input,.ios-select,.ios-content .cbi-input-text,
+.ios-content .cbi-input-password,.ios-content .cbi-input-select,
+textarea.ios-input{
+  border-radius:9px;border-color:#dbe6f5;background:#fff;
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.04)
+}
+.ios-input:focus,.ios-select:focus,.ios-content .cbi-input-text:focus,
+.ios-content .cbi-input-password:focus,.ios-content .cbi-input-select:focus{
+  border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,96,255,.13)
+}
+
+/* ---------------------------- 表格 / 表单行 ---------------------------- */
+table.ios-tbl th,.ios-content table.cbi-section-table th{
+  background:linear-gradient(180deg,#f7faff,#eef4fc);
+  color:#5b6b8c;font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;
+  border-bottom:1px solid #dfe9f6
+}
+table.ios-tbl tbody tr:hover td,
+.ios-content table.cbi-section-table tr:hover td{background:rgba(0,96,255,.035)}
+.ios-content .cbi-value{border-bottom:1px solid #edf2f9}
+.ios-content .cbi-value-title{color:var(--ink-deep);font-weight:600}
+.ios-content .cbi-value:hover{background:linear-gradient(90deg,rgba(0,96,255,.05),transparent 65%)}
+.ios-content .cbi-map > h2:first-child,
+.ios-content > h2:first-child{font-size:18px;color:var(--ink-deep);font-weight:700}
+.ios-content fieldset.cbi-section > legend,
+.ios-content .cbi-section > h3{color:var(--ink-deep);font-weight:700}
+.ios-content .cbi-page-actions{
+  background:rgba(255,255,255,.94);border-top:1px solid #e6eef9;border-radius:12px
+}
+/* LuCI CBI 表单自带一个 <input type=submit class=hidden> 占位提交键，
+   依赖原厂 cascade.css 的 .hidden{display:none}；本主题不加载该文件，
+   所以它会露在标题上方形成「错位的保存按钮」。这里补齐该语义。 */
+.ios-content .hidden,
+.ios-content input[type=submit].hidden{display:none!important}
+
+/* ---------------------------- 标签 / 分段 ---------------------------- */
+.ios-tabs a.on,.ios-tabs button.on{
+  box-shadow:0 2px 8px rgba(0,96,255,.12);color:var(--brand-3)
+}
+.ios-content .cbi-tabmenu{
+  background:linear-gradient(180deg,#f4f8fd,#eaf2fc);border-color:#e0eaf7
+}
+.ios-seg.on{
+  background:linear-gradient(135deg,#009aff,#0060ff);color:#fff;
+  box-shadow:0 3px 10px rgba(0,96,255,.30)
+}
+
+/* ---------------------------- 原厂 ifacebox（无线等页） ---------------------------- */
+.ios-content .ifacebox{
+  background:var(--card-grad);border:1px solid #e3ecf7;
+  border-radius:14px;box-shadow:var(--sh-card)
+}
+.ios-content .ifacebox-head{
+  background:linear-gradient(180deg,#f8fbff,#f1f7fe);border-bottom:1px solid #e6eef9
+}
+/* 原厂把 radio 标题/SSID 全部居中，留白过大且不像运维表格；温和收敛为左对齐 */
+.ios-content .ifacebox .center,
+.ios-content .ifacebox td.center,
+.ios-content .ifacebox th.center{text-align:left}
+.ios-content .ifacebox table td{padding-top:4px;padding-bottom:4px}
+.ios-content .ifacebox .cbi-button{height:28px;padding:0 12px;font-size:11.5px}
+
+/* ---------------------------- 常用入口：一行紧凑 chips ---------------------------- */
+.ios-quick{display:flex;flex-wrap:wrap;gap:8px}
+.ios-quick a{
+  flex:0 0 auto;flex-direction:row;align-items:center;gap:7px;
+  padding:8px 12px;border-radius:10px;
+  background:linear-gradient(180deg,#fff,#f7fbff);border-color:#e3ecf7;
+}
+.ios-quick a:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(0,96,255,.13)}
+.ios-quick .qi{
+  width:22px;height:22px;flex:0 0 22px;border-radius:7px;
+  background:linear-gradient(135deg,#f0f6ff,#fff);border-color:#dce9fa
+}
+.ios-quick b{font-size:12px;color:var(--ink-deep)}
+.ios-quick small{display:none}
+
+/* ---------------------------- 命令面板 ---------------------------- */
+.ios-cmd-mask{background:rgba(22,38,68,.40);backdrop-filter:blur(4px)}
+.ios-cmd-panel{
+  border-radius:16px;border-color:#e0eaf7;
+  box-shadow:0 30px 80px rgba(20,42,82,.30),inset 0 0 0 1px rgba(255,255,255,.8)
+}
+.ios-cmd-head{background:linear-gradient(180deg,#fff,#f7fbff)}
+.ios-cmd-item.on{
+  background:linear-gradient(90deg,#e8f2ff,#f3f8ff);
+  box-shadow:inset 2px 0 0 var(--brand)
+}
+.ios-cmd-foot{background:linear-gradient(180deg,#f7fbff,#f2f7fe)}
+
+/* ---------------------------- 骨架 / 日志框 / 滚动条 ---------------------------- */
+.sk-bar{background:linear-gradient(90deg,#eaf2fc,#ddeafa,#eaf2fc);background-size:220% 100%}
+.sk-hint{color:var(--ink-deep)}
+body.ios-fit textarea#syslog,body.ios-fit textarea.ios-log{
+  background:linear-gradient(180deg,#fbfdff,#f5f9ff);
+  color:#42557a;border-top:1px solid #e3ecf7
+}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{
+  background:rgba(110,145,190,.32);border-radius:8px;
+  border:2px solid transparent;background-clip:padding-box
+}
+::-webkit-scrollbar-thumb:hover{background:rgba(0,96,255,.35);background-clip:padding-box}
