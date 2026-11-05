@@ -288,15 +288,38 @@
 		var dot = document.getElementById('tsWanDot');
 		if (dot) dot.className = 'ops-dot' + (on ? '' : ' bad');
 	}
+	/* 单点轮询：壳页唯一发起 STATS 请求，结果广播给 iframe，
+	   iframe 内各页不再各自定时 fetch（每个 CGI 请求都会 fork 一个 Lua 进程）。
+	   5s -> 15s；隐藏页暂停；visibilitychange 与定时器用 lastPoll 去重。 */
+	var lastPoll = 0, lastStats = null;
+	function broadcast(d) {
+		var f = document.getElementById('iosFrame');
+		if (f && f.contentWindow && d) {
+			try { f.contentWindow.postMessage({ type: 'kp-stats', data: d }, '*'); } catch (e) {}
+		}
+	}
 	function poll() {
 		if (document.hidden || document.body.classList.contains('ios-embed')) return;
+		var now = Date.now();
+		if (now - lastPoll < 12000) return;
+		lastPoll = now;
 		fetch(STATS, { credentials: 'same-origin', cache: 'no-store' })
 			.then(function (r) { return r.ok ? r.json() : null; })
-			.then(function (d) { paintShell(d); })
+			.then(function (d) {
+				if (!d) return;
+				lastStats = d;
+				paintShell(d);
+				broadcast(d);
+			})
 			.catch(function () {});
 	}
+	/* iframe 换页后主动请求一次缓存数据，避免最多等一个轮询周期 */
+	window.addEventListener('message', function (ev) {
+		var m = ev && ev.data;
+		if (m && m.type === 'kp-stats-request' && lastStats) broadcast(lastStats);
+	});
 	poll();
-	setInterval(poll, 5000);
+	setInterval(poll, 15000);
 	document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
 
 	/* ---------- 命令面板 ---------- */

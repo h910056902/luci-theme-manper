@@ -1,0 +1,127 @@
+/* ==========================================================================
+   ios-tokens.css · 统一设计令牌与全站美化层
+   参考 Linear（克制的单一强调色、亮度分层、精确字距）与 Vercel
+   （shadow-as-border、多层阴影栈、pill badge、focus ring），
+   在既有 iStoreOS 浅色蓝渐变语言上做收敛，不推翻现有配色。
+   加载于 ios-cbi-compat.css 之后、页面专用 CSS 之前。
+   ========================================================================== */
+
+/* ---------------------------- 令牌 ---------------------------- */
+:root{
+  /* 语义化中性阶（与既有变量并存，供新组件使用） */
+  --t-canvas:#f4f7fb;
+  --t-surface:#fff;
+  --t-surface-2:#f8fafd;
+  --t-ink:#1e2b48;
+  --t-ink-2:#5b6b8c;
+  --t-ink-3:#8898aa;
+  --t-line:rgba(30,50,90,.08);
+  --t-line-strong:rgba(30,50,90,.14);
+  --t-accent:#0060ff;
+  --t-accent-soft:#ecf3fe;
+  --t-accent-ring:rgba(0,96,255,.28);
+
+  /* 间距 / 圆角 / 动效（Linear 式克制） */
+  --t-sp-1:4px; --t-sp-2:8px; --t-sp-3:12px; --t-sp-4:16px; --t-sp-6:24px;
+  --t-r-xs:6px; --t-r-s:9px; --t-r-m:12px; --t-r-l:14px; --t-r-pill:999px;
+  --t-ease:cubic-bezier(.2,.7,.3,1);
+  --t-dur:.16s;
+
+  /* Vercel shadow-as-border：边框走阴影层，过渡更顺滑 */
+  --t-shadow-hair:0 0 0 1px var(--t-line);
+  --t-shadow-card:0 0 0 1px var(--t-line),0 1px 2px rgba(30,50,90,.045),0 10px 28px rgba(30,50,90,.055);
+  --t-shadow-lift:0 0 0 1px rgba(0,96,255,.16),0 6px 18px rgba(0,96,255,.10);
+}
+
+/* ---------------------------- 排版精度 ---------------------------- */
+body.ios-body{
+  text-rendering:optimizeLegibility;
+  font-variant-numeric:tabular-nums;
+}
+.ios-content h1,.ios-content h2,.ios-content h3,
+.th-sec-h h3,.ios-theme-h h3{
+  letter-spacing:-.2px;
+}
+.ios-content small,.ios-content .th-sub,.ios-content .cbi-value-description{
+  letter-spacing:.1px;
+}
+
+/* ---------------------------- 焦点与键盘可达性 ---------------------------- */
+:where(a,button,input,select,textarea,[tabindex]):focus-visible{
+  outline:2px solid var(--t-accent);
+  outline-offset:2px;
+  border-radius:var(--t-r-xs);
+  box-shadow:0 0 0 4px var(--t-accent-ring);
+}
+:where(a,button,input,select,textarea,[tabindex]):focus:not(:focus-visible){outline:none}
+::selection{background:rgba(0,96,255,.16);color:var(--t-ink)}
+.ios-nav-i:focus-visible,.th-tab:focus-visible{outline-offset:-2px}
+
+/* ---------------------------- 表面与深度 ---------------------------- */
+.ios-card,.ios-panel,.th-panel,.th-card,
+.ios-content fieldset.cbi-section:has(> fieldset.cbi-section-node) > fieldset.cbi-section-node{
+  transition:box-shadow var(--t-dur) var(--t-ease),transform var(--t-dur) var(--t-ease);
+}
+.ios-card:hover,.ios-panel:hover{
+  box-shadow:var(--t-shadow-lift);
+  transform:translateY(-1px);
+}
+/* 卡片入场：只做一次、只动画合成属性 */
+@keyframes t-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.ios-card,.th-panel.on,.ios-summary{
+  animation:t-rise .22s var(--t-ease) both;
+}
+
+/* ---------------------------- 控件状态 ---------------------------- */
+.ios-btn,.th-btn,.th-filebtn,.cbi-button,
+.ios-content input[type="submit"],.ios-content input[type="button"]{
+  transition:transform var(--t-dur) var(--t-ease),box-shadow var(--t-dur) var(--t-ease),filter var(--t-dur) var(--t-ease);
+}
+.ios-btn:active,.th-btn:active,.th-filebtn:active,.cbi-button:active{
+  transform:translateY(1px) scale(.99);
+  box-shadow:0 1px 3px rgba(30,50,90,.10);
+}
+.ios-btn:disabled,.th-btn:disabled{transform:none;filter:none}
+
+/* 胶囊状态标签统一（Vercel pill badge） */
+.ios-badge,.th-badge,.ios-pill,.wz-tag,.kp-tag{
+  border-radius:var(--t-r-pill);
+  font-variant-numeric:tabular-nums;
+}
+
+/* ---------------------------- 表格 / 列表节奏 ---------------------------- */
+.ios-content table.cbi-section-table tbody tr,
+.ios-content .th-file{
+  transition:background var(--t-dur) var(--t-ease);
+}
+.ios-content table.cbi-section-table tbody tr:hover{background:rgba(0,96,255,.035)}
+
+/* ---------------------------- 滚动条统一 ---------------------------- */
+.ios-content *{scrollbar-width:thin;scrollbar-color:rgba(110,145,190,.42) transparent}
+.ios-content *::-webkit-scrollbar{width:8px;height:8px}
+.ios-content *::-webkit-scrollbar-track{background:transparent}
+.ios-content *::-webkit-scrollbar-thumb{
+  background:rgba(110,145,190,.38);border-radius:var(--t-r-pill);
+  border:2px solid transparent;background-clip:padding-box;
+}
+.ios-content *::-webkit-scrollbar-thumb:hover{background:rgba(0,96,255,.42);background-clip:padding-box}
+
+/* ---------------------------- 空态 / 加载态 ---------------------------- */
+.ios-empty,.th-empty,.ios-content .alert-message{
+  color:var(--t-ink-3);font-size:11.5px;text-align:center;
+  padding:var(--t-sp-4);border-radius:var(--t-r-m);
+  background:linear-gradient(180deg,#fff,#f8fbff);
+  box-shadow:var(--t-shadow-hair);
+}
+@keyframes t-pulse{0%,100%{opacity:.55}50%{opacity:1}}
+.ios-loading,.spinning{animation:t-pulse 1.2s var(--t-ease) infinite}
+
+/* ---------------------------- 可访问性：减少动效 ---------------------------- */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.001ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.001ms!important;
+    scroll-behavior:auto!important;
+  }
+}

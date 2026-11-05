@@ -120,14 +120,21 @@
 			if (c) c.textContent = d.dhcp.start + ' – ' + (d.dhcp.start + d.dhcp.limit - 1);
 			if (e) e.innerHTML = d.dhcp.pct + '% <small>' + d.dhcp.leases + '/' + d.dhcp.limit + '</small>';
 		}
-		var STATS = '/cgi-bin/luci/admin/istore_stats?state=1';
-		function pull() {
-			fetch(STATS, { credentials: 'same-origin', cache: 'no-store' })
+		/* 运维指标由壳页 shell.js 单点轮询后广播；iframe 内不常驻定时器，
+		   避免每打开一页就多一条 15s 的 CGI 请求。 */
+		window.addEventListener('message', function (ev) {
+			var m = ev && ev.data;
+			if (!m || m.type !== 'kp-stats' || !m.data) return;
+			paintDhcp(m.data);
+		});
+		if (window.parent !== window) {
+			try { window.parent.postMessage({ type: 'kp-stats-request' }, '*'); } catch (e) {}
+		} else if (document.getElementById('kpStatics')) {
+			/* 脱离壳页独立打开：降级为一次性拉取，不常驻 */
+			fetch('/cgi-bin/luci/admin/istore_stats?state=1', { credentials: 'same-origin', cache: 'no-store' })
 				.then(function (r) { return r.ok ? r.json() : null; })
-				.then(paintDhcp).catch(function () {});
+				.then(function (d) { if (d) paintDhcp(d); }).catch(function () {});
 		}
-		pull();
-		setInterval(pull, 15000);
 
 		/* 锚点导航 */
 		var secs = $$('#maincontent fieldset.cbi-section, #maincontent .cbi-section').filter(function (s) {
