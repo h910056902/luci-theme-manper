@@ -9,6 +9,8 @@
 	local _light = _req:find("/services/openclash/ocspeed", 1, true) or _req:find("network_guide", 1, true)
 	-- 软件包页整页重构层（含 /admin/system/packages/ipkg 子页）
 	local _packages = _req:find("/admin/system/packages", 1, true)
+	-- 实时负载页：卡片化图表/指标并注入 SVG 文档样式
+	local _realtime = _req:find("/admin/status/realtime", 1, true)
 
 	local function qs_has_embed()
 		local qs = http.getenv("QUERY_STRING") or ""
@@ -25,8 +27,10 @@
 %>
 <% if _light then %><link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=4"><% end %>
 <% if _packages then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-packages.css?v=2"><% end %>
+<% if _realtime then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-realtime.css?v=2"><% end %>
 </main>
 <script src="/luci-static/istore-ui/ios-enhance.js?v=5" defer></script>
+<% if _realtime then %><script src="/luci-static/istore-ui/ios-realtime.js?v=1" defer></script><% end %>
 <script>
 /* 嵌入态：脱壳保护 + 内部链接/表单保持 _embed + 向父窗口回报状态 */
 (function () {
@@ -105,9 +109,11 @@
 %>
 <% if _light then %><link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=4"><% end %>
 <% if _packages then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-packages.css?v=2"><% end %>
+<% if _realtime then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-realtime.css?v=2"><% end %>
 <%# 全站运维层：卡片折叠 / 脏标记保存条（运维指标已并入吸顶页头） %>
 <link rel="stylesheet" href="/luci-static/istore-ui/ios-ops.css?v=2">
 <script src="/luci-static/istore-ui/ios-enhance.js?v=5" defer></script>
+<% if _realtime then %><script src="/luci-static/istore-ui/ios-realtime.js?v=1" defer></script><% end %>
 	</main>
 </div><!-- /ios-main -->
 </div><!-- /ios-shell -->

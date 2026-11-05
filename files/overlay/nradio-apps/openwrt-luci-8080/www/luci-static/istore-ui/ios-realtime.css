@@ -1,0 +1,83 @@
+/* ==========================================================================
+   ios-realtime.css · 实时负载页重构层
+   只在 /admin/status/realtime 由 footer 条件加载。
+   原厂结构：h2[name=content] + <embed id="bwsvg">（外部 SVG 文档）
+   + 一个 3 行 6 列的裸 <table>（strong 带红色下划线图例）。
+   目标：卡片化图表与三项指标、填充一屏、统一图例色与排版。
+   SVG 文档内部的黑色网格与灰字由 ios-realtime.js 注入样式覆盖。
+   ========================================================================== */
+
+/* ---------------------------- 标题 ---------------------------- */
+#maincontent h2[name="content"]{
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  margin:0 0 12px;font-size:16px;font-weight:700;color:#1e2b48;letter-spacing:-.2px
+}
+#maincontent h2[name="content"]:before{
+  content:"";width:3px;height:15px;border-radius:3px;
+  background:linear-gradient(180deg,#009aff,#0060ff)
+}
+#maincontent h2[name="content"]:after{
+  content:"实时负载 · 3 秒采样 · 5 分钟窗口";
+  font-size:10.5px;font-weight:500;color:#8898aa;letter-spacing:.3px
+}
+
+/* ---------------------------- 图表卡片 ---------------------------- */
+/* 原厂 embed 带 inline style="height:300px;border:1px solid #000;background:#FFF"，
+   下面全部用 !important 覆盖，否则高度/边框/底色不会生效。 */
+#maincontent embed#bwsvg{
+  display:block;width:100%!important;
+  height:calc(100vh - 360px)!important;min-height:300px!important;max-height:560px!important;
+  margin:0 0 14px!important;padding:6px!important;box-sizing:border-box;
+  border:1px solid #e3ecf7!important;border-radius:14px;
+  background:linear-gradient(150deg,#fff,#fdfeff 48%,#f5faff)!important;
+  box-shadow:0 1px 2px rgba(30,50,90,.045),0 10px 28px rgba(30,50,90,.055),
+             inset 0 2px 0 rgba(0,96,255,.35);
+}
+body.ios-embed #maincontent embed#bwsvg{height:calc(100vh - 320px)!important}
+
+/* ---------------------------- 三项负载指标 ---------------------------- */
+#maincontent > table{
+  display:block;width:100%;border-collapse:separate;border-spacing:0;background:transparent
+}
+#maincontent > table > tbody{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px
+}
+#maincontent > table > tbody > tr{
+  display:grid;grid-template-columns:auto 1fr;
+  gap:5px 12px;align-items:center;
+  padding:12px 14px;border:1px solid #e3ecf7;border-radius:12px;
+  background:linear-gradient(150deg,#fff,#f8fbff);
+  box-shadow:0 1px 2px rgba(30,50,90,.045),0 8px 20px rgba(30,50,90,.05);
+  transition:box-shadow .16s var(--t-ease,cubic-bezier(.2,.7,.3,1)),transform .16s var(--t-ease,cubic-bezier(.2,.7,.3,1))
+}
+#maincontent > table > tbody > tr:hover{
+  transform:translateY(-1px);
+  box-shadow:0 0 0 1px rgba(0,96,255,.16),0 6px 18px rgba(0,96,255,.10)
+}
+#maincontent > table td{
+  padding:0;border:0;background:transparent;
+  font-size:11.5px;color:#5b6b8c;text-align:left!important;vertical-align:middle
+}
+#maincontent > table td strong{
+  border-bottom:0!important;white-space:nowrap;
+  font-size:11px;font-weight:600;color:#8898aa
+}
+#maincontent > table td[id^="lb_load"]{
+  font-size:19px;font-weight:700;color:#0060ff;
+  font-variant-numeric:tabular-nums;line-height:1.2;
+  text-align:right!important;letter-spacing:-.3px
+}
+/* 三张卡分别给一个色点，呼应图例 */
+#maincontent > table > tbody > tr:nth-child(1){border-top:2px solid #0060ff}
+#maincontent > table > tbody > tr:nth-child(2){border-top:2px solid #00b5c9}
+#maincontent > table > tbody > tr:nth-child(3){border-top:2px solid #ff8f1f}
+#maincontent > table > tbody > tr:nth-child(2) td[id^="lb_load"]{color:#009bb0}
+#maincontent > table > tbody > tr:nth-child(3) td[id^="lb_load"]{color:#d97a12}
+
+/* ---------------------------- 杂项 ---------------------------- */
+#maincontent > br{display:none}
+#maincontent > div:empty{display:none}
+@media(max-width:900px){
+  #maincontent > table > tbody{grid-template-columns:1fr}
+  #maincontent embed#bwsvg{height:340px!important}
+}
