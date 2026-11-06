@@ -13,6 +13,10 @@
 
 	var host = document.getElementById('maincontent');
 	if (!host) return;
+	/* DHCP/DNS 页按需求放开一屏：不做缩放与页内分段，也不加一屏相关 class，
+	   由 ios-dhcp.css 接管为自然滚动，完整展示全部配置项与租约表
+	   （侧栏与顶栏原本就是 position:sticky，滚动时保持固定）。 */
+	if (/\/network\/dhcp(\/|$|\?)/.test(location.pathname + location.search)) return;
 	var embed = document.body.classList.contains('ios-embed');
 	var NAV_ID = 'iosSegNav';
 	var built = false;

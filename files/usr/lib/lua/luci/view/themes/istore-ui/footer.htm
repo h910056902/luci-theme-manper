@@ -7,10 +7,25 @@
 	local http = require "luci.http"
 	local _req = "/" .. table.concat((require "luci.dispatcher").context.requestpath or {}, "/")
 	local _light = _req:find("/services/openclash/ocspeed", 1, true) or _req:find("network_guide", 1, true)
+	-- 自动测速页详细适配层（一屏容器 + 块内滚动 + 长表限高）
+	local _ocspeed = _req:find("/services/openclash/ocspeed", 1, true)
 	-- 软件包页整页重构层（含 /admin/system/packages/ipkg 子页）
 	local _packages = _req:find("/admin/system/packages", 1, true)
 	-- 实时负载页：卡片化图表/指标并注入 SVG 文档样式
 	local _realtime = _req:find("/admin/status/realtime", 1, true)
+	-- DHCP/DNS 页：按要求放开一屏，改为自然滚动 + 卡片化重排
+	local _dhcp = _req:find("/admin/network/dhcp", 1, true)
+	-- 短内容页（进程/路由/计划任务/日志/重启/诊断等）：统一空态与留白。
+	-- 只列内容量很小的 CBI 短页，排除已有专用层的页面，避免样式叠加。
+	local _short = false
+	for _, p in ipairs({
+		"/admin/status/processes", "/admin/status/syslog", "/admin/status/dmesg",
+		"/admin/network/routes", "/admin/network/diagnostics",
+		"/admin/system/crontab", "/admin/system/reboot", "/admin/system/reset",
+		"/admin/system/security", "/admin/system/autotimeset", "/admin/system/flashops"
+	}) do
+		if _req:find(p, 1, true) then _short = true break end
+	end
 
 	local function qs_has_embed()
 		local qs = http.getenv("QUERY_STRING") or ""
@@ -26,6 +41,10 @@
 	if embed then
 %>
 <% if _light then %><link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=4"><% end %>
+<% if _ocspeed then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-ocspeed.css?v=1"><% end %>
+<% if _short then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-shortpage.css?v=3"><% end %>
+<% if _dhcp then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-dhcp.css?v=5">
+<script>(function(){var h=document.documentElement,b=document.body;if(h)h.style.setProperty('overflow-y','auto','important');if(b)b.style.setProperty('overflow','visible','important');})();</script><% end %>
 <% if _packages then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-packages.css?v=2"><% end %>
 <% if _realtime then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-realtime.css?v=2"><% end %>
 </main>
@@ -100,7 +119,7 @@
 	});
 })();
 </script>
-<script src="/luci-static/istore-ui/ios-fit.js?v=9"></script>
+<script src="/luci-static/istore-ui/ios-fit.js?v=10"></script>
 </body>
 </html>
 <%
@@ -108,6 +127,10 @@
 	end
 %>
 <% if _light then %><link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=4"><% end %>
+<% if _ocspeed then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-ocspeed.css?v=1"><% end %>
+<% if _short then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-shortpage.css?v=3"><% end %>
+<% if _dhcp then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-dhcp.css?v=5">
+<script>(function(){var h=document.documentElement,b=document.body;if(h)h.style.setProperty('overflow-y','auto','important');if(b)b.style.setProperty('overflow','visible','important');})();</script><% end %>
 <% if _packages then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-packages.css?v=2"><% end %>
 <% if _realtime then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-realtime.css?v=2"><% end %>
 <%# 全站运维层：卡片折叠 / 脏标记保存条（运维指标已并入吸顶页头） %>
@@ -133,6 +156,6 @@
 	});
 })();
 </script>
-<script src="/luci-static/istore-ui/ios-fit.js?v=9"></script>
+<script src="/luci-static/istore-ui/ios-fit.js?v=10"></script>
 </body>
 </html>

@@ -1,0 +1,130 @@
+/* ==========================================================================
+   ios-ocspeed.css · OpenClash 自动测速页详细适配层
+   只在 /admin/services/openclash/ocspeed 由 footer 条件加载，位于
+   light-overrides.css 之后。后者已把深色拉成浅色，但没有解决「内容高达
+   5294px、#maincontent 被撑到 5358px 且 overflow:hidden」造成的大量区块
+   不可达。本层负责：一屏容器恢复、应用区块内滚动、长表限高、sticky 工具条
+   与视觉收敛。页面级依旧不滚动，不引入图片/JS/新轮询。
+   ========================================================================== */
+
+/* ---------------------------- ① 恢复一屏容器 ---------------------------- */
+body.ios-body:has(.ocspeed-body) #maincontent{
+  height:calc(100vh - 56px)!important;
+  max-height:calc(100vh - 56px)!important;
+  overflow:hidden!important;
+}
+body.ios-body.ios-embed:has(.ocspeed-body) #maincontent{
+  height:100vh!important;max-height:100vh!important;
+}
+
+/* ---------------------------- ② 应用区改为块内滚动 ---------------------------- */
+body .ocspeed-body{
+  height:100%!important;max-height:100%!important;
+  overflow-y:auto!important;overflow-x:hidden!important;
+  padding:0 10px 18px 0!important;
+  scrollbar-width:thin;scrollbar-color:rgba(110,145,190,.42) transparent;
+}
+body .ocspeed-body::-webkit-scrollbar{width:8px}
+body .ocspeed-body::-webkit-scrollbar-track{background:transparent}
+body .ocspeed-body::-webkit-scrollbar-thumb{
+  background:rgba(110,145,190,.38);border-radius:999px;
+  border:2px solid transparent;background-clip:padding-box;
+}
+body .ocspeed-body::-webkit-scrollbar-thumb:hover{
+  background:rgba(0,96,255,.42);background-clip:padding-box;
+}
+
+/* ---------------------------- ③ 顶部工具条常驻 ---------------------------- */
+body .ocspeed-body > header{
+  position:sticky;top:0;z-index:30;
+  margin:0 0 10px!important;padding:9px 12px!important;
+  border:1px solid #e3ecf7;border-radius:12px;
+  background:linear-gradient(150deg,rgba(255,255,255,.97),rgba(245,250,255,.95));
+  backdrop-filter:blur(12px);
+  box-shadow:0 1px 2px rgba(30,50,90,.045),0 8px 22px rgba(30,50,90,.06);
+}
+body .ocspeed-body > header:before{
+  content:"";position:absolute;left:0;top:0;height:2px;width:38%;
+  border-radius:12px 0 0 0;opacity:.7;pointer-events:none;
+  background:linear-gradient(90deg,#009aff,#0060ff,transparent);
+}
+body .ocspeed-body > header h1{
+  font-size:15px!important;font-weight:700;letter-spacing:-.2px;color:#1e2b48;
+}
+
+/* ---------------------------- ④ 长表格与面板限高 ---------------------------- */
+/* 节点排行实测 47 行 / 1958px；限高后自身滚动，sticky 表头保留 */
+body .ocspeed-body .tw{
+  max-height:min(46vh,430px)!important;
+  overflow:auto!important;
+  border-radius:11px;
+}
+body .ocspeed-body .tw thead th{
+  position:sticky;top:0;z-index:4;
+  background:linear-gradient(180deg,#f7faff,#eef4fc)!important;
+  color:#5b6b8c!important;font-size:10.5px!important;letter-spacing:.5px;
+  border-bottom:1px solid #e3ecf7!important;
+}
+body .ocspeed-body .tw tbody tr{
+  transition:background .16s cubic-bezier(.2,.7,.3,1);
+}
+body .ocspeed-body .tw tbody tr:hover{background:rgba(0,96,255,.045)!important}
+body .ocspeed-body .tw td{font-variant-numeric:tabular-nums}
+
+/* 历史/日志/分类等面板不在单页内无限拉长 */
+body .ocspeed-body section.panel{
+  border-radius:14px;overflow:hidden;
+  transition:box-shadow .16s cubic-bezier(.2,.7,.3,1);
+}
+body .ocspeed-body section.panel:hover{
+  box-shadow:0 0 0 1px rgba(0,96,255,.14),0 8px 22px rgba(30,50,90,.07);
+}
+body .ocspeed-body #logbox{
+  max-height:220px;overflow:auto;
+}
+body .ocspeed-body details.cfg{
+  border-radius:12px;
+}
+
+/* ---------------------------- ⑤ 分区标题与控件精度 ---------------------------- */
+body .ocspeed-body .ph b,
+body .ocspeed-body section.panel > h2,
+body .ocspeed-body section.panel > h3{
+  display:inline-flex;align-items:center;gap:8px;
+  color:#1e2b48;font-weight:700;letter-spacing:-.2px;
+}
+body .ocspeed-body .ph b:before,
+body .ocspeed-body section.panel > h2:before,
+body .ocspeed-body section.panel > h3:before{
+  content:"";width:3px;height:13px;border-radius:3px;
+  background:linear-gradient(180deg,#009aff,#0060ff);
+}
+body .ocspeed-body button{
+  font-family:var(--font,sans-serif)!important;
+  transition:transform .16s cubic-bezier(.2,.7,.3,1),box-shadow .16s cubic-bezier(.2,.7,.3,1),filter .16s;
+}
+body .ocspeed-body button:active{transform:translateY(1px) scale(.99);box-shadow:none}
+body .ocspeed-body button:focus-visible,
+body .ocspeed-body input:focus-visible,
+body .ocspeed-body select:focus-visible{
+  outline:2px solid #0060ff;outline-offset:2px;
+  box-shadow:0 0 0 4px rgba(0,96,255,.18);
+}
+body .ocspeed-body .card .big,
+body .ocspeed-body .card .v{font-variant-numeric:tabular-nums}
+
+/* 进度条：更清晰的轨道与品牌填充 */
+body .ocspeed-body .pb{position:relative;border-radius:14px;overflow:hidden}
+body .ocspeed-body .pb-fill{
+  border-radius:999px;
+  box-shadow:0 0 12px rgba(0,96,255,.35);
+}
+
+/* ---------------------------- ⑥ 窄屏 ---------------------------- */
+@media(max-width:900px){
+  body .ocspeed-body .tw{max-height:38vh!important}
+  body .ocspeed-body > header{position:static}
+}
+@media(prefers-reduced-motion:reduce){
+  body .ocspeed-body *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}

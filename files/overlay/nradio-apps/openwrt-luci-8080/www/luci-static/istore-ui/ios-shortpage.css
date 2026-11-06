@@ -1,0 +1,140 @@
+/* ==========================================================================
+   ios-shortpage.css · 短内容页面统一美化层
+   条件加载：仅命中内容量很小的 CBI 短页（进程 / 静态路由 / 计划任务 /
+   内核日志 / 系统日志 / 重启 / 恢复 / 安全 / 定时设置 / 刷新操作 / 网络诊断）。
+   排除已有专用层的 realtime / packages / argon-config / network_guide /
+   ocspeed 与内容多的 store / openclash / system 等页面。
+
+   实测问题：这些页 #maincontent 是 844px 一屏，但主 form 只有 218~371px，
+   下方 450px+ 纯空白；原厂空态是「尚无任何配置」一行小字；保存/复位按钮
+   单独占一条与内容分离。本层用纯 CSS 解决，不新增 JS / 图片 / 轮询。
+   复用 ios-tokens.css 的 --t-* 令牌，不重复定义色板。
+   ========================================================================== */
+
+/* ---------------------------- ① 纵向填充 ---------------------------- */
+/* CBI 短页：form 撑满可用高度，第一个 fieldset 吃掉剩余空间 */
+#maincontent > form{
+  min-height:calc(100vh - 132px)!important;
+  display:flex;flex-direction:column;
+}
+/* 实测层级是 form > div.cbi-map > fieldset.cbi-section（不是 form > fieldset） */
+#maincontent > form > div.cbi-map{
+  flex:1 1 auto;
+  display:flex;flex-direction:column;
+}
+#maincontent > form > div.cbi-map > fieldset.cbi-section:first-of-type{
+  flex:1 1 auto;
+  display:flex;flex-direction:column;
+}
+/* 原厂 fieldset 有自带 height 约束，flex:1 单独不足以撑满，补最小高度 */
+#maincontent > form > div.cbi-map > fieldset.cbi-section.ios-card:first-of-type{
+  min-height:calc(100vh - 260px)!important;
+}
+/* 自建短页（诊断 / 重启等）：卡片自身达到最小高度，避免纯空白 */
+#maincontent > .ios-card,
+#maincontent > .P > .ios-card{
+  min-height:calc(100vh - 250px);
+}
+/* 折叠的次要分区不要被拉高 */
+#maincontent > form > div.cbi-map > fieldset.kp-folded{flex:0 0 auto!important}
+
+/* ---------------------------- ② 操作条收拢 ---------------------------- */
+#maincontent .cbi-page-actions{
+  margin-top:auto!important;
+  display:flex;align-items:center;justify-content:flex-end;gap:8px;
+  flex-wrap:wrap;
+  padding:12px 2px 2px!important;
+  border-top:1px solid #edf2f9;
+  background:transparent;
+}
+#maincontent .cbi-page-actions .cbi-button,
+#maincontent .cbi-page-actions input[type="submit"]{
+  min-height:30px;padding:0 14px;border-radius:9px;font-size:11.5px;font-weight:600;
+}
+#maincontent .cbi-page-actions .cbi-button-apply,
+#maincontent .cbi-page-actions input[name="save"]{
+  border-color:transparent!important;
+  background:linear-gradient(135deg,#009aff,#0060ff)!important;
+  color:#fff!important;
+  box-shadow:0 5px 14px rgba(0,96,255,.22);
+}
+#maincontent .cbi-page-actions .cbi-button-reset,
+#maincontent .cbi-page-actions .cbi-button-remove{
+  background:#fdecec!important;border-color:#f4cfcf!important;color:#c73b3d!important;
+}
+
+/* ---------------------------- ③ 居中空态（纯 CSS，无图片） ---------------------------- */
+/* td[colspan] 是原厂空态行的稳定特征；数据行通常不带 colspan，不会误伤 */
+#maincontent table.cbi-section-table td[colspan]{
+  text-align:center!important;
+  padding:30px 12px 34px!important;
+  color:#8898aa!important;font-size:11.5px;
+  border-bottom:0!important;
+}
+#maincontent table.cbi-section-table td[colspan]:before{
+  content:"";display:block;
+  width:56px;height:56px;margin:0 auto 12px;
+  border:2px dashed #cfe2ff;border-radius:50%;
+  background:radial-gradient(circle at 50% 44%,rgba(0,96,255,.12) 0 26%,transparent 28%),
+             linear-gradient(150deg,#fff,#f2f8ff);
+  box-shadow:0 4px 14px rgba(0,96,255,.08);
+}
+#maincontent table.cbi-section-table td[colspan]:after{
+  content:"当前没有可显示的条目";
+  display:block;margin-top:5px;
+  color:#a8b6c8;font-size:10.5px;letter-spacing:.2px;
+}
+/* 若空态行不带 colspan：只在该行是 tbody 唯一行时处理 */
+#maincontent table.cbi-section-table tbody:has(> tr.cbi-section-table-row:only-child) > tr.cbi-section-table-row > td{
+  text-align:center!important;padding:28px 12px 32px!important;
+  color:#8898aa!important;
+}
+
+/* ---------------------------- ④ 表格与标题节奏 ---------------------------- */
+#maincontent table.cbi-section-table{
+  width:100%;border-collapse:separate;border-spacing:0;
+}
+#maincontent table.cbi-section-table thead th,
+#maincontent table.cbi-section-table tr.cbi-section-table-titles th{
+  background:linear-gradient(180deg,#f7faff,#eef4fc)!important;
+  color:#5b6b8c!important;font-size:10.5px!important;font-weight:700;
+  letter-spacing:.5px;border-bottom:1px solid #e3ecf7!important;
+  padding:9px 12px!important;
+}
+#maincontent table.cbi-section-table tbody tr{transition:background .16s var(--t-ease,cubic-bezier(.2,.7,.3,1))}
+#maincontent table.cbi-section-table tbody tr:hover{background:rgba(0,96,255,.035)}
+#maincontent > form > h2,
+#maincontent > form > h3{
+  display:flex;align-items:center;gap:8px;
+  margin:0 0 8px;font-size:15px;font-weight:700;color:#1e2b48;letter-spacing:-.2px;
+}
+#maincontent > form > h2:before,
+#maincontent > form > h3:before{
+  content:"";width:3px;height:14px;border-radius:3px;
+  background:linear-gradient(180deg,#009aff,#0060ff);
+}
+#maincontent > form > .cbi-map-descr{color:#8898aa;font-size:11.5px;margin:0 0 10px}
+
+/* ---------------------------- ⑤ 微交互与可访问性 ---------------------------- */
+#maincontent fieldset.cbi-section.ios-card{
+  transition:box-shadow .16s var(--t-ease,cubic-bezier(.2,.7,.3,1));
+}
+#maincontent fieldset.cbi-section.ios-card:hover{
+  box-shadow:0 0 0 1px rgba(0,96,255,.12),0 8px 22px rgba(30,50,90,.07);
+}
+#maincontent :where(button,input,select,textarea,a,[tabindex]):focus-visible{
+  outline:2px solid #0060ff;outline-offset:2px;
+  box-shadow:0 0 0 4px rgba(0,96,255,.18);
+}
+
+/* 嵌入态与窄屏：去掉过高的最小高度，避免撑出滚动 */
+body.ios-embed #maincontent > form{min-height:calc(100vh - 100px)!important}
+body.ios-embed #maincontent > .ios-card,
+body.ios-embed #maincontent > .P > .ios-card{min-height:calc(100vh - 210px)}
+@media(max-width:900px){
+  #maincontent > form{min-height:calc(100vh - 150px)!important}
+  #maincontent .cbi-page-actions{justify-content:flex-start}
+}
+@media(prefers-reduced-motion:reduce){
+  #maincontent *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}
