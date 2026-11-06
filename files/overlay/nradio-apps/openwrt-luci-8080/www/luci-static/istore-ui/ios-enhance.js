@@ -57,9 +57,10 @@
 
 	/* ---------- 脏标记保存条 ---------- */
 	function dirtyWatch() {
-		/* 自建主题设置页有自己的分区表单、保存条与上传状态反馈，
-		   全局脏条会与它重复（选个文件就弹「有未保存的改动」），故跳过。 */
-		if (/\/system\/argon-config/.test(location.pathname)) return;
+		/* 自建主题设置页与 ocspeed 自动测速页都有自己的保存按钮与状态反馈，
+		   全局脏条会重复（选个文件/改个配置就弹「有未保存的改动」），
+		   且它的「保存并应用」可能提交到错误表单，故跳过。 */
+		if (/\/system\/argon-config|\/services\/openclash\/ocspeed/.test(location.pathname)) return;
 		var form = $('#maincontent');
 		if (!form || form.getAttribute('data-kp-dirty')) return;
 		form.setAttribute('data-kp-dirty', '1');

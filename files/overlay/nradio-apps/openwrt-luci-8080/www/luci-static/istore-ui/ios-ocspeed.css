@@ -120,7 +120,55 @@ body .ocspeed-body .pb-fill{
   box-shadow:0 0 12px rgba(0,96,255,.35);
 }
 
-/* ---------------------------- ⑥ 窄屏 ---------------------------- */
+/* ---------------------------- ⑥ 功能可达性 ---------------------------- */
+/* 顶部快捷导航：避免为点「保存设置」滚动 3700px */
+.oc-quick{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
+.oc-quick button{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 10px;border:1px solid #dbe6f5;border-radius:999px;
+  background:linear-gradient(180deg,#fff,#f8fbff);
+  color:#0052d9;font-family:var(--font,sans-serif);font-size:10.5px;font-weight:600;
+  cursor:pointer;white-space:nowrap;
+  transition:border-color .15s,box-shadow .15s,background .15s
+}
+.oc-quick button i{font-size:10px}
+.oc-quick button:hover{border-color:#0060ff;box-shadow:0 3px 10px rgba(0,96,255,.12)}
+.oc-quick button.on{
+  border-color:transparent;color:#fff;
+  background:linear-gradient(135deg,#009aff,#0060ff);
+  box-shadow:0 3px 10px rgba(0,96,255,.22)
+}
+/* 保存按钮：设置展开时右下角悬浮，跳到设置顶部也能直接提交。
+   sticky bottom 不会把尚未滚到视口的元素拉上来，故用 fixed。 */
+.ocspeed-body #btnSave.oc-save-sticky{
+  position:fixed;right:130px;bottom:24px;z-index:56;
+  min-height:34px;padding:0 18px;
+  box-shadow:0 8px 22px rgba(0,96,255,.28);
+}
+/* 节点搜索框：滚动长表时常驻 */
+.ocspeed-body .searchbox{
+  position:sticky;top:0;z-index:12;
+  padding:7px 2px;margin:0 0 8px;
+  background:rgba(255,255,255,.95);backdrop-filter:blur(10px);
+  border-radius:9px;
+}
+/* 回到顶部 */
+.oc-totop{
+  position:fixed;right:24px;bottom:24px;z-index:58;
+  display:none;align-items:center;gap:6px;
+  padding:8px 13px;border:1px solid #cfe2ff;border-radius:999px;
+  background:linear-gradient(135deg,#fff,#eef5ff);
+  color:#0052d9;font-family:var(--font,sans-serif);font-size:11px;font-weight:700;
+  cursor:pointer;box-shadow:0 6px 18px rgba(0,96,255,.16);
+  transition:transform .15s,box-shadow .15s
+}
+.oc-totop.show{display:inline-flex}
+.oc-totop:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,96,255,.24)}
+/* 日志过滤按钮组置顶 */
+.ocspeed-body section.panel:has(#btnLog) .panel-head,
+.ocspeed-body section.panel:has(#fLogAll){scroll-margin-top:64px}
+
+/* ---------------------------- ⑦ 窄屏 ---------------------------- */
 @media(max-width:900px){
   body .ocspeed-body .tw{max-height:38vh!important}
   body .ocspeed-body > header{position:static}
