@@ -751,6 +751,14 @@ gemini_failover() {
     log gemini "冷却中 ($((now-last))s < ${cd}s), 暂不切换"
     return 1
   fi
+  # 与通用故障转移共享冷却：同一分钟 cron 里两条链路都可能切换，
+  # 避免刚被 failover 切过又立刻被 Gemini 逻辑再切一次。
+  local lf=$(cat $DATA/last_failover 2>/dev/null || echo 0)
+  local fcd=$(get failover_cooldown); [ -z "$fcd" ] && fcd=120
+  if [ $((now - ${lf:-0})) -lt "$fcd" ]; then
+    log gemini "通用故障转移冷却中 ($((now-${lf:-0}))s < ${fcd}s), 暂不切换"
+    return 1
+  fi
   local group=$(get group); [ -z "$group" ] && group='宝贝云'
   local cur=$(api_get "/proxies/$group" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
   grep -o '"n":"[^"]*","d":[0-9]*,"g":[0-9]*' $DATA/backup.json 2>/dev/null \
@@ -952,18 +960,23 @@ failover_check() { # 断线自动故障转移
   fi
 
   if [ -n "$best" ]; then
-    curl -s -m 8 -X PUT -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/json' -d "{\"name\":\"$(json_esc "$best")\"}" "$API/proxies/$group" >/dev/null 2>&1
+    # 统一走 switchnode()，让 dry-run 与切换逻辑只有一处
+    if [ -z "$KP_DRY_RUN" ]; then switchnode "$best" >/dev/null 2>&1; else log failover "DRY_RUN: 将切换到 $best"; fi
     date +%s > $DATA/last_failover
+    # 切到新节点后必须清掉旧节点的 Gemini 连续失败计数，
+    # 否则下一次 Gemini 自检会拿旧计数立刻再触发一次切换。
+    gemini_state_set fail_count "0"
+    gemini_state_set cur_gemini_ok "0"
+    gemini_state_set last_target "$best"
     # 备用名单已被消耗 (切换目标成了新的当前节点), 下一分钟立刻重新预选
     rm -f $DATA/last_backup 2>/dev/null
     log failover "已故障转移($bsrc): $cur -> $best ($bestd ms)"
   else
     # 切换失败只压短冷却: 原逻辑在这里同样写满 failover_cooldown(默认120s),
     # 结果是最需要重试的时刻反而等待最久。失败后 30 秒即重试。
+    # 直接写「目标时刻」，避免 busybox date 不支持 -d @epoch 时退化成满冷却。
     local short=$cd; [ "$short" -gt 30 ] && short=30
-    if ! date -d "@$(( now - (cd - short) ))" +%s > $DATA/last_failover 2>/dev/null; then
-      date +%s > $DATA/last_failover
-    fi
+    printf '%s\n' "$(( now - (cd - short) ))" > $DATA/last_failover
     log failover "无可用备用节点, 保持 $cur (${short}s 后重试)"
     log failover "诊断: 主节点与全部备用节点同时超时, 更像整体链路拥塞而非单节点故障, 此时切换无意义"
   fi
@@ -972,7 +985,7 @@ failover_check() { # 断线自动故障转移
 cron_apply() {
   local iv
   iv=$(get interval); [ -z "$iv" ] && iv=30
-  sed -i '/ocspeed-auto/d; /ocspeed-failover/d; /ocspeed-backup/d; /speedswitch.sh run/d; /speedswitch.sh failover/d; /speedswitch.sh backup/d' /etc/crontabs/root 2>/dev/null
+  sed -i '/ocspeed-auto/d; /ocspeed-failover/d; /ocspeed-backup/d; /ocspeed-gemini/d; /speedswitch.sh run/d; /speedswitch.sh failover/d; /speedswitch.sh backup/d; /speedswitch.sh gemini /d' /etc/crontabs/root 2>/dev/null
   if [ "$(get enabled)" = "1" ]; then
     echo "#ocspeed-auto" >> /etc/crontabs/root
     echo "*/$iv * * * * /usr/libexec/openclash-helper/speedswitch.sh run >>/var/log/ocspeed.log 2>&1" >> /etc/crontabs/root
@@ -985,6 +998,13 @@ cron_apply() {
   if [ "$(get backup_enable)" != "0" ]; then
     echo "#ocspeed-backup" >> /etc/crontabs/root
     echo "* * * * * /usr/libexec/openclash-helper/speedswitch.sh backup >>/var/log/ocspeed.log 2>&1" >> /etc/crontabs/root
+  fi
+  # Gemini 自检必须有独立 cron 行：它原本挂在 failover case 上，
+  # 一旦「故障转移」停用就没了 failover 行，Gemini 自动切换也会静默失效。
+  # 开关关闭时不写这行，零额外请求。
+  if [ "$(get gemini_backup_enable)" = "1" ]; then
+    echo "#ocspeed-gemini" >> /etc/crontabs/root
+    echo "* * * * * /usr/libexec/openclash-helper/speedswitch.sh gemini >>/var/log/ocspeed.log 2>&1" >> /etc/crontabs/root
   fi
   /etc/init.d/cron restart >/dev/null 2>&1
 }
@@ -1076,7 +1096,9 @@ case "$1" in
   enable)  uci -q set ocspeed.main.enabled='1'; uci commit ocspeed; cron_apply; log cron "已启用自动测速"; echo '{"ok":true}' ;;
   disable) uci -q set ocspeed.main.enabled='0'; uci commit ocspeed; cron_apply; log cron "已停用自动测速"; echo '{"ok":true}' ;;
   status)  web_status ;;
-  failover) gemini_check; failover_check ;;
+  failover) failover_check ;;
+  failovernow) failover_check; echo '{"ok":true}' ;;
+  gemini) gemini_check ;;
   geminicheck) rm -f $DIR/gemini_check_result.json; gemini_check force; cat $DIR/gemini_check_result.json 2>/dev/null || echo '{"ok":true,"checked":false}' ;;
   geminifailover) gemini_failover; echo '{"ok":true}' ;;
   geministate) cat $DATA/gemini_state 2>/dev/null || echo '' ;;

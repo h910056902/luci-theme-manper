@@ -1,7 +1,7 @@
 #!/bin/sh
 # 测试替身：拦截 speedswitch.sh 的所有 curl 调用，返回可控延迟/切换结果。
 # 真实 OpenClash API 完全不会被访问；PUT 请求只记录到 switch.log。
-T=/tmp/kp_gemini_test
+T=${KP_TEST_DIR:-/tmp/kp_gemini_test}
 args="$*"
 printf '%s\n' "$args" >> "$T/curl.log"
 
@@ -21,7 +21,10 @@ case "$args" in
     case "$args" in *gemini.google.com*) isgem=1 ;; esac
     case "$name" in
       CurNode)
-        if [ "$isgem" = "1" ]; then printf '{}'; else printf '{"delay":200}'; fi ;;
+        # KP_STUB_MODE=failover 时模拟「当前节点整体超时」，用于通用故障转移测试
+        if [ "$isgem" = "1" ]; then printf '{}'
+        elif [ "$KP_STUB_MODE" = "failover" ]; then printf '{}'
+        else printf '{"delay":200}'; fi ;;
       GeminiOK)
         if [ "$isgem" = "1" ]; then printf '{"delay":300}'; else printf '{"delay":250}'; fi ;;
       NoGemini)
