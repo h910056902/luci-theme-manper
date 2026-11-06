@@ -168,7 +168,36 @@ body .ocspeed-body .pb-fill{
 .ocspeed-body section.panel:has(#btnLog) .panel-head,
 .ocspeed-body section.panel:has(#fLogAll){scroll-margin-top:64px}
 
-/* ---------------------------- ⑦ 窄屏 ---------------------------- */
+/* ---------------------------- Gemini 感知 ---------------------------- */
+.gem-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 9px;border-radius:999px;
+  border:1px solid #dbe6f5;background:linear-gradient(180deg,#fff,#f8fbff);
+  color:#6a7c99;font-size:10px;font-weight:600;white-space:nowrap;
+}
+.gem-badge:before{
+  content:"";width:6px;height:6px;border-radius:50%;background:#aab8cc;
+}
+.gem-badge.ok{
+  border-color:#bdeedd;background:#e7f8f1;color:#0a8f61;
+}
+.gem-badge.ok:before{background:#00b578;box-shadow:0 0 0 3px rgba(0,181,120,.14)}
+.gem-badge.bad{
+  border-color:#f8cdcc;background:#fdeceb;color:#c73b3d;
+}
+.gem-badge.bad:before{background:#f5484a;box-shadow:0 0 0 3px rgba(245,72,74,.14)}
+.gem-badge.off{opacity:.85}
+/* 备用节点卡里的 Gemini 准入标记 */
+.gem-tag{
+  display:inline-flex;align-items:center;
+  margin:0 6px;padding:1px 6px;border-radius:999px;
+  border:1px solid #cfe2ff;background:#ecf3fe;color:#0052d9;
+  font-size:9px;font-style:normal;font-weight:700;white-space:nowrap;
+}
+/* 顶部快捷导航在窄屏下允许换行 */
+@media(max-width:900px){.oc-quick{flex-wrap:wrap;justify-content:flex-end}}
+
+/* ---------------------------- ⑧ 窄屏 ---------------------------- */
 @media(max-width:900px){
   body .ocspeed-body .tw{max-height:38vh!important}
   body .ocspeed-body > header{position:static}

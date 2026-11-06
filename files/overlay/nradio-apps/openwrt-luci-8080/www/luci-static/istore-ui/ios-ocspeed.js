@@ -38,7 +38,8 @@
 		bar.innerHTML = [
 			'<button type="button" data-jump="rank"><i class="fas fa-list-ol" aria-hidden="true"></i> 排行</button>',
 			'<button type="button" data-jump="cfg"><i class="fas fa-sliders-h" aria-hidden="true"></i> 设置</button>',
-			'<button type="button" data-jump="log"><i class="fas fa-scroll" aria-hidden="true"></i> 日志</button>'
+			'<button type="button" data-jump="log"><i class="fas fa-scroll" aria-hidden="true"></i> 日志</button>',
+			'<button type="button" data-jump="gemini"><i class="fas fa-robot" aria-hidden="true"></i> Gemini</button>'
 		].join('');
 		header.appendChild(bar);
 		bar.addEventListener('click', function (ev) {
@@ -48,6 +49,7 @@
 			var k = b.getAttribute('data-jump');
 			if (k === 'cfg') jump(cfg, true);
 			else if (k === 'log') jump(logPanel, false);
+			else if (k === 'gemini') jump(document.getElementById('backupCard'), false);
 			else jump(rankPanel, false);
 			Array.prototype.forEach.call(bar.querySelectorAll('button'), function (x) {
 				x.classList.toggle('on', x === b);
@@ -80,6 +82,7 @@
 		jumpTo: function (k) {
 			if (k === 'cfg') jump(cfg, true);
 			else if (k === 'log') jump(logPanel, false);
+			else if (k === 'gemini') jump(document.getElementById('backupCard'), false);
 			else jump(rankPanel, false);
 		},
 		cfgOpen: function () { return !!(cfg && cfg.open); },

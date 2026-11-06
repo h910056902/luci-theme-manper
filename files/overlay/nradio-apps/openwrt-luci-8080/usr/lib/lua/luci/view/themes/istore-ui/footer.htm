@@ -41,7 +41,7 @@
 	if embed then
 %>
 <% if _light then %><link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=4"><% end %>
-<% if _ocspeed then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-ocspeed.css?v=3"><% end %>
+<% if _ocspeed then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-ocspeed.css?v=4"><% end %>
 <% if _short then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-shortpage.css?v=3"><% end %>
 <% if _dhcp then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-dhcp.css?v=5">
 <script>(function(){var h=document.documentElement,b=document.body;if(h)h.style.setProperty('overflow-y','auto','important');if(b)b.style.setProperty('overflow','visible','important');})();</script><% end %>
@@ -49,7 +49,7 @@
 <% if _realtime then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-realtime.css?v=2"><% end %>
 </main>
 <script src="/luci-static/istore-ui/ios-enhance.js?v=6" defer></script>
-<% if _ocspeed then %><script src="/luci-static/istore-ui/ios-ocspeed.js?v=2" defer></script><% end %>
+<% if _ocspeed then %><script src="/luci-static/istore-ui/ios-ocspeed.js?v=3" defer></script><% end %>
 <% if _realtime then %><script src="/luci-static/istore-ui/ios-realtime.js?v=1" defer></script><% end %>
 <script>
 /* 嵌入态：脱壳保护 + 内部链接/表单保持 _embed + 向父窗口回报状态 */
@@ -128,7 +128,7 @@
 	end
 %>
 <% if _light then %><link rel="stylesheet" href="/luci-static/istore-ui/light-overrides.css?v=4"><% end %>
-<% if _ocspeed then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-ocspeed.css?v=3"><% end %>
+<% if _ocspeed then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-ocspeed.css?v=4"><% end %>
 <% if _short then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-shortpage.css?v=3"><% end %>
 <% if _dhcp then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-dhcp.css?v=5">
 <script>(function(){var h=document.documentElement,b=document.body;if(h)h.style.setProperty('overflow-y','auto','important');if(b)b.style.setProperty('overflow','visible','important');})();</script><% end %>
@@ -137,7 +137,7 @@
 <%# 全站运维层：卡片折叠 / 脏标记保存条（运维指标已并入吸顶页头） %>
 <link rel="stylesheet" href="/luci-static/istore-ui/ios-ops.css?v=2">
 <script src="/luci-static/istore-ui/ios-enhance.js?v=6" defer></script>
-<% if _ocspeed then %><script src="/luci-static/istore-ui/ios-ocspeed.js?v=2" defer></script><% end %>
+<% if _ocspeed then %><script src="/luci-static/istore-ui/ios-ocspeed.js?v=3" defer></script><% end %>
 <% if _realtime then %><script src="/luci-static/istore-ui/ios-realtime.js?v=1" defer></script><% end %>
 	</main>
 </div><!-- /ios-main -->
