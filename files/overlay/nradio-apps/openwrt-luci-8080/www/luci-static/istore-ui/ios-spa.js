@@ -44,6 +44,12 @@
 	}
 	function withEmbed(u) {
 		if (!isInternal(u)) return u;
+		/* iStore 入口 /admin/store 会 302 到 /admin/store/pages 并丢掉 query，
+		   首屏按非嵌入态渲染出第二套侧栏，之后才被 load 纠正重新加载。
+		   直接指向最终 SPA 路径（200、不重定向），一次加载就是嵌入态。 */
+		if (u.indexOf('/admin/store/pages') < 0 && /\/admin\/store\/?(\?|$)/.test(u)) {
+			u = u.replace(/\/admin\/store\/?(\?.*)?$/, '/admin/store/pages/installed$1');
+		}
 		if (u.indexOf('_embed=1') >= 0) return u;
 		return u + (u.indexOf('?') >= 0 ? '&' : '?') + '_embed=1';
 	}
@@ -71,6 +77,17 @@
 	function showSkeleton(on) {
 		if (!skel) return;
 		skel.style.display = on ? 'flex' : 'none';
+	}
+	/* 只有 iframe 内确实是嵌入态时才收起骨架。
+	   302 / 内部跳转丢了 _embed 时首屏是完整外壳（含第二套侧栏），
+	   提前收起骨架会让用户看到「一瞬间两个左侧菜单栏」。 */
+	function hideSkeletonWhenEmbedded() {
+		try {
+			var w = frame.contentWindow;
+			var u = w ? (w.location.pathname + w.location.search) : '';
+			if (isInternal(u) && u.indexOf('_embed=1') < 0) return;
+		} catch (e) {}
+		showSkeleton(false);
 	}
 	function fail(msg, url) {
 		loading = false;
@@ -182,23 +199,29 @@
 	frame.addEventListener('load', function () {
 		if (frame.src === 'about:blank') return;
 		clearTimeout(timer);
-		loading = false;
-		showSkeleton(false);
 
 		var doc = null, win = null;
 		try { doc = frame.contentDocument; win = frame.contentWindow; } catch (e) {}
 
-		/* 内部脚本跳转丢了 _embed → 纠正，避免"页面套页面" */
+		/* 内部脚本/302 丢了 _embed → 纠正，避免「页面套页面」。
+		   纠正期间保持骨架遮挡，loading 也保持 true，直到下一次 load 确认嵌入态。 */
 		if (win) {
 			try {
 				var u = win.location.pathname + win.location.search;
 				if (isInternal(u) && u.indexOf('_embed=1') < 0) {
 					frame.src = withEmbed(cleanUrl(u));
+					/* 二次加载也要有超时兜底，否则骨架可能一直挂着 */
+					clearTimeout(timer);
+					timer = setTimeout(function () {
+						if (loading) fail('超过 ' + Math.round(TIMEOUT / 1000) + ' 秒仍未完成加载。', currentUrl);
+					}, TIMEOUT);
 					return;
 				}
 				currentUrl = cleanUrl(u);
 			} catch (e) {}
 		}
+		loading = false;
+		hideSkeletonWhenEmbedded();
 
 		if (doc) {
 			/* 会话过期：iframe 内出现登录表单 → 整页跳转，让 sysauth 接管 */
@@ -221,7 +244,7 @@
 		if (d.type === 'ready') {
 			clearTimeout(timer);
 			loading = false;
-			showSkeleton(false);
+			hideSkeletonWhenEmbedded();
 			if (d.title) setCrumb(String(d.title).replace(/\s*·\s*C2000.*$/, '').trim());
 		} else if (d.type === 'leave') {
 			/* 子页即将跳转，保持骨架，避免白屏 */
