@@ -205,6 +205,11 @@ body.ios-embed .ios-content:has(ul.tabs) #app > .cbi-section{max-height:calc(100
   flex:1 1 auto;min-height:0;
   overflow-y:auto;overflow-x:hidden;
   padding-right:4px;
+  /* .containers 是 2 列 grid，被 flex 限制高度后默认会把 124 张卡片平均压行，
+     每张只剩约 30px 且 overflow:hidden -> 图标与文字全被裁掉，只剩灰色横条。
+     让行高按内容自然撑开，卡片完整显示，滚动条仍只在应用区。 */
+  align-content:start;
+  grid-auto-rows:max-content;
   scrollbar-width:thin;scrollbar-color:rgba(110,145,190,.42) transparent
 }
 .ios-content:has(ul.tabs) #app .containers::-webkit-scrollbar{width:8px}

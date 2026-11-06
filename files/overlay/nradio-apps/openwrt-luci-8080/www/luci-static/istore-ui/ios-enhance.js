@@ -57,10 +57,13 @@
 
 	/* ---------- 脏标记保存条 ---------- */
 	function dirtyWatch() {
-		/* 自建主题设置页与 ocspeed 自动测速页都有自己的保存按钮与状态反馈，
-		   全局脏条会重复（选个文件/改个配置就弹「有未保存的改动」），
-		   且它的「保存并应用」可能提交到错误表单，故跳过。 */
-		if (/\/system\/argon-config|\/services\/openclash\/ocspeed/.test(location.pathname)) return;
+		/* 自建主题设置页、ocspeed 自动测速页、iStore Vue 应用都有自己的保存/交互逻辑。
+		   全局脏条会监听所有 input/change，在 iStore 里搜索、选标签、点复选框都会
+		   误判成「表单变脏」，且其「保存并应用」可能提交到错误表单，故跳过。
+		   SPA 壳页里 iframe 指向 iStore 时同样跳过，避免壳页残留脏条。 */
+		if (/\/system\/argon-config|\/services\/openclash\/ocspeed|\/admin\/store/.test(location.pathname)) return;
+		var spaf = document.getElementById('iosFrame');
+		if (spaf && /\/admin\/store/.test(spaf.getAttribute('src') || '')) return;
 		var form = $('#maincontent');
 		if (!form || form.getAttribute('data-kp-dirty')) return;
 		form.setAttribute('data-kp-dirty', '1');
@@ -73,14 +76,25 @@
 			'<button type="button" class="ios-btn primary" id="kpDirtySave">保存并应用</button>';
 
 		var timer = null;
-		function show(on) { bar.classList.toggle('show', on); }
+		/* SPA 壳页加载时 iframe 还是 about:blank，之后才导航到 iStore，
+		   所以这里必须动态判断，不能只在 dirtyWatch() 入口跳过一次。 */
+		function isStorePage() {
+			if (/\/admin\/store/.test(location.pathname)) return true;
+			var spaf = document.getElementById('iosFrame');
+			return !!(spaf && /\/admin\/store/.test(spaf.getAttribute('src') || ''));
+		}
+		function show(on) { bar.classList.toggle('show', on && !isStorePage()); }
 		form.addEventListener('change', function (e) {
 			var t = e.target;
 			if (!t || !/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+			if (isStorePage()) return;
 			clearTimeout(timer);
 			timer = setTimeout(function () { show(true); }, 120);
 		});
 		document.body.appendChild(bar);
+		/* 切换到 iStore 时把可能已显示的脏条收起（不新增轮询） */
+		var spaf0 = document.getElementById('iosFrame');
+		if (spaf0) spaf0.addEventListener('load', function () { if (isStorePage()) show(false); });
 
 		var save = $('#kpDirtySave', bar), reset = $('#kpDirtyReset', bar);
 		if (save) save.addEventListener('click', function () {
