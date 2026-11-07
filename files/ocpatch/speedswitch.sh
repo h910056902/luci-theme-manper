@@ -826,8 +826,10 @@ gemini_check() {
     gemini_state_set last_gemini_delay "$gdelay"
     log gemini "当前节点 Gemini 正常: $cur ${gdelay}ms (mode=$mode)"
   elif [ "$netok" = "0" ]; then
-    gemini_state_set cur_gemini_ok "0"
-    log gemini "通用网络不通，跳过 Gemini 判定: $cur (mode=$mode)"
+    # 通用网络/代理 API 不通时无法判定 Gemini，标成「未检测」而不是「失效」，
+    # 否则 OpenClash 停用期间页面会一直误报「Gemini 失效」。
+    gemini_state_set cur_gemini_ok "unknown"
+    log gemini "通用网络或 OpenClash API 不通，跳过 Gemini 判定: $cur (mode=$mode)"
   else
     gemini_state_set cur_gemini_ok "0"
     fc=$(gemini_state_get fail_count); [ -z "$fc" ] && fc=0
@@ -966,7 +968,8 @@ failover_check() { # 断线自动故障转移
     # 切到新节点后必须清掉旧节点的 Gemini 连续失败计数，
     # 否则下一次 Gemini 自检会拿旧计数立刻再触发一次切换。
     gemini_state_set fail_count "0"
-    gemini_state_set cur_gemini_ok "0"
+    # 切到新节点后是「尚未检测」，不是「Gemini 失效」；前端据此显示「未检测」。
+    gemini_state_set cur_gemini_ok "unknown"
     gemini_state_set last_target "$best"
     # 备用名单已被消耗 (切换目标成了新的当前节点), 下一分钟立刻重新预选
     rm -f $DATA/last_backup 2>/dev/null
@@ -1027,6 +1030,7 @@ web_status() {
   echo -n '"gemini_check_interval":"'; echo -n "$(get gemini_check_interval)"; echo '",'
   echo -n '"gemini_fail_count":"'; echo -n "$(get gemini_fail_count)"; echo '",'
   echo -n '"gemini_switch_cooldown":"'; echo -n "$(get gemini_switch_cooldown)"; echo '",'
+  echo -n '"oc_api_ok":'; if api_get /version 2>/dev/null | grep -q version; then echo 'true,'; else echo 'false,'; fi
   echo -n '"cur_gemini_ok":"'; echo -n "$(gemini_state_get cur_gemini_ok)"; echo '",'
   echo -n '"gemini_fail_counter":"'; echo -n "$(gemini_state_get fail_count)"; echo '",'
   echo -n '"last_gemini_check":"'; echo -n "$(gemini_state_get last_check)"; echo '",'

@@ -2635,10 +2635,11 @@ function poll(){
     if(d && d.history) renderHistory(d.history);
     var gb=$id('gemBadge');
     if(gb && d){
-      var gok=d.cur_gemini_ok;
-      gb.textContent = (gok==='1') ? 'Gemini 可用' : (gok==='0' ? 'Gemini 失效' : 'Gemini 未检测');
-      gb.className = 'gem-badge ' + (gok==='1' ? 'ok' : (gok==='0' ? 'bad' : 'off'));
-      if(d.last_gemini_target) gb.title = '上次自动切换目标: ' + d.last_gemini_target;
+      var gok=d.cur_gemini_ok, apiDown=(d.oc_api_ok===false);
+      gb.textContent = apiDown ? '代理未运行' : (gok==='1' ? 'Gemini 可用' : (gok==='0' ? 'Gemini 失效' : 'Gemini 未检测'));
+      gb.className = 'gem-badge ' + (apiDown ? 'off' : (gok==='1' ? 'ok' : (gok==='0' ? 'bad' : 'off')));
+      gb.title = apiDown ? 'OpenClash API 不可达：服务未启用或未监听，无法探测节点与 Gemini' : '当前节点 Gemini 可用性';
+      if(d.last_gemini_target) gb.title += ' · 上次自动切换目标: ' + d.last_gemini_target;
       if(d.gemini_backup_enable===false) gb.title += '（Gemini 自动切换未启用）';
     }
     if(wasRunning && !running && !runStarting){ onRunFinished(); }
