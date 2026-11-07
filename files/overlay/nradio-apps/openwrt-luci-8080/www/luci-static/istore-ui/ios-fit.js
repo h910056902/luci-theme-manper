@@ -1,10 +1,9 @@
 /* ==========================================================================
-   ios-fit.js · 一屏适配引擎
-   1) 启用紧凑布局（ios-fit.css），页面级禁止滚动
-   2) 内容仍超一屏时，把顶层区块按高度贪心分成若干「页内分段」
-      顶部生成分段导航，一次只显示一段 —— 页面始终只有一屏、不滑动
-   3) 单块仍超出视口时仅保留块内滚动，保证内容可达
-   壳页与 iframe 嵌入页都会执行。
+   ios-fit.js · 一屏适配引擎（已全局停用）
+   按需求「剩余页面全部放开一页限制」：不再缩放、不再页内分段、
+   不再给 body 加 ios-fit 类。页面级自然滚动、侧栏/顶栏固定、
+   组件统一由 ios-design.css 接管。
+   保留本文件作为空实现，避免改动 header/footer 的加载链路与缓存。
    ========================================================================== */
 (function () {
 	'use strict';
@@ -13,10 +12,8 @@
 
 	var host = document.getElementById('maincontent');
 	if (!host) return;
-	/* DHCP/DNS 页按需求放开一屏：不做缩放与页内分段，也不加一屏相关 class，
-	   由 ios-dhcp.css 接管为自然滚动，完整展示全部配置项与租约表
-	   （侧栏与顶栏原本就是 position:sticky，滚动时保持固定）。 */
-	if (/\/network\/dhcp(\/|$|\?)/.test(location.pathname + location.search)) return;
+	/* 全站放开一屏：所有页面（含 DHCP）都走自然滚动 */
+	return;
 	var embed = document.body.classList.contains('ios-embed');
 	var NAV_ID = 'iosSegNav';
 	var built = false;

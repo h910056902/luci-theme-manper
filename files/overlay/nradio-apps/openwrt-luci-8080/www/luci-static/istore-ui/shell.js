@@ -446,3 +446,14 @@
 		}
 	});
 })();
+
+/* 兜底：个别页面（如 status/iptables）只渲染精简 head、不渲染 footer，
+   导致设计层与增强层缺失。这里在运行时补上 ios-design.css，
+   保证全站放开一屏与组件细节一致。 */
+(function () {
+	if (document.querySelector('link[href*="ios-design.css"]')) return;
+	var l = document.createElement('link');
+	l.rel = 'stylesheet';
+	l.href = '/luci-static/istore-ui/ios-design.css?v=9';
+	(document.head || document.documentElement).appendChild(l);
+})();

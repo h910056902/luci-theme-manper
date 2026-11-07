@@ -20,6 +20,8 @@
 		return /节点排行/.test(p.textContent || '');
 	})[0];
 
+	/* 全站放开一屏后 .ocspeed-body 不再是滚动容器，改用页面级滚动。
+	   sticky 顶栏约 56px，额外留 14px 呼吸空间。 */
 	function jump(el, expand) {
 		if (!el) return;
 		if (expand && el.tagName === 'DETAILS' && !el.open) {
@@ -27,8 +29,7 @@
 			if (s) s.click();
 		}
 		var r = el.getBoundingClientRect();
-		var br = body.getBoundingClientRect();
-		body.scrollTop += (r.top - br.top) - 12;
+		window.scrollTo({ top: Math.max(0, window.scrollY + r.top - 70), behavior: 'smooth' });
 	}
 
 	/* ---------- 顶部快捷导航 ---------- */
@@ -71,9 +72,9 @@
 	top.innerHTML = '<i class="fas fa-arrow-up" aria-hidden="true"></i> 顶部';
 	top.title = '回到顶部';
 	document.body.appendChild(top);
-	top.addEventListener('click', function () { body.scrollTop = 0; });
-	function syncTop() { top.classList.toggle('show', body.scrollTop > 420); }
-	body.addEventListener('scroll', syncTop, { passive: true });
+	top.addEventListener('click', function () { window.scrollTo({ top: 0, behavior: 'smooth' }); });
+	function syncTop() { top.classList.toggle('show', window.scrollY > 420); }
+	window.addEventListener('scroll', syncTop, { passive: true });
 	syncTop();
 
 	/* 供验收脚本读取 */
@@ -86,7 +87,7 @@
 			else jump(rankPanel, false);
 		},
 		cfgOpen: function () { return !!(cfg && cfg.open); },
-		scrollTop: function () { return Math.round(body.scrollTop); },
+		scrollTop: function () { return Math.round(window.scrollY); },
 		totopVisible: function () { return top.classList.contains('show'); }
 	};
 })();

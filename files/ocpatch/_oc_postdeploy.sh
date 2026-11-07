@@ -12,7 +12,7 @@ setdef() {
   k="$1"; v="$2"; cur=$(uci -q get ocspeed.main.$k)
   if [ -z "$cur" ]; then uci set ocspeed.main.$k="$v"; echo "  set $k=$v"; else echo "  keep $k=$cur"; fi
 }
-setdef gemini_backup_enable 0
+setdef gemini_backup_enable 1
 setdef gemini_backup_timeout 6000
 setdef gemini_check_interval 5
 setdef gemini_fail_count 2

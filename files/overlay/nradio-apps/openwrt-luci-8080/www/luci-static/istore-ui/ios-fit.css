@@ -1,17 +1,12 @@
 /* ==========================================================================
-   ios-fit.css · 一屏适配层
-   · 紧凑化所有卡片/表单间距，让常规页面自然落在一屏内
-   · 页面级不滚动；超长页面由 ios-fit.js 生成「页内分段」切换
-   · 嵌入态（iframe 内）与壳页共用
+   ios-fit.css · 紧凑排版层（已停用「一屏锁定」）
+   · 按需求全站放开一页限制，页面改为自然滚动；
+     解锁与 sticky 固定由 ios-design.css 统一接管（最后加载）。
+   · 下方紧凑布局规则仅在 body.ios-fit 存在时生效；
+     ios-fit.js 已全局跳过，故默认不再压缩间距，保留作为可选兜底。
    ========================================================================== */
 
-/* 静态兜底：不依赖 JS 加 class，所有 istore 页面天然不滚动 */
-html,body.ios-body{overflow:hidden!important}
-body.ios-body #maincontent{height:calc(100vh - 56px);overflow:hidden}
-body.ios-embed #maincontent{height:100vh;overflow:hidden}
-html.ios-fit-root,html.ios-fit-root body{overflow:hidden!important}
-body.ios-fit #maincontent{height:calc(100vh - 56px);overflow:hidden}
-body.ios-fit.ios-embed #maincontent{height:100vh;overflow:hidden}
+/* 不再锁死 html/body 与 #maincontent：交给 ios-design.css 的自然滚动 */
 
 /* ---------------------------- 紧凑布局 ---------------------------- */
 body.ios-fit .ios-card{margin-bottom:10px;padding:11px 14px}

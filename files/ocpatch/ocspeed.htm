@@ -2775,7 +2775,7 @@ $id('btnGeminiCheck').onclick=function(){
     parts.push(d.gemini_ok ? ('Gemini 可用 '+(d.gemini_delay||0)+'ms') : 'Gemini 不可达');
     parts.push('备用池 Gemini 可用 '+(d.backup_gemini||0)+' 个');
     if(d.switched) parts.push('已自动切换到支持 Gemini 的备用节点');
-    if(!d.enabled) parts.push('自动切换未启用（仅诊断）');
+    parts.push(d.enabled ? '自动切换已启用 · 本次仅诊断，切换由后台自检触发' : '自动切换未启用（仅诊断）');
     showBanner(d.gemini_ok?'ok':'warn', d.gemini_ok?'Gemini 检查通过':'Gemini 检查未通过', parts.join(' · '));
     poll(); refreshLog();
   },function(){

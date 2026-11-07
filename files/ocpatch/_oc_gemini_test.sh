@@ -40,7 +40,7 @@ printf '%s\n' \
   'failover_quiet=90' \
   'gemini_backup_enable=1' \
   'gemini_backup_timeout=6000' \
-  'gemini_check_interval=5' \
+  'gemini_check_interval=0' \
   'gemini_fail_count=2' \
   'gemini_switch_cooldown=300' > "$T/config"
 
@@ -60,38 +60,51 @@ echo "=== STEP1: backupnow（Gemini 准入预选） ==="
 $SCRIPT backupnow
 echo "  backup.json = $(cat $T/data/backup.json 2>/dev/null)"
 
-echo "=== STEP2: 第 1 次 Gemini 自检（计数 1/2，不应切换） ==="
+echo "=== STEP2: 页面手动检测（force）只诊断、绝不切换 ==="
 $SCRIPT geminicheck
+echo "  result = $(cat $T/dir/gemini_check_result.json 2>/dev/null)"
+echo "  switch.log = $(cat $T/switch.log 2>/dev/null | tr '\n' ' ')"
+cp "$T/dir/gemini_check_result.json" "$T/force_result.json" 2>/dev/null
+cp "$T/switch.log" "$T/switch_after_force" 2>/dev/null || : > "$T/switch_after_force"
+cp "$T/data/gemini_state" "$T/state_after_force" 2>/dev/null
+rm -f "$T/data/gemini_state"
+
+echo "=== STEP3: 后台 auto 自检第 1 次（计数 1/2，不应切换） ==="
+$SCRIPT gemini
 echo "  state = $(tr '\n' ' ' < $T/data/gemini_state 2>/dev/null)"
 echo "  switch.log = $(cat $T/switch.log 2>/dev/null | tr '\n' ' ')"
 
-echo "=== STEP3: 第 2 次 Gemini 自检（应自动切换到 GeminiOK） ==="
-$SCRIPT geminicheck
+echo "=== STEP4: 后台 auto 自检第 2 次（应自动切换到 GeminiOK） ==="
+$SCRIPT gemini
 echo "  state = $(tr '\n' ' ' < $T/data/gemini_state 2>/dev/null)"
 echo "  switch.log = $(cat $T/switch.log 2>/dev/null | tr '\n' ' ')"
 echo "=== 相关日志 ==="
 grep -i gemini "$T/ocspeed.log" 2>/dev/null | tail -12
 
-echo "=== STEP4: 真实设备状态复核 ==="
+echo "=== STEP5: 真实设备状态复核 ==="
 uci show ocspeed > "$T/uci_after"
 real_status > "$T/cur_after"
 echo "  current=$(cat $T/cur_after)"
 
 echo "=== RESULT ==="
-# 1. 备用名单只保留支持 Gemini 的节点
+# 1. 备用池：Gemini 可用节点排首位且带 g，不足 keep 时用通用节点补足（不带 g）
 list=$(cat $T/data/backup.json 2>/dev/null)
-has_gemini_ok=0; has_no_gemini=0; has_fast_no_gemini=0; has_g_field=0
-case "$list" in *'"n":"GeminiOK"'*) has_gemini_ok=1 ;; esac
-case "$list" in *'"n":"NoGemini"'*) has_no_gemini=1 ;; esac
-case "$list" in *'"n":"FastNoGemini"'*) has_fast_no_gemini=1 ;; esac
-case "$list" in *'"g":'*) has_g_field=1 ;; esac
-[ "$has_gemini_ok" = "1" ] && [ "$has_no_gemini" = "0" ] && [ "$has_fast_no_gemini" = "0" ] && [ "$has_g_field" = "1" ] \
-  && echo "PASS backup_filter=只保留 Gemini 可用节点且带 g 字段" \
-  || echo "FAIL backup_filter"
+first_is_gemini=0; gcount=0; total=0
+case "$list" in *'"list":[{"n":"GeminiOK","d":250,"g":300}'*) first_is_gemini=1 ;; esac
+gcount=$(grep -o '"g":[0-9]*' "$T/data/backup.json" 2>/dev/null | wc -l)
+total=$(grep -o '"n":"' "$T/data/backup.json" 2>/dev/null | wc -l)
+[ "$first_is_gemini" = "1" ] && [ "$gcount" = "1" ] && [ "$total" = "3" ] \
+  && echo "PASS backup_pool=Gemini 节点优先带 g ($gcount)，通用节点补足至 $total" \
+  || echo "FAIL backup_pool (first=$first_is_gemini g=$gcount total=$total)"
 
-# 2. 第一次自检不切换
-sw1=$(grep -c . "$T/switch.log" 2>/dev/null || echo 0)
-# 3. 第二次自检确实发出切换且目标正确
+# 2. 页面 force 检测只诊断，绝不切换
+frc=$(cat $T/force_result.json 2>/dev/null)
+case "$frc" in *'"switched":0'*) force_no_switch=1 ;; *) force_no_switch=0 ;; esac
+[ "$force_no_switch" = "1" ] && [ ! -s "$T/switch_after_force" ] \
+  && echo "PASS force_diagnostic_only=手动检测不触发切换" \
+  || echo "FAIL force_diagnostic_only"
+
+# 3. 后台 auto 自检确实发出切换且目标正确
 target=$(tail -1 "$T/switch.log" 2>/dev/null)
 state_target=$(grep '^last_target=' "$T/data/gemini_state" 2>/dev/null | cut -d= -f2-)
 [ "$target" = "GeminiOK" ] && [ "$state_target" = "GeminiOK" ] \

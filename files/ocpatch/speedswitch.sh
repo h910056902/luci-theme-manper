@@ -589,7 +589,8 @@ write_backup_json() { # group now probed_count gemini_ok_count
     # g = Gemini 决赛延迟；只有 Gemini 准入通过的节点才有这个字段
     local g=""
     if [ -f $DIR/bak_gemini.map ]; then
-      g=$(grep -F -m1 "$nm$TAB" $DIR/bak_gemini.map 2>/dev/null | cut -f2)
+      # 精确匹配节点名：grep -F 是子串匹配，节点名互为子串时会把 g 记到错误节点上
+      g=$(awk -F'\t' -v n="$nm" '$1==n {print $2; exit}' $DIR/bak_gemini.map 2>/dev/null)
     fi
     if [ -n "$g" ]; then
       printf '{"n":"%s","d":%s,"g":%s}' "$(json_esc "$nm")" "$d" "$g" >> $DATA/backup.json
@@ -655,37 +656,44 @@ backup_do() {
   sort -n $DIR/bak_res.txt > $DIR/bak_res.tmp 2>/dev/null && mv $DIR/bak_res.tmp $DIR/bak_res.txt
 
   # ---- Gemini 准入：只对初赛有响应的候选并行复核 gemini_url ----
-  # 关闭开关时零额外请求；开启后仍复用 4 并发，且只测已通过 gstatic 的节点，
-  # 避免候选数 × 站点数式放大。全部不支持时保留通用备用池并明确记日志（降级）。
+  # 每个并发写独立文件再合并，避免 4 个子 shell 追加同一文件时行交错。
+  # 结果按「Gemini 可用优先 + Gemini 延迟升序」排列，不足 keep 时用通用节点补足，
+  # 这样既保证自动切换只挑支持 Gemini 的节点，又不会让通用故障转移只剩一个备用。
   : > $DIR/bak_gemini.map
+  rm -f $DIR/bak_gemini.*.out 2>/dev/null
   local gemini_ok=0
   if [ "$(get gemini_backup_enable)" = "1" ] && [ -s $DIR/bak_res.txt ]; then
     local gu=$(get gemini_url); [ -z "$gu" ] && gu='https://gemini.google.com'
     local gt=$(get gemini_backup_timeout); [ -z "$gt" ] && gt=6000
-    : > $DIR/bak_gemini.out
     local gi=0
     while IFS="$TAB" read -r d nm; do
       [ -z "$nm" ] && continue
-      ( gd=$(node_delay "$nm" "$gu" "$gt")
-        [ -n "$gd" ] && printf '%s\t%s\n' "$nm" "$gd" >> $DIR/bak_gemini.out ) &
       gi=$((gi+1))
-      [ $gi -ge 4 ] && { wait; gi=0; }
+      ( gd=$(node_delay "$nm" "$gu" "$gt")
+        [ -n "$gd" ] && printf '%s\t%s\n' "$nm" "$gd" > $DIR/bak_gemini.$gi.out ) &
+      [ $((gi % 4)) -eq 0 ] && wait
     done < $DIR/bak_res.txt
     wait
-    cat $DIR/bak_gemini.out >> $DIR/bak_gemini.map 2>/dev/null
-    rm -f $DIR/bak_gemini.out
+    cat $DIR/bak_gemini.*.out > $DIR/bak_gemini.map 2>/dev/null
+    rm -f $DIR/bak_gemini.*.out 2>/dev/null
     gemini_ok=$(wc -l < $DIR/bak_gemini.map)
-    if [ "$gemini_ok" -gt 0 ]; then
-      : > $DIR/bak_res_g.txt
-      while IFS="$TAB" read -r d nm; do
-        [ -z "$nm" ] && continue
-        grep -qF "$nm$TAB" $DIR/bak_gemini.map && printf '%s\t%s\n' "$d" "$nm" >> $DIR/bak_res_g.txt
-      done < $DIR/bak_res.txt
-      mv $DIR/bak_res_g.txt $DIR/bak_res.txt
-      log backup "Gemini 准入: $gemini_ok/$n_total 个候选可用，备用池已按 Gemini 过滤"
-    else
-      log backup "Gemini 准入: 候选全部不支持 Gemini，保留通用备用池（降级）"
-    fi
+    : > $DIR/bak_gemini_list.txt
+    : > $DIR/bak_generic_list.txt
+    while IFS="$TAB" read -r d nm; do
+      [ -z "$nm" ] && continue
+      # 精确匹配，避免节点名互为子串时误纳入
+      local gd=$(awk -F'\t' -v n="$nm" '$1==n {print $2; exit}' $DIR/bak_gemini.map 2>/dev/null)
+      if [ -n "$gd" ]; then
+        printf '%s\t%s\t%s\n' "$gd" "$d" "$nm" >> $DIR/bak_gemini_list.txt
+      else
+        printf '%s\t%s\n' "$d" "$nm" >> $DIR/bak_generic_list.txt
+      fi
+    done < $DIR/bak_res.txt
+    : > $DIR/bak_ordered.txt
+    [ -s $DIR/bak_gemini_list.txt ] && sort -n $DIR/bak_gemini_list.txt | cut -f2,3 >> $DIR/bak_ordered.txt
+    [ -s $DIR/bak_generic_list.txt ] && sort -n $DIR/bak_generic_list.txt >> $DIR/bak_ordered.txt
+    mv $DIR/bak_ordered.txt $DIR/bak_res.txt
+    log backup "Gemini 准入: $gemini_ok/$n_total 个候选可用；按 Gemini 延迟优先，通用节点补足至 $keep"
   fi
 
   head -$keep $DIR/bak_res.txt > $DIR/bak_top.txt
@@ -753,7 +761,9 @@ gemini_failover() {
   fi
   # 与通用故障转移共享冷却：同一分钟 cron 里两条链路都可能切换，
   # 避免刚被 failover 切过又立刻被 Gemini 逻辑再切一次。
-  local lf=$(cat $DATA/last_failover 2>/dev/null || echo 0)
+  # 用 last_failover_switch（只在通用切换成功时写），而不是 last_failover ——
+  # 后者在「无可用备用」失败分支也会被刷新，会反复误伤 Gemini 切换。
+  local lf=$(cat $DATA/last_failover_switch 2>/dev/null || echo 0)
   local fcd=$(get failover_cooldown); [ -z "$fcd" ] && fcd=120
   if [ $((now - ${lf:-0})) -lt "$fcd" ]; then
     log gemini "通用故障转移冷却中 ($((now-${lf:-0}))s < ${fcd}s), 暂不切换"
@@ -779,6 +789,7 @@ gemini_failover() {
       gemini_state_set cur_gemini_ok "1"
       gemini_state_set fail_count "0"
       printf '%s\n' "$now" > $DATA/last_failover
+      printf '%s\n' "$now" > $DATA/last_failover_switch
       return 0
     fi
   done < $DIR/gem_cand.txt
@@ -789,8 +800,9 @@ gemini_failover() {
 # 当前节点「网络正常但 Gemini 失效」自检。连续 N 次确认后才切换，避免误判抖动。
 # mode:
 #   auto  = cron 调用；需开关开启、按间隔跳过、测速中不跑、连续失败后自动切换
-#   force = 页面「检测 Gemini」；绕过开关与间隔，只做一次真实探测并返回结构化结果。
-#           开关关闭时仅诊断（绝不切换），开启时仍走连续失败/冷却/切换闭环。
+#   force = 页面「检测 Gemini」；绕过开关与间隔，只做一次真实探测并返回结构化结果，
+#           **永远只诊断、绝不切换**。切换只由后台 auto 自检触发，避免用户点
+#           「检测」就意外换节点（开关默认开启后尤其重要）。
 gemini_check() {
   local mode="${1:-auto}"
   local enabled=0; [ "$(get gemini_backup_enable)" = "1" ] && enabled=1
@@ -803,9 +815,12 @@ gemini_check() {
   local iv=$(get gemini_check_interval); [ -z "$iv" ] && iv=5
   local need=$(get gemini_fail_count); [ -z "$need" ] && need=2
   local now=$(date +%s)
-  local last=$(gemini_state_get last_check); [ -z "$last" ] && last=0
+  # auto 用独立时间戳：页面 force 检测不能把后台自检推迟一个完整间隔，
+  # 否则手动点一次「检测 Gemini」会造成 5 分钟自动保护空窗。
+  local last=$(gemini_state_get last_auto_check); [ -z "$last" ] && last=0
   if [ "$mode" = "auto" ] && [ $((now - last)) -lt $((iv * 60)) ]; then return 0; fi
   gemini_state_set last_check "$now"
+  [ "$mode" = "auto" ] && gemini_state_set last_auto_check "$now"
   local group=$(get group); [ -z "$group" ] && group='宝贝云'
   local cur=$(api_get "/proxies/$group" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
   local netok=0 gok=0 gdelay=0 switched=0 fc=0 d=""
@@ -836,7 +851,8 @@ gemini_check() {
     fc=$((fc + 1))
     gemini_state_set fail_count "$fc"
     log gemini "当前节点 Gemini 失效 ($fc/$need): $cur (通用延迟 ${d}ms 正常, mode=$mode)"
-    if [ "$enabled" = "1" ] && [ "$fc" -ge "$need" ]; then
+    # 只有后台 auto 自检才允许切换；页面 force 永远只返回诊断结果
+    if [ "$mode" = "auto" ] && [ "$enabled" = "1" ] && [ "$fc" -ge "$need" ]; then
       gemini_failover && switched=1
     fi
   fi
@@ -965,6 +981,7 @@ failover_check() { # 断线自动故障转移
     # 统一走 switchnode()，让 dry-run 与切换逻辑只有一处
     if [ -z "$KP_DRY_RUN" ]; then switchnode "$best" >/dev/null 2>&1; else log failover "DRY_RUN: 将切换到 $best"; fi
     date +%s > $DATA/last_failover
+    date +%s > $DATA/last_failover_switch
     # 切到新节点后必须清掉旧节点的 Gemini 连续失败计数，
     # 否则下一次 Gemini 自检会拿旧计数立刻再触发一次切换。
     gemini_state_set fail_count "0"
@@ -1030,7 +1047,8 @@ web_status() {
   echo -n '"gemini_check_interval":"'; echo -n "$(get gemini_check_interval)"; echo '",'
   echo -n '"gemini_fail_count":"'; echo -n "$(get gemini_fail_count)"; echo '",'
   echo -n '"gemini_switch_cooldown":"'; echo -n "$(get gemini_switch_cooldown)"; echo '",'
-  echo -n '"oc_api_ok":'; if api_get /version 2>/dev/null | grep -q version; then echo 'true,'; else echo 'false,'; fi
+  # 独立短超时：api_get 是 10s，代理挂掉时页面轮询会被拖住 10 秒
+  echo -n '"oc_api_ok":'; if curl -s -m 3 -H "Authorization: Bearer $SECRET" "$API/version" 2>/dev/null | grep -q version; then echo 'true,'; else echo 'false,'; fi
   echo -n '"cur_gemini_ok":"'; echo -n "$(gemini_state_get cur_gemini_ok)"; echo '",'
   echo -n '"gemini_fail_counter":"'; echo -n "$(gemini_state_get fail_count)"; echo '",'
   echo -n '"last_gemini_check":"'; echo -n "$(gemini_state_get last_check)"; echo '",'

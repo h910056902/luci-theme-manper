@@ -71,8 +71,8 @@ local DEFAULTS = {
 	backup_interval    = "90",
 	backup_probe       = "8",
 	backup_keep        = "3",
-	-- Gemini 感知备用节点：默认关闭，需用户在页面上显式开启
-	gemini_backup_enable    = "0",
+	-- Gemini 感知备用节点：默认开启（用户要求）；页面仍可手动关闭
+	gemini_backup_enable    = "1",
 	gemini_backup_timeout   = "6000",
 	gemini_check_interval   = "5",
 	gemini_fail_count       = "2",
