@@ -297,6 +297,7 @@
 			local key = kind .. "|" .. name
 			if seen[key] then return end
 			seen[key] = true
+			local has_init = fs.access("/etc/init.d/" .. name) and true or false
 			out[#out + 1] = {
 				name = name, kind = kind,
 				version = version or "",
@@ -305,6 +306,7 @@
 				procs = cnt or 0,
 				proc_names = names or {},
 				system = is_sys and true or false,
+				has_init = has_init,   -- 只有带 init 脚本的才能停止/启动/重启
 			}
 		end
 
@@ -437,6 +439,58 @@
 			files = total_files,
 			freed_text = fmt_kb(total_kb),   -- fmt_kb 的入参单位就是 KB
 			detail = detail,
+		})
+		return
+	end
+
+	-- 服务级操作：停止 / 启动 / 重启 / 清运行时缓存
+	-- 只允许 /etc/init.d 下真实存在的脚本名，且必须 confirm=1。
+	if action == "svc" then
+		local name = http.formvalue("name") or ""
+		local op = http.formvalue("op") or ""
+		local function ret(t)
+			http.prepare_content("application/json")
+			http.write_json(t)
+		end
+		if http.formvalue("confirm") ~= "1" then ret({ ok = false, msg = "缺少确认参数" }) return end
+		if not name:match("^[%w%._%-]+$") then ret({ ok = false, msg = "插件名不合法" }) return end
+		local init = "/etc/init.d/" .. name
+		local has_init = fs.access(init) and true or false
+		if op ~= "stop" and op ~= "start" and op ~= "restart" and op ~= "clean" then
+			ret({ ok = false, msg = "不支持的操作" }) return
+		end
+		if op ~= "clean" and not has_init then
+			ret({ ok = false, msg = "该插件没有 init 脚本，无法" .. op }) return
+		end
+		-- 服务操作必须异步：openclash restart 常需 10-30s，同步执行会拖爆 uhttpd
+		-- 的 CGI 超时并返回 500。这里丢到后台并把输出落到 /tmp，接口立即返回。
+		if op ~= "clean" then
+			os.execute("(" .. init .. " " .. op .. " >/tmp/pm_svc_" .. name .. ".log 2>&1 &)")
+		end
+		local cleaned = 0
+		if op == "clean" or op == "stop" then
+			-- 运行时缓存：/tmp 下同名项，但绝不动 pid/sock（否则会破坏仍在运行的服务）
+			local c = io.popen("find /tmp -maxdepth 2 -name '" .. name ..
+				"*' ! -name '*.pid' ! -name '*.sock' 2>/dev/null | wc -l")
+			if c then cleaned = tonumber(c:read("*l") or "0") or 0; c:close() end
+			os.execute("find /tmp -maxdepth 2 -name '" .. name ..
+				"*' ! -name '*.pid' ! -name '*.sock' -exec rm -rf {} + 2>/dev/null")
+			os.execute("find /var/log -maxdepth 2 -type f \\( -name '" .. name ..
+				"*.log' -o -name '" .. name .. ".*' -o -path '/var/log/" .. name ..
+				"' \\) -exec rm -f {} + 2>/dev/null")
+		end
+		-- 只有 clean 能立刻拿到准确状态；stop/start/restart 是后台任务，
+		-- 立刻查 running 会得到「重启中」的中间态，交给前端延迟刷新。
+		local run = nil
+		if op == "clean" then
+			local _, r = plugin_state(name)
+			run = r
+		end
+		ret({
+			ok = true, op = op, name = name,
+			running = run,
+			pending = (op ~= "clean"),
+			cleaned = cleaned,
 		})
 		return
 	end
@@ -726,6 +780,15 @@
 					(p.procs ? '<span class="pm-plug-p">' + p.procs + ' 个进程</span>' : '<span class="pm-plug-p dim">无关联进程</span>') +
 				'</div>' +
 				(p.proc_names && p.proc_names.length ? '<div class="pm-plug-cmd">' + esc(p.proc_names.join(' · ')) + '</div>' : '') +
+				'<div class="pm-plug-ops">' +
+					(p.has_init
+						? (p.running
+							? '<button type="button" class="pm-op" data-name="' + esc(p.name) + '" data-op="restart"><i class="fas fa-rotate" aria-hidden="true"></i>重启</button>' +
+							  '<button type="button" class="pm-op danger" data-name="' + esc(p.name) + '" data-op="stop"><i class="fas fa-stop" aria-hidden="true"></i>停止</button>'
+							: '<button type="button" class="pm-op" data-name="' + esc(p.name) + '" data-op="start"><i class="fas fa-play" aria-hidden="true"></i>启动</button>')
+						: '') +
+					'<button type="button" class="pm-op" data-name="' + esc(p.name) + '" data-op="clean"><i class="fas fa-broom" aria-hidden="true"></i>清缓存</button>' +
+				'</div>' +
 				'</div>');
 		}
 		box.innerHTML = html.join('');
@@ -867,6 +930,59 @@
 		state.hideSys = this.checked;
 		renderPlugins();
 	});
+	/* 统一结果条：清理、停止/启动/重启共用一个提示位 */
+	function showResult(ok, title, detail) {
+		var box = $('pmCleanResult');
+		if (!box) return;
+		box.hidden = false;
+		box.className = 'pm-clean ' + (ok ? 'ok' : 'bad');
+		$('pmCleanTitle').textContent = title;
+		$('pmCleanDetail').textContent = detail || '';
+		setTimeout(function () { if (box && !box.hidden) box.hidden = true; }, 15000);
+	}
+
+	/* 插件操作：停止 / 启动 / 重启 / 清运行时缓存 */
+	$('pmPlugins').addEventListener('click', function (ev) {
+		var t = ev.target;
+		while (t && t !== this && !(t.classList && t.classList.contains('pm-op'))) t = t.parentNode;
+		if (!t || t === this) return;
+		ev.preventDefault();
+		var name = t.getAttribute('data-name');
+		var op = t.getAttribute('data-op');
+		var label = { stop: '停止', start: '启动', restart: '重启', clean: '清缓存' }[op] || op;
+		var tip = op === 'stop'
+			? '停止 «' + name + '» 会立即中断它提供的功能。\n例如 openclash 停止后代理会断开、设备可能无法访问外网。\n\n确定停止？'
+			: (op === 'restart'
+				? '重启 «' + name + '»？服务会短暂中断（通常 2-10 秒）。'
+				: (op === 'clean'
+					? '清理 «' + name + '» 的 /tmp 运行时缓存与日志？\n不动配置、不停服务、不删除 pid/socket。'
+					: '启动 «' + name + '»？'));
+		if (!confirm(tip)) return;
+		t.disabled = true;
+		var old = t.innerHTML;
+		t.innerHTML = '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i>';
+		fetch(API('svc') + '&confirm=1&name=' + encodeURIComponent(name) + '&op=' + op, {
+			credentials: 'same-origin', cache: 'no-store'
+		})
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (d && d.ok) {
+					showResult(true, name + ' · ' + label + (d.pending ? '已提交' : '完成'),
+						d.pending
+							? '后台执行中，稍后自动刷新状态（openclash 等重启通常 10-30 秒）'
+							: ((d.cleaned ? '清理运行项 ' + d.cleaned + ' · ' : '') +
+								(d.running ? '当前运行中' : '当前已停止')));
+					/* 后台任务：2.5s / 8s 各刷一次，重启完成后状态能自动转正 */
+					setTimeout(function () { loadPlugins(); }, 2500);
+					if (d.pending) setTimeout(function () { loadPlugins(); }, 8000);
+				} else {
+					showResult(false, name + ' · ' + label + '失败', (d && d.msg) || '未知错误');
+				}
+			})
+			.catch(function () { showResult(false, name + ' · ' + label + '失败', '请求未送达'); })
+			.then(function () { t.disabled = false; t.innerHTML = old; });
+	});
+
 	$('pmPlugins').addEventListener('change', function (ev) {
 		var t = ev.target;
 		if (!t || t.type !== 'checkbox') return;

@@ -517,6 +517,23 @@ body :where(.progress) > :where(.progress-bar){
   font-variant-numeric:tabular-nums;
 }
 .pm-hist-empty{color:#b6c2d2}
+/* 插件卡片内的操作按钮：重启/停止/启动/清缓存 */
+.pm-plug-ops{
+  display:flex;gap:6px;margin-top:9px;padding-top:9px;
+  border-top:1px solid rgba(30,50,90,.05);
+}
+.pm-op{
+  flex:1 1 auto;height:26px;padding:0 8px;border-radius:7px;
+  border:1px solid rgba(30,50,90,.12);background:#fff;
+  font:600 10px/1 var(--font,sans-serif);color:#5b6b8c;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  transition:border-color .16s ease,color .16s ease,background .16s ease;
+}
+.pm-op i{font-size:9px}
+.pm-op:hover:not(:disabled){border-color:rgba(0,96,255,.32);color:#0052d9;background:#f8fbff}
+.pm-op:disabled{opacity:.5;cursor:not-allowed}
+.pm-op.danger{color:#c73b3d;border-color:rgba(245,72,74,.22)}
+.pm-op.danger:hover:not(:disabled){color:#b32628;border-color:rgba(245,72,74,.45);background:rgba(245,72,74,.05)}
 .pm-plug{
   border-radius:10px;background:#fff;
   box-shadow:0 0 0 1px rgba(30,50,90,.06);
