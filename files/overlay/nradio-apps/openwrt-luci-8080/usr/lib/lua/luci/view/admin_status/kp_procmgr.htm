@@ -284,7 +284,15 @@
 
 		local out, seen = {}, {}
 		local KORDER = { app = 1, service = 2, ubus = 3 }
-		local function add(name, kind, version, enabled, running, cnt, names)
+		-- 系统级服务/对象：默认可以在页面上隐藏，避免干扰用户自己装的插件
+		local SYS_SVC = {
+			cron = true, network = true, dnsmasq = true, firewall = true, log = true,
+			rpcd = true, ubus = true, ubusd = true, procd = true, sysntpd = true,
+			odhcpd = true, uhttpd = true, led = true, system = true, boot = true,
+			fstab = true, gpio_switch = true, linkease_apps = true, nradio = true,
+			dropbear = true, telnet = true, done = true, sysfixtime = true,
+		}
+		local function add(name, kind, version, enabled, running, cnt, names, is_sys)
 			if not name or name == "" then return end
 			local key = kind .. "|" .. name
 			if seen[key] then return end
@@ -296,6 +304,7 @@
 				running = running and true or false,
 				procs = cnt or 0,
 				proc_names = names or {},
+				system = is_sys and true or false,
 			}
 		end
 
@@ -309,7 +318,9 @@
 				-- luci-app-* 大多是页面插件：没有 init 脚本时，只有真正找到常驻进程
 				-- 才算「运行中」，否则只是「已安装」，避免整屏误报运行中。
 				if not has_init then run = (cnt > 0) end
-				add(pname, "app", ver, has_init and en or (cnt > 0), run, cnt, names)
+				-- app-meta-* 是仓库元数据包，归为系统项
+				add(pname, "app", ver, has_init and en or (cnt > 0), run, cnt, names,
+					pname:match("^app%-meta%-") and true or false)
 			end
 		end
 
@@ -317,12 +328,12 @@
 		for _, sname in ipairs(initd_services()) do
 			local cnt, names = plugin_procs(sname, procs)
 			local run = (cnt > 0) or pid_file_alive(sname)
-			add(sname, "service", apk[sname] or "", run, run, cnt, names)
+			add(sname, "service", apk[sname] or "", run, run, cnt, names, SYS_SVC[sname])
 		end
 
-		-- ③ ubus 已注册对象：只要能列出就是在跑
+		-- ③ ubus 已注册对象：只要能列出就是在跑（都是系统 IPC，归为系统项）
 		for _, uname in ipairs(ubus_objects()) do
-			add(uname, "ubus", "", true, true, 0, {})
+			add(uname, "ubus", "", true, true, 0, {}, true)
 		end
 
 		table.sort(out, function(a, b)
@@ -357,18 +368,75 @@
 			http.write_json({ ok = false, msg = "缺少确认参数" })
 			return
 		end
+		-- 分级清理（借鉴 ramcleaner / 内核 drop_caches 语义）：
+		--   1 = 仅 page cache；2 = 仅 dentries/inodes；3 = 全部（默认）
+		local lv = tonumber(http.formvalue("level") or "3") or 3
+		if lv ~= 1 and lv ~= 2 and lv ~= 3 then lv = 3 end
 		local b = meminfo()
 		os.execute("sync")
-		os.execute("echo 3 > /proc/sys/vm/drop_caches 2>/dev/null")
+		os.execute("echo " .. lv .. " > /proc/sys/vm/drop_caches 2>/dev/null")
 		local a = meminfo()
 		local freed = (a.MemAvailable or 0) - (b.MemAvailable or 0)
+		local pct = 0
+		if (b.MemTotal or 0) > 0 then
+			pct = math.floor((b.MemAvailable or 0) / b.MemTotal * 100 + 0.5)
+		end
 		http.prepare_content("application/json")
 		http.write_json({
 			ok = true,
-			before = { avail = b.MemAvailable or 0, cached = b.Cached or 0, free = b.MemFree or 0 },
+			level = lv,
+			avail_pct = pct,   -- 清理前可用率：社区共识「高可用率时不必清理」
+			before = { avail = b.MemAvailable or 0, cached = b.Cached or 0, free = b.MemFree or 0, total = b.MemTotal or 0 },
 			after  = { avail = a.MemAvailable or 0, cached = a.Cached or 0, free = a.MemFree or 0 },
 			freed_kb = freed,
 			freed_text = (freed > 0 and fmt_kb(freed) or "0"),
+		})
+		return
+	end
+
+	-- 清理选中插件的日志（只动 /var/log 下匹配 <name>*.log 的文件，不碰配置与可执行文件）
+	if action == "clean" then
+		if http.formvalue("confirm") ~= "1" then
+			http.prepare_content("application/json")
+			http.write_json({ ok = false, msg = "缺少确认参数" })
+			return
+		end
+		local names = http.formvalue("names") or ""
+		local total_files, total_kb = 0, 0
+		local detail = {}
+		for name in names:gmatch("[^,]+") do
+			name = name:gsub("^%s+", ""):gsub("%s+$", "")
+			-- 只允许安全字符，杜绝命令注入
+			if name ~= "" and name:match("^[%w%._%-]+$") then
+				-- 兼容三种真实命名：<name>*.log、<name>.*、/var/log/<name>（如 cron 无后缀）
+				local p = io.popen("find /var/log -maxdepth 2 -type f \\( -name '" ..
+					name .. "*.log' -o -name '" .. name .. "*.log.*' -o -path '/var/log/" ..
+					name .. "' -o -name '" .. name .. ".*' \\) 2>/dev/null")
+				local files = {}
+				if p then
+					for line in p:lines() do files[#files + 1] = line end
+					p:close()
+				end
+				if #files > 0 then
+					local quoted = {}
+					for i, f in ipairs(files) do quoted[i] = "'" .. f .. "'" end
+					local joined = table.concat(quoted, " ")
+					local kb = 0
+					local dp = io.popen("du -ck " .. joined .. " 2>/dev/null | tail -1 | cut -f1")
+					if dp then kb = tonumber(dp:read("*l") or "0") or 0; dp:close() end
+					os.execute("rm -f " .. joined .. " 2>/dev/null")
+					total_files = total_files + #files
+					total_kb = total_kb + kb
+					detail[#detail + 1] = { name = name, files = #files, kb = kb }
+				end
+			end
+		end
+		http.prepare_content("application/json")
+		http.write_json({
+			ok = true,
+			files = total_files,
+			freed_text = fmt_kb(total_kb),   -- fmt_kb 的入参单位就是 KB
+			detail = detail,
 		})
 		return
 	end
@@ -384,6 +452,10 @@
 	<div class="ios-page-actions">
 		<button class="ios-btn" type="button" id="pmPause"><i class="fas fa-pause"></i> 暂停刷新</button>
 		<button class="ios-btn" type="button" id="pmRefresh"><i class="fas fa-rotate"></i> 刷新</button>
+		<select class="pm-lvsel" id="pmCleanLevel" title="清理级别">
+			<option value="3">标准 · 全部缓存</option>
+			<option value="1">轻量 · 仅页缓存</option>
+		</select>
 		<button class="ios-btn primary" type="button" id="pmDrop"><i class="fas fa-broom"></i> 清理内存</button>
 	</div>
 </div>
@@ -421,6 +493,8 @@
 	</div>
 	<button type="button" class="pm-clean-x" id="pmCleanClose" aria-label="关闭">×</button>
 </div>
+<!-- 清理历史（localStorage，最近 5 次） -->
+<div class="pm-hist" id="pmHist"><span class="pm-hist-empty">暂无清理记录</span></div>
 
 <!-- 工具栏 -->
 <div class="ios-card pm-toolbar">
@@ -487,6 +561,15 @@
 		<button type="button" class="pm-chip" data-pf="run">运行中</button>
 		<button type="button" class="pm-chip" data-pf="stop">已停止</button>
 	</div>
+	<div class="pm-plugtools">
+		<label class="pm-only"><input type="checkbox" id="pmHideSys" checked> 隐藏系统项</label>
+		<span class="pm-selinfo" id="pmSelInfo">已选 0 项</span>
+		<button type="button" class="pm-btn-sel" id="pmSelAll">全选</button>
+		<button type="button" class="pm-btn-sel" id="pmSelClear">取消选择</button>
+		<button type="button" class="pm-cleanbtn" id="pmCleanSel" disabled>
+			<i class="fas fa-broom" aria-hidden="true"></i> 清理选中
+		</button>
+	</div>
 	<div class="pm-plugins" id="pmPlugins">
 		<div class="pm-empty">正在读取插件…</div>
 	</div>
@@ -500,7 +583,7 @@
 	var state = {
 		procs: [], plugins: [], mem: null,
 		q: '', filter: 'all', sort: 'cpu', desc: true, onlyBusy: false,
-		plugFilter: 'all',
+		plugFilter: 'all', hideSys: true, selected: {},
 		timer: null, paused: false, loading: false
 	};
 
@@ -592,21 +675,36 @@
 	}
 
 	var PLUG_KIND = { app: '应用', service: '服务', ubus: 'ubus' };
-	function renderPlugins() {
-		var box = $('pmPlugins'), all = state.plugins || [];
-		var run = 0;
-		for (var k = 0; k < all.length; k++) if (all[k].running) run++;
-		$('pmPlugBadge').textContent = run + ' / ' + all.length + ' 运行中';
-
+	function visiblePlugins() {
 		var f = state.plugFilter || 'all';
-		var list = all.filter(function (p) {
+		return (state.plugins || []).filter(function (p) {
+			if (state.hideSys && p.system) return false;
 			if (f === 'run') return !!p.running;
 			if (f === 'stop') return !p.running;
 			return true;
 		});
+	}
+	function selCount() { return Object.keys(state.selected || {}).length; }
+	function syncSelBar() {
+		var n = selCount();
+		$('pmSelInfo').textContent = '已选 ' + n + ' 项';
+		$('pmCleanSel').disabled = n === 0;
+	}
+	function renderPlugins() {
+		var box = $('pmPlugins'), all = state.plugins || [];
+		var run = 0, sysN = 0;
+		for (var k = 0; k < all.length; k++) {
+			if (all[k].running) run++;
+			if (all[k].system) sysN++;
+		}
+		$('pmPlugBadge').textContent = run + ' / ' + all.length + ' 运行中' +
+			(state.hideSys && sysN ? ' · 已隐藏 ' + sysN + ' 项系统项' : '');
+
+		var list = visiblePlugins();
 		if (!list.length) {
 			box.innerHTML = '<div class="pm-empty">' +
 				(all.length ? '当前筛选下没有插件' : '未读取到插件与服务（apk 数据库为空或读取失败）') + '</div>';
+			syncSelBar();
 			return;
 		}
 		var html = [];
@@ -615,8 +713,10 @@
 			var stCls = p.running ? 'ok' : (p.enabled ? 'warn' : '');
 			var stTxt = p.running ? '运行中' : (p.enabled ? '已启用 · 未运行' : '已停止');
 			var kind = p.kind || 'app';
-			html.push('<div class="pm-plug ' + stCls + '">' +
+			var checked = state.selected[p.name] ? ' checked' : '';
+			html.push('<div class="pm-plug ' + stCls + (checked ? ' sel' : '') + '">' +
 				'<div class="pm-plug-h">' +
+					'<label class="pm-plug-ck"><input type="checkbox" data-name="' + esc(p.name) + '"' + checked + '></label>' +
 					'<span class="pm-plug-kind ' + kind + '">' + (PLUG_KIND[kind] || kind) + '</span>' +
 					'<b>' + esc(p.name) + '</b>' +
 					(p.version ? '<span class="pm-plug-ver">' + esc(p.version) + '</span>' : '') +
@@ -629,6 +729,7 @@
 				'</div>');
 		}
 		box.innerHTML = html.join('');
+		syncSelBar();
 	}
 
 	function loadProcs() {
@@ -661,11 +762,40 @@
 			});
 	}
 
+	/* 清理历史：localStorage 保留最近 5 次，便于判断「是不是越清越频繁」
+	   借鉴社区共识——频繁 drop_caches 会反复丢掉热缓存，得不偿失。 */
+	function pushCleanHist(x) {
+		try {
+			var h = JSON.parse(localStorage.getItem('pmCleanHist') || '[]');
+			if (!Array.isArray(h)) h = [];
+			h.unshift({ t: Date.now(), lv: x.lv, freed: x.freed, pct: x.pct });
+			localStorage.setItem('pmCleanHist', JSON.stringify(h.slice(0, 5)));
+			renderCleanHist();
+		} catch (e) {}
+	}
+	function renderCleanHist() {
+		var box = $('pmHist');
+		if (!box) return;
+		var h = [];
+		try { h = JSON.parse(localStorage.getItem('pmCleanHist') || '[]'); } catch (e) {}
+		if (!Array.isArray(h) || !h.length) {
+			box.innerHTML = '<span class="pm-hist-empty">暂无清理记录</span>';
+			return;
+		}
+		box.innerHTML = '<span class="pm-hist-lb">最近清理</span>' + h.map(function (x) {
+			var d = new Date(x.t);
+			var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+			return '<span class="pm-hist-i">' + hm + ' ' +
+				(x.lv === 1 ? '轻量' : '标准') + ' ' + (x.freed || '0') + '</span>';
+		}).join('');
+	}
+
 	function cleanMem() {
 		var btn = $('pmDrop');
+		var lv = ($('pmCleanLevel') || {}).value || '3';
 		btn.disabled = true;
 		btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 清理中…';
-		fetch(API('drop') + '&confirm=1', {
+		fetch(API('drop') + '&confirm=1&level=' + lv, {
 			credentials: 'same-origin',
 			cache: 'no-store'
 		})
@@ -675,11 +805,16 @@
 				box.hidden = false;
 				if (d && d.ok) {
 					var freed = Number(d.freed_kb) || 0;
+					var lvTxt = d.level === 1 ? '轻量清理' : '标准清理';
 					/* 刚清过或缓存本来就低时 freed 可能为负，此时说「已释放 0」会让人困惑 */
-					$('pmCleanTitle').textContent = freed > 0 ? ('已释放 ' + (d.freed_text || '0')) : '缓存已清理';
+					$('pmCleanTitle').textContent = freed > 0
+						? (lvTxt + ' · 已释放 ' + (d.freed_text || '0'))
+						: (lvTxt + ' · 缓存已清理');
 					$('pmCleanDetail').textContent = '可用 ' + fmtKB(d.before.avail) + ' → ' + fmtKB(d.after.avail) +
-						' · 缓存 ' + fmtKB(d.before.cached) + ' → ' + fmtKB(d.after.cached);
+						' · 缓存 ' + fmtKB(d.before.cached) + ' → ' + fmtKB(d.after.cached) +
+						(d.avail_pct >= 70 ? ' · 清理前可用已 ' + d.avail_pct + '%，通常无需清理' : '');
 					box.className = 'pm-clean ok';
+					pushCleanHist({ lv: d.level, freed: d.freed_text, pct: d.avail_pct });
 					loadProcs();
 				} else {
 					$('pmCleanTitle').textContent = '清理失败';
@@ -727,6 +862,90 @@
 		state.plugFilter = t.getAttribute('data-pf');
 		renderPlugins();
 	});
+	/* ---- 插件：隐藏系统项 + 勾选批量清理 ---- */
+	$('pmHideSys').addEventListener('change', function () {
+		state.hideSys = this.checked;
+		renderPlugins();
+	});
+	$('pmPlugins').addEventListener('change', function (ev) {
+		var t = ev.target;
+		if (!t || t.type !== 'checkbox') return;
+		var nm = t.getAttribute('data-name');
+		if (!nm) return;
+		if (t.checked) state.selected[nm] = true; else delete state.selected[nm];
+		var card = t.parentNode;
+		while (card && !(card.classList && card.classList.contains('pm-plug'))) card = card.parentNode;
+		if (card) card.classList.toggle('sel', t.checked);
+		syncSelBar();
+	});
+	$('pmSelAll').addEventListener('click', function () {
+		visiblePlugins().forEach(function (p) { state.selected[p.name] = true; });
+		renderPlugins();
+	});
+	$('pmSelClear').addEventListener('click', function () {
+		state.selected = {};
+		renderPlugins();
+	});
+	$('pmCleanSel').addEventListener('click', function () {
+		var names = Object.keys(state.selected);
+		if (!names.length) return;
+		if (!confirm('清理选中 ' + names.length + ' 个插件的日志？\n\n只删除 /var/log 下匹配的日志文件，不改配置、不停服务。')) return;
+		/* 日志名常与插件名不同（openclash 的日志叫 ocspeed.log），
+		   把关联进程名一并作为匹配关键词传过去。 */
+		var keys = [];
+		names.forEach(function (n) {
+			if (keys.indexOf(n) < 0) keys.push(n);
+			var p = (state.plugins || []).filter(function (x) { return x.name === n; })[0];
+			(p && p.proc_names ? p.proc_names : []).forEach(function (s) {
+				var nm = String(s).replace(/\(.*$/, '').trim();
+				if (nm && keys.indexOf(nm) < 0) keys.push(nm);
+			});
+		});
+		var btn = this;
+		btn.disabled = true;
+		btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 清理中…';
+		fetch(API('clean') + '&confirm=1&names=' + encodeURIComponent(keys.join(',')), {
+			credentials: 'same-origin', cache: 'no-store'
+		})
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				var box = $('pmCleanResult');
+				box.hidden = false;
+				if (d && d.ok) {
+					box.className = 'pm-clean ok';
+					$('pmCleanTitle').textContent = d.files > 0
+						? ('已清理 ' + d.files + ' 个日志 · ' + d.freed_text)
+						: '没有可清理的日志';
+					$('pmCleanDetail').textContent = names.length + ' 个插件已处理' +
+						(d.detail && d.detail.length
+							? '：' + d.detail.map(function (x) { return x.name + '(' + x.files + ')'; }).join('、')
+							: '');
+					state.selected = {};
+					renderPlugins();
+				} else {
+					box.className = 'pm-clean bad';
+					$('pmCleanTitle').textContent = '清理失败';
+					$('pmCleanDetail').textContent = (d && d.msg) || '未知错误';
+				}
+			})
+			.catch(function () {
+				var box = $('pmCleanResult');
+				box.hidden = false;
+				box.className = 'pm-clean bad';
+				$('pmCleanTitle').textContent = '清理失败';
+				$('pmCleanDetail').textContent = '请求未送达';
+			})
+			.then(function () {
+				btn.disabled = false;
+				btn.innerHTML = '<i class="fas fa-broom"></i> 清理选中';
+				syncSelBar();
+				setTimeout(function () {
+					var b = $('pmCleanResult');
+					if (b && !b.hidden) b.hidden = true;
+				}, 15000);
+			});
+	});
+
 	$('pmSort').addEventListener('change', function () { state.sort = this.value; renderTable(); });
 	$('pmOrder').addEventListener('click', function () {
 		state.desc = !state.desc;
@@ -754,6 +973,7 @@
 
 	loadProcs();
 	loadPlugins();
+	renderCleanHist();
 	startTimer();
 })();
 </script>

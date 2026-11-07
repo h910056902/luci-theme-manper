@@ -61,7 +61,7 @@
 		   全局脏条会监听所有 input/change，在 iStore 里搜索、选标签、点复选框都会
 		   误判成「表单变脏」，且其「保存并应用」可能提交到错误表单，故跳过。
 		   SPA 壳页里 iframe 指向 iStore 时同样跳过，避免壳页残留脏条。 */
-		if (/\/system\/argon-config|\/services\/openclash\/ocspeed|\/admin\/store/.test(location.pathname)) return;
+		if (/\/system\/argon-config|\/services\/openclash\/ocspeed|\/admin\/store|\/status\/procmgr/.test(location.pathname)) return;
 		var spaf = document.getElementById('iosFrame');
 		if (spaf && /\/admin\/store/.test(spaf.getAttribute('src') || '')) return;
 		var form = $('#maincontent');

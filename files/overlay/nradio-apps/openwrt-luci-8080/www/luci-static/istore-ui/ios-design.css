@@ -471,6 +471,52 @@ body :where(.progress) > :where(.progress-bar){
 .pm-plug-kind.app{background:rgba(0,96,255,.09);color:#0052d9}
 .pm-plug-kind.service{background:rgba(0,181,120,.1);color:#0a8f61}
 .pm-plug-kind.ubus{background:rgba(255,143,31,.12);color:#b45309}
+/* 隐藏系统项 + 勾选批量清理 */
+.pm-plugtools{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin-bottom:10px;padding:8px 10px;border-radius:10px;
+  background:rgba(248,251,255,.85);
+  box-shadow:0 0 0 1px rgba(30,50,90,.05);
+}
+.pm-selinfo{font-size:10.5px;color:#5b6b8c;margin-right:auto;font-variant-numeric:tabular-nums}
+.pm-btn-sel{
+  height:26px;padding:0 10px;border-radius:8px;
+  border:1px solid rgba(30,50,90,.12);background:#fff;
+  font:600 10.5px/1 var(--font,sans-serif);color:#5b6b8c;cursor:pointer;
+  transition:border-color .16s ease,color .16s ease;
+}
+.pm-btn-sel:hover{border-color:rgba(0,96,255,.3);color:#0052d9}
+.pm-cleanbtn{
+  height:28px;padding:0 12px;border-radius:8px;border:0;
+  background:linear-gradient(135deg,#009aff,#0060ff);color:#fff;
+  font:700 10.5px/1 var(--font,sans-serif);cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,96,255,.22);
+  transition:filter .16s ease,opacity .16s ease;
+}
+.pm-cleanbtn:hover:not(:disabled){filter:brightness(1.06)}
+.pm-cleanbtn:disabled{opacity:.42;cursor:not-allowed;box-shadow:none}
+.pm-plug-ck{flex:0 0 auto;display:flex;align-items:center;cursor:pointer}
+.pm-plug-ck input{width:14px;height:14px;accent-color:#0060ff;cursor:pointer}
+.pm-plug.sel{
+  background:rgba(0,96,255,.02);
+  box-shadow:0 0 0 1px rgba(0,96,255,.32),0 2px 10px rgba(0,96,255,.07);
+}
+/* 清理级别选择与清理历史 */
+.pm-lvsel{
+  height:32px;padding:0 8px;border-radius:9px;
+  border:1px solid rgba(30,50,90,.14);background:#fff;
+  font:600 11px/1 var(--font,sans-serif);color:#1e2b48;cursor:pointer;
+}
+.pm-hist{
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+  margin-bottom:12px;font-size:10.5px;color:#5b6b8c;
+}
+.pm-hist-lb{color:#94a3b8}
+.pm-hist-i{
+  padding:2px 8px;border-radius:999px;background:#f1f5fb;
+  font-variant-numeric:tabular-nums;
+}
+.pm-hist-empty{color:#b6c2d2}
 .pm-plug{
   border-radius:10px;background:#fff;
   box-shadow:0 0 0 1px rgba(30,50,90,.06);
