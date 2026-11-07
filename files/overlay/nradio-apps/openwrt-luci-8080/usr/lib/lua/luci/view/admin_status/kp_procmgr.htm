@@ -1,0 +1,760 @@
+<%#
+ istest-ui · 系统进程管理（自建）
+ 数据来源：
+   · /proc/[pid]/stat + /proc/stat 两次采样 → CPU%
+   · /proc/[pid]/status (VmRSS / Uid) → 内存与用户
+   · /lib/apk/db/installed → 已装插件与版本
+   · /etc/init.d/* + /proc → 插件运行状态与关联进程
+   · /proc/meminfo + /proc/sys/vm/drop_caches → 内存信息与清理
+ 接口（?action=）：
+   procs   进程快照（含 CPU% / RSS / 状态 / 用户 / cmdline）
+   plugins 已装插件、版本、运行状态、关联进程数
+   mem     内存详情
+   drop    清理缓存（POST，返回释放量）
+-%>
+<%
+	local http = require "luci.http"
+	local util = require "luci.util"
+	local fs   = require "nixio.fs"
+	local nixio = require "nixio"
+
+	-- POST 时 formvalue 可能只读 body，URL 上的 ?action= 会丢；这里补一层 query 解析。
+	-- 注意 QUERY_STRING 不含前导 "?"，模式要同时覆盖行首与 & 分隔两种情况。
+	local action = http.formvalue("action")
+	if not action or action == "" then
+		local qs = http.getenv("QUERY_STRING") or ""
+		action = qs:match("^action=([%w_]+)") or qs:match("[?&]action=([%w_]+)") or ""
+	end
+
+	local function read_file(p)
+		local f = io.open(p, "r")
+		if not f then return "" end
+		local d = f:read("*a")
+		f:close()
+		return d or ""
+	end
+
+	local function read_total_jiffies()
+		local s = read_file("/proc/stat"):match("^cpu%s+([^\n]+)") or ""
+		local t = 0
+		for v in s:gmatch("%d+") do t = t + tonumber(v) end
+		return t
+	end
+
+	-- 单个进程的原始数据：state / ppid / utime / stime / rss / comm
+	local function read_stat(pid)
+		local st = read_file("/proc/" .. pid .. "/stat")
+		if st == "" then return nil end
+		local comm = st:match("^%d+ %((.-)%)") or ""
+		local rest = st:match("^%d+ %(.-%)%s+(.*)$") or ""
+		local f = {}
+		for v in rest:gmatch("%S+") do f[#f + 1] = v end
+		if #f < 22 then return nil end
+		return {
+			comm = comm,
+			state = f[1],
+			ppid = tonumber(f[2]) or 0,
+			utime = tonumber(f[12]) or 0,
+			stime = tonumber(f[13]) or 0,
+			rss_pages = tonumber(f[22]) or 0,
+		}
+	end
+
+	local function read_status_fields(pid)
+		local d = read_file("/proc/" .. pid .. "/status")
+		local rss = tonumber(d:match("VmRSS:%s+(%d+)")) or 0
+		local uid = tonumber(d:match("Uid:%s+(%d+)")) or 0
+		return rss, uid
+	end
+
+	local function read_cmdline(pid)
+		local d = read_file("/proc/" .. pid .. "/cmdline")
+		if d == "" then return "" end
+		d = d:gsub("%z", " ")
+		return (d:gsub("%s+$", ""))
+	end
+
+	-- 用户名缓存
+	local UID_NAME = nil
+	local function uname(uid)
+		if not UID_NAME then
+			UID_NAME = {}
+			local f = io.open("/etc/passwd", "r")
+			if f then
+				for line in f:lines() do
+					local n = line:match("^([^:]+):")
+					local uidv = tonumber(line:match("^[^:]+:[^:]*:(%d+):"))
+					if n and uidv then UID_NAME[uidv] = n end
+				end
+				f:close()
+			end
+		end
+		return UID_NAME[uid] or tostring(uid)
+	end
+
+	-- /proc 下的 PID 列表：nixio.fs.glob 返回迭代器而非表，不能直接 ipairs，
+	-- 用 ls 解析最稳（busybox 一定有 ls）。
+	local function list_pids()
+		local out = {}
+		local p = io.popen("ls /proc 2>/dev/null")
+		if p then
+			for line in p:lines() do
+				local pid = line:match("^(%d+)$")
+				if pid then out[#out + 1] = pid end
+			end
+			p:close()
+		end
+		return out
+	end
+
+	local STATE_NAME = {
+		R = "运行", S = "睡眠", D = "不可中断", Z = "僵尸",
+		T = "停止", t = "跟踪", X = "退出", I = "空闲",
+	}
+
+	local function snapshot()
+		local pids = list_pids()
+		local map = {}
+		for _, pid in ipairs(pids) do
+			local s = read_stat(pid)
+			if s then map[pid] = s end
+		end
+		return map, read_total_jiffies()
+	end
+
+	local function collect_procs()
+		local s1, t1 = snapshot()
+		nixio.nanosleep(0, 300000000)   -- 300ms 采样窗口
+		local s2, t2 = snapshot()
+		local dt = (t2 - t1)
+		if dt <= 0 then dt = 1 end
+		-- gmatch 里的 ^ 只匹配整串开头，数核要去掉 ^
+		local ncpu = 0
+		local cpuinfo = read_file("/proc/cpuinfo")
+		for _ in cpuinfo:gmatch("processor%s*:") do ncpu = ncpu + 1 end
+		if ncpu < 1 then ncpu = 1 end
+
+		local out = {}
+		for pid, b in pairs(s2) do
+			local a = s1[pid]
+			local cpu = 0
+			if a then
+				local d = (b.utime + b.stime) - (a.utime + a.stime)
+				if d > 0 then cpu = d / dt * 100 * ncpu end
+			end
+			local rss, uid = read_status_fields(pid)
+			if rss == 0 and b.rss_pages > 0 then rss = b.rss_pages * 4 end
+			local cmd = read_cmdline(pid)
+			out[#out + 1] = {
+				pid = tonumber(pid),
+				name = b.comm ~= "" and b.comm or ("pid " .. pid),
+				cmd = cmd,
+				state = STATE_NAME[b.state] or b.state,
+				state_code = b.state,
+				ppid = b.ppid,
+				cpu = math.floor(cpu * 10 + 0.5) / 10,
+				rss = rss,                       -- kB
+				user = uname(uid),
+			}
+		end
+		return out, ncpu
+	end
+
+	local function meminfo()
+		local m = {}
+		local f = io.open("/proc/meminfo", "r")
+		if not f then return m end
+		for line in f:lines() do
+			-- 形如 "MemTotal:       1010044 kB"，键名后必须带冒号
+			local k, v = line:match("^(%w+):%s+(%d+)")
+			if k then m[k] = tonumber(v) end
+		end
+		f:close()
+		return m
+	end
+
+	local function fmt_kb(kb)
+		local n = tonumber(kb) or 0
+		if n >= 1048576 then return string.format("%.2f GB", n / 1048576) end
+		if n >= 1024 then return string.format("%.1f MB", n / 1024) end
+		return n .. " KB"
+	end
+
+	-- 已装插件：apk 数据库解析，避免 541 次 apk 查询
+	local function installed_plugins()
+		local db = read_file("/lib/apk/db/installed")
+		local list, cur = {}, nil
+		for line in db:gmatch("[^\n]+") do
+			local p = line:match("^P:(.+)$")
+			if p then
+				if cur and cur.name then list[#list + 1] = cur end
+				cur = { name = p }
+			elseif cur then
+				local v = line:match("^V:(.+)$")
+				if v then cur.version = v end
+			end
+		end
+		if cur and cur.name then list[#list + 1] = cur end
+		return list
+	end
+
+	local function plugin_state(name)
+		-- 有 init 脚本：看是否 enabled / running
+		local init = "/etc/init.d/" .. name
+		if fs.access(init) then
+			local en = util.execi(init .. " enabled >/dev/null 2>&1; echo $?")()
+			local run = util.execi(init .. " running >/dev/null 2>&1; echo $?")()
+			return (tonumber(en or "1") == 0), (tonumber(run or "1") == 0)
+		end
+		-- 无 init：按进程名/IPC 判断
+		local hit = util.execi("pgrep -f " .. name .. " >/dev/null 2>&1; echo $?")()
+		return false, (tonumber(hit or "1") == 0)
+	end
+
+	local function plugin_procs(name, procs)
+		local n, list = 0, {}
+		for _, p in ipairs(procs) do
+			local hay = (p.name .. " " .. p.cmd)
+			if hay:find(name, 1, true) then
+				n = n + 1
+				if #list < 6 then list[#list + 1] = p.name .. "(" .. p.pid .. ")" end
+			end
+		end
+		return n, list
+	end
+
+	-- init.d 服务名列表（一次 ls，避免逐个 running 造成大量 fork）
+	local function initd_services()
+		local out = {}
+		local p = io.popen("ls /etc/init.d 2>/dev/null")
+		if p then
+			for name in p:lines() do
+				name = name:match("^(%S+)$")
+				if name then out[#out + 1] = name end
+			end
+			p:close()
+		end
+		return out
+	end
+
+	-- ubus 已注册服务对象
+	local function ubus_objects()
+		local out = {}
+		local p = io.popen("ubus list 2>/dev/null")
+		if p then
+			for name in p:lines() do
+				name = name:match("^(%S+)$")
+				if name then out[#out + 1] = name end
+			end
+			p:close()
+		end
+		return out
+	end
+
+	local function pid_file_alive(name)
+		local pid = read_file("/var/run/" .. name .. ".pid"):match("(%d+)")
+		if not pid then return false end
+		return fs.access("/proc/" .. pid) and true or false
+	end
+
+	-- ---------------------------------------------------------------- API
+	if action == "procs" then
+		local procs, ncpu = collect_procs()
+		local m = meminfo()
+		http.prepare_content("application/json")
+		http.write_json({
+			procs = procs,
+			ncpu = ncpu,
+			mem = {
+				total = m.MemTotal or 0,
+				avail = m.MemAvailable or 0,
+				free = m.MemFree or 0,
+				cached = m.Cached or 0,
+				buffers = m.Buffers or 0,
+			},
+			ts = os.time(),
+		})
+		return
+	end
+
+	if action == "plugins" then
+		local procs = collect_procs()
+		local apk = {}
+		for _, p in ipairs(installed_plugins()) do apk[p.name] = p.version or "" end
+
+		local out, seen = {}, {}
+		local KORDER = { app = 1, service = 2, ubus = 3 }
+		local function add(name, kind, version, enabled, running, cnt, names)
+			if not name or name == "" then return end
+			local key = kind .. "|" .. name
+			if seen[key] then return end
+			seen[key] = true
+			out[#out + 1] = {
+				name = name, kind = kind,
+				version = version or "",
+				enabled = enabled and true or false,
+				running = running and true or false,
+				procs = cnt or 0,
+				proc_names = names or {},
+			}
+		end
+
+		-- ① LuCI 应用 / 元包（apk 数据库，带版本与 init 状态）
+		for pname, ver in pairs(apk) do
+			if pname:match("^luci%-app%-") or pname:match("^app%-meta%-") then
+				local short = pname:gsub("^luci%-app%-", ""):gsub("^app%-meta%-", "")
+				local has_init = fs.access("/etc/init.d/" .. pname) and true or false
+				local en, run = plugin_state(pname)
+				local cnt, names = plugin_procs(short, procs)
+				-- luci-app-* 大多是页面插件：没有 init 脚本时，只有真正找到常驻进程
+				-- 才算「运行中」，否则只是「已安装」，避免整屏误报运行中。
+				if not has_init then run = (cnt > 0) end
+				add(pname, "app", ver, has_init and en or (cnt > 0), run, cnt, names)
+			end
+		end
+
+		-- ② 系统服务（/etc/init.d）：按进程与 pid 文件判断是否在跑
+		for _, sname in ipairs(initd_services()) do
+			local cnt, names = plugin_procs(sname, procs)
+			local run = (cnt > 0) or pid_file_alive(sname)
+			add(sname, "service", apk[sname] or "", run, run, cnt, names)
+		end
+
+		-- ③ ubus 已注册对象：只要能列出就是在跑
+		for _, uname in ipairs(ubus_objects()) do
+			add(uname, "ubus", "", true, true, 0, {})
+		end
+
+		table.sort(out, function(a, b)
+			if a.running ~= b.running then return a.running end
+			if a.kind ~= b.kind then return (KORDER[a.kind] or 9) < (KORDER[b.kind] or 9) end
+			if a.procs ~= b.procs then return a.procs > b.procs end
+			return a.name < b.name
+		end)
+		local nrun = 0
+		for _, p in ipairs(out) do if p.running then nrun = nrun + 1 end end
+		http.prepare_content("application/json")
+		http.write_json({ plugins = out, total = #out, running = nrun })
+		return
+	end
+
+	if action == "mem" then
+		local m = meminfo()
+		http.prepare_content("application/json")
+		http.write_json({
+			total = m.MemTotal or 0, avail = m.MemAvailable or 0,
+			free = m.MemFree or 0, cached = m.Cached or 0, buffers = m.Buffers or 0,
+			swap_total = m.SwapTotal or 0, swap_free = m.SwapFree or 0,
+		})
+		return
+	end
+
+	if action == "drop" then
+		-- 用 GET + confirm=1：本机 uhttpd 下 POST body 偶发解析不到 action，
+		-- 请求会落到页面渲染；GET 的 query 解析稳定，前端也只在按钮点击时调用。
+		if http.formvalue("confirm") ~= "1" then
+			http.prepare_content("application/json")
+			http.write_json({ ok = false, msg = "缺少确认参数" })
+			return
+		end
+		local b = meminfo()
+		os.execute("sync")
+		os.execute("echo 3 > /proc/sys/vm/drop_caches 2>/dev/null")
+		local a = meminfo()
+		local freed = (a.MemAvailable or 0) - (b.MemAvailable or 0)
+		http.prepare_content("application/json")
+		http.write_json({
+			ok = true,
+			before = { avail = b.MemAvailable or 0, cached = b.Cached or 0, free = b.MemFree or 0 },
+			after  = { avail = a.MemAvailable or 0, cached = a.Cached or 0, free = a.MemFree or 0 },
+			freed_kb = freed,
+			freed_text = (freed > 0 and fmt_kb(freed) or "0"),
+		})
+		return
+	end
+
+	local m = meminfo()
+-%>
+<%+header%>
+<div class="ios-page-h">
+	<div>
+		<h2>进程管理</h2>
+		<p class="sub">实时读取 /proc · 5 秒刷新 · 支持排序与筛选</p>
+	</div>
+	<div class="ios-page-actions">
+		<button class="ios-btn" type="button" id="pmPause"><i class="fas fa-pause"></i> 暂停刷新</button>
+		<button class="ios-btn" type="button" id="pmRefresh"><i class="fas fa-rotate"></i> 刷新</button>
+		<button class="ios-btn primary" type="button" id="pmDrop"><i class="fas fa-broom"></i> 清理内存</button>
+	</div>
+</div>
+
+<!-- KPI -->
+<div class="ios-grid ios-g4 pm-kpi">
+	<div class="ios-card tight">
+		<div class="ios-card-h"><h3>进程</h3></div>
+		<div class="ios-big"><b id="pmCount">—</b><i> 个</i></div>
+		<div class="pm-sub" id="pmRunning">— 运行中</div>
+	</div>
+	<div class="ios-card tight">
+		<div class="ios-card-h"><h3>CPU 占用</h3></div>
+		<div class="ios-big"><b id="pmCpu">—</b><i> %</i></div>
+		<div class="pm-sub" id="pmCpuCores">— 核</div>
+	</div>
+	<div class="ios-card tight">
+		<div class="ios-card-h"><h3>内存占用</h3></div>
+		<div class="ios-big"><b id="pmUsed">—</b></div>
+		<div class="pm-bar"><i id="pmMemBar" style="width:0%"></i></div>
+	</div>
+	<div class="ios-card tight">
+		<div class="ios-card-h"><h3>可用内存</h3></div>
+		<div class="ios-big"><b id="pmAvail">—</b></div>
+		<div class="pm-sub" id="pmCached">缓存 —</div>
+	</div>
+</div>
+
+<!-- 内存清理结果 -->
+<div class="pm-clean" id="pmCleanResult" hidden>
+	<i class="fas fa-circle-check" aria-hidden="true"></i>
+	<div>
+		<b id="pmCleanTitle">已释放 0</b>
+		<span id="pmCleanDetail"></span>
+	</div>
+	<button type="button" class="pm-clean-x" id="pmCleanClose" aria-label="关闭">×</button>
+</div>
+
+<!-- 工具栏 -->
+<div class="ios-card pm-toolbar">
+	<div class="pm-search">
+		<i class="fas fa-search" aria-hidden="true"></i>
+		<input type="search" id="pmSearch" placeholder="搜索进程名 / 命令行 / PID" autocomplete="off">
+	</div>
+	<div class="pm-chips" id="pmStateFilter">
+		<button type="button" class="pm-chip on" data-state="all">全部</button>
+		<button type="button" class="pm-chip" data-state="R">运行</button>
+		<button type="button" class="pm-chip" data-state="S">睡眠</button>
+		<button type="button" class="pm-chip" data-state="Z">僵尸</button>
+	</div>
+	<div class="pm-sort">
+		<label>排序</label>
+		<select id="pmSort">
+			<option value="cpu">CPU 占用</option>
+			<option value="rss">内存占用</option>
+			<option value="pid">PID</option>
+			<option value="name">名称</option>
+		</select>
+		<button type="button" class="pm-order" id="pmOrder" title="切换降序/升序">
+			<i class="fas fa-arrow-down-wide-short" aria-hidden="true"></i>
+		</button>
+	</div>
+	<label class="pm-only"><input type="checkbox" id="pmOnlyBusy"> 只看活跃</label>
+</div>
+
+<!-- 进程表 -->
+<div class="ios-card pm-tablecard">
+	<div class="pm-tablewrap">
+		<table class="pm-table" id="pmTable">
+			<thead>
+				<tr>
+					<th class="c-name">进程</th>
+					<th class="c-user">用户</th>
+					<th class="c-pid" data-sort="pid">PID</th>
+					<th class="c-cpu" data-sort="cpu">CPU</th>
+					<th class="c-mem" data-sort="rss">内存</th>
+					<th class="c-state">状态</th>
+					<th class="c-cmd">命令行</th>
+				</tr>
+			</thead>
+			<tbody id="pmBody">
+				<tr><td colspan="7" class="pm-empty">正在读取进程…</td></tr>
+			</tbody>
+		</table>
+	</div>
+	<div class="pm-foot">
+		<span id="pmShown">—</span>
+		<span class="pm-foot-dim">按 /proc 采样，CPU 为 300ms 窗口内的增量</span>
+	</div>
+</div>
+
+<!-- 插件 -->
+<div class="ios-card">
+	<div class="ios-card-h">
+		<h3>插件运行</h3>
+		<span class="sub">已安装的 LuCI 应用与元包</span>
+		<div class="right"><span class="ios-badge" id="pmPlugBadge">读取中…</span></div>
+	</div>
+	<div class="pm-plugchips" id="pmPlugFilter">
+		<button type="button" class="pm-chip on" data-pf="all">全部</button>
+		<button type="button" class="pm-chip" data-pf="run">运行中</button>
+		<button type="button" class="pm-chip" data-pf="stop">已停止</button>
+	</div>
+	<div class="pm-plugins" id="pmPlugins">
+		<div class="pm-empty">正在读取插件…</div>
+	</div>
+</div>
+
+<script>
+(function () {
+	'use strict';
+	var $ = function (id) { return document.getElementById(id); };
+	var API = function (action) { return location.pathname + '?action=' + action; };
+	var state = {
+		procs: [], plugins: [], mem: null,
+		q: '', filter: 'all', sort: 'cpu', desc: true, onlyBusy: false,
+		plugFilter: 'all',
+		timer: null, paused: false, loading: false
+	};
+
+	function esc(s) {
+		return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+		});
+	}
+	function fmtKB(kb) {
+		var n = Number(kb) || 0;
+		if (n >= 1048576) return (n / 1048576).toFixed(2) + ' GB';
+		if (n >= 1024) return (n / 1024).toFixed(1) + ' MB';
+		return Math.round(n) + ' KB';
+	}
+	function pct(a, b) { return b > 0 ? Math.min(100, Math.max(0, a / b * 100)) : 0; }
+
+	function setBusy(on) {
+		state.loading = on;
+		var b = $('pmRefresh');
+		if (b) b.disabled = on;
+	}
+
+	function renderKpi(d) {
+		var p = d.procs || [], m = d.mem || {};
+		var running = 0, cpu = 0;
+		for (var i = 0; i < p.length; i++) {
+			if (p[i].state_code === 'R') running++;
+			cpu += p[i].cpu || 0;
+		}
+		$('pmCount').textContent = String(p.length);
+		$('pmRunning').textContent = running + ' 运行中';
+		$('pmCpu').textContent = cpu.toFixed(1);
+		$('pmCpuCores').textContent = (d.ncpu || 1) + ' 核';
+		var used = (m.total || 0) - (m.avail || 0);
+		$('pmUsed').textContent = fmtKB(used);
+		$('pmAvail').textContent = fmtKB(m.avail);
+		$('pmCached').textContent = '缓存 ' + fmtKB(m.cached);
+		var bar = $('pmMemBar');
+		if (bar) bar.style.width = pct(used, m.total).toFixed(1) + '%';
+	}
+
+	function filtered() {
+		var q = state.q.toLowerCase();
+		var out = [];
+		for (var i = 0; i < state.procs.length; i++) {
+			var p = state.procs[i];
+			if (state.filter !== 'all' && p.state_code !== state.filter) continue;
+			if (state.onlyBusy && (p.cpu || 0) <= 0) continue;
+			if (q) {
+				var hay = (p.name + ' ' + p.cmd + ' ' + p.pid + ' ' + p.user).toLowerCase();
+				if (hay.indexOf(q) < 0) continue;
+			}
+			out.push(p);
+		}
+		var k = state.sort, dir = state.desc ? -1 : 1;
+		out.sort(function (a, b) {
+			if (k === 'name') return a.name.localeCompare(b.name, 'zh') * dir;
+			return ((a[k] || 0) - (b[k] || 0)) * dir;
+		});
+		return out;
+	}
+
+	function renderTable() {
+		var rows = filtered();
+		var body = $('pmBody');
+		if (!rows.length) {
+			body.innerHTML = '<tr><td colspan="7" class="pm-empty">' +
+				(state.procs.length ? '没有匹配的进程，试试换个关键词或筛选条件' : '未读取到进程数据') + '</td></tr>';
+			$('pmShown').textContent = '0 / ' + state.procs.length;
+			return;
+		}
+		var LIMIT = 200, html = [], n = Math.min(rows.length, LIMIT);
+		for (var i = 0; i < n; i++) {
+			var p = rows[i];
+			var cpuCls = p.cpu >= 20 ? 'bad' : (p.cpu >= 5 ? 'warn' : '');
+			var stCls = p.state_code === 'R' ? 'ok' : (p.state_code === 'Z' ? 'bad' : '');
+			html.push('<tr>' +
+				'<td class="c-name"><span class="pm-name">' + esc(p.name) + '</span></td>' +
+				'<td class="c-user">' + esc(p.user) + '</td>' +
+				'<td class="c-pid">' + p.pid + '</td>' +
+				'<td class="c-cpu"><span class="pm-num ' + cpuCls + '">' + (p.cpu || 0).toFixed(1) + '%</span></td>' +
+				'<td class="c-mem"><span class="pm-num">' + fmtKB(p.rss) + '</span></td>' +
+				'<td class="c-state"><span class="pm-state ' + stCls + '">' + esc(p.state) + '</span></td>' +
+				'<td class="c-cmd" title="' + esc(p.cmd) + '">' + esc(p.cmd || '—') + '</td>' +
+				'</tr>');
+		}
+		body.innerHTML = html.join('');
+		$('pmShown').textContent = '显示 ' + n + ' / ' + rows.length + (rows.length > LIMIT ? '（共 ' + state.procs.length + '）' : '');
+	}
+
+	var PLUG_KIND = { app: '应用', service: '服务', ubus: 'ubus' };
+	function renderPlugins() {
+		var box = $('pmPlugins'), all = state.plugins || [];
+		var run = 0;
+		for (var k = 0; k < all.length; k++) if (all[k].running) run++;
+		$('pmPlugBadge').textContent = run + ' / ' + all.length + ' 运行中';
+
+		var f = state.plugFilter || 'all';
+		var list = all.filter(function (p) {
+			if (f === 'run') return !!p.running;
+			if (f === 'stop') return !p.running;
+			return true;
+		});
+		if (!list.length) {
+			box.innerHTML = '<div class="pm-empty">' +
+				(all.length ? '当前筛选下没有插件' : '未读取到插件与服务（apk 数据库为空或读取失败）') + '</div>';
+			return;
+		}
+		var html = [];
+		for (var i = 0; i < list.length; i++) {
+			var p = list[i];
+			var stCls = p.running ? 'ok' : (p.enabled ? 'warn' : '');
+			var stTxt = p.running ? '运行中' : (p.enabled ? '已启用 · 未运行' : '已停止');
+			var kind = p.kind || 'app';
+			html.push('<div class="pm-plug ' + stCls + '">' +
+				'<div class="pm-plug-h">' +
+					'<span class="pm-plug-kind ' + kind + '">' + (PLUG_KIND[kind] || kind) + '</span>' +
+					'<b>' + esc(p.name) + '</b>' +
+					(p.version ? '<span class="pm-plug-ver">' + esc(p.version) + '</span>' : '') +
+				'</div>' +
+				'<div class="pm-plug-meta">' +
+					'<span class="pm-plug-st ' + stCls + '"><i></i>' + stTxt + '</span>' +
+					(p.procs ? '<span class="pm-plug-p">' + p.procs + ' 个进程</span>' : '<span class="pm-plug-p dim">无关联进程</span>') +
+				'</div>' +
+				(p.proc_names && p.proc_names.length ? '<div class="pm-plug-cmd">' + esc(p.proc_names.join(' · ')) + '</div>' : '') +
+				'</div>');
+		}
+		box.innerHTML = html.join('');
+	}
+
+	function loadProcs() {
+		if (state.loading) return;
+		setBusy(true);
+		fetch(API('procs'), { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				state.procs = d.procs || [];
+				state.mem = d.mem || {};
+				renderKpi(d);
+				renderTable();
+			})
+			.catch(function () {
+				$('pmBody').innerHTML = '<tr><td colspan="7" class="pm-empty">读取进程失败，请稍后重试</td></tr>';
+			})
+			.then(function () { setBusy(false); });
+	}
+
+	function loadPlugins() {
+		fetch(API('plugins'), { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				state.plugins = d.plugins || [];
+				renderPlugins();
+			})
+			.catch(function () {
+				$('pmPlugins').innerHTML = '<div class="pm-empty">读取插件失败</div>';
+				$('pmPlugBadge').textContent = '读取失败';
+			});
+	}
+
+	function cleanMem() {
+		var btn = $('pmDrop');
+		btn.disabled = true;
+		btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 清理中…';
+		fetch(API('drop') + '&confirm=1', {
+			credentials: 'same-origin',
+			cache: 'no-store'
+		})
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				var box = $('pmCleanResult');
+				box.hidden = false;
+				if (d && d.ok) {
+					var freed = Number(d.freed_kb) || 0;
+					/* 刚清过或缓存本来就低时 freed 可能为负，此时说「已释放 0」会让人困惑 */
+					$('pmCleanTitle').textContent = freed > 0 ? ('已释放 ' + (d.freed_text || '0')) : '缓存已清理';
+					$('pmCleanDetail').textContent = '可用 ' + fmtKB(d.before.avail) + ' → ' + fmtKB(d.after.avail) +
+						' · 缓存 ' + fmtKB(d.before.cached) + ' → ' + fmtKB(d.after.cached);
+					box.className = 'pm-clean ok';
+					loadProcs();
+				} else {
+					$('pmCleanTitle').textContent = '清理失败';
+					$('pmCleanDetail').textContent = (d && d.msg) || '未知错误';
+					box.className = 'pm-clean bad';
+				}
+			})
+			.catch(function () {
+				var box = $('pmCleanResult');
+				box.hidden = false;
+				box.className = 'pm-clean bad';
+				$('pmCleanTitle').textContent = '清理失败';
+				$('pmCleanDetail').textContent = '请求未送达';
+			})
+			.then(function () {
+				btn.disabled = false;
+				btn.innerHTML = '<i class="fas fa-broom"></i> 清理内存';
+				setTimeout(function () {
+					var b = $('pmCleanResult');
+					if (b && !b.hidden) b.hidden = true;
+				}, 12000);
+			});
+	}
+
+	/* 事件 */
+	$('pmRefresh').addEventListener('click', function () { loadProcs(); loadPlugins(); });
+	$('pmDrop').addEventListener('click', function () {
+		if (confirm('清理系统缓存（drop_caches）会释放页面缓存与目录项，首次访问文件会稍慢。继续？')) cleanMem();
+	});
+	$('pmCleanClose').addEventListener('click', function () { $('pmCleanResult').hidden = true; });
+	$('pmSearch').addEventListener('input', function () { state.q = this.value.trim(); renderTable(); });
+	$('pmStateFilter').addEventListener('click', function (ev) {
+		var t = ev.target;
+		if (!t.classList || !t.classList.contains('pm-chip')) return;
+		var all = this.querySelectorAll('.pm-chip');
+		for (var i = 0; i < all.length; i++) all[i].classList.toggle('on', all[i] === t);
+		state.filter = t.getAttribute('data-state');
+		renderTable();
+	});
+	$('pmPlugFilter').addEventListener('click', function (ev) {
+		var t = ev.target;
+		if (!t.classList || !t.classList.contains('pm-chip')) return;
+		var all = this.querySelectorAll('.pm-chip');
+		for (var i = 0; i < all.length; i++) all[i].classList.toggle('on', all[i] === t);
+		state.plugFilter = t.getAttribute('data-pf');
+		renderPlugins();
+	});
+	$('pmSort').addEventListener('change', function () { state.sort = this.value; renderTable(); });
+	$('pmOrder').addEventListener('click', function () {
+		state.desc = !state.desc;
+		this.innerHTML = '<i class="fas fa-arrow-' + (state.desc ? 'down' : 'up') + '-wide-short" aria-hidden="true"></i>';
+		renderTable();
+	});
+	$('pmOnlyBusy').addEventListener('change', function () { state.onlyBusy = this.checked; renderTable(); });
+	$('pmPause').addEventListener('click', function () {
+		state.paused = !state.paused;
+		this.innerHTML = state.paused
+			? '<i class="fas fa-play"></i> 继续刷新'
+			: '<i class="fas fa-pause"></i> 暂停刷新';
+		if (state.paused) { clearInterval(state.timer); state.timer = null; }
+		else startTimer();
+	});
+	document.addEventListener('visibilitychange', function () {
+		if (document.hidden) { clearInterval(state.timer); state.timer = null; }
+		else if (!state.paused) startTimer();
+	});
+
+	function startTimer() {
+		if (state.timer) return;
+		state.timer = setInterval(function () { if (!state.paused) loadProcs(); }, 5000);
+	}
+
+	loadProcs();
+	loadPlugins();
+	startTimer();
+})();
+</script>
+<%+footer%>

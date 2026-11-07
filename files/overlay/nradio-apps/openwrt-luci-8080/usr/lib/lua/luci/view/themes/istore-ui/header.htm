@@ -192,7 +192,7 @@
 	}
 	local ORDER = {
 		details = 1, overview = 2, realtime = 3, routes = 4, iptables = 5,
-		syslog = 6, dmesg = 7, processes = 8, firewall = 5, log = 6,
+		syslog = 6, dmesg = 7, processes = 8, procmgr = 9, firewall = 5, log = 6,
 		network = 1, wireless = 2, dhcp = 3, hosts = 4, staticroutes = 5, diagnostics = 6,
 		openclash = 1, ocspeed = 2, store = 3, docker = 4,
 		system = 1, admin = 2, packages = 3, software = 3, flashops = 4, backup = 4,
@@ -205,6 +205,7 @@
 		["status/overview"] = "系统信息",
 		["status/syslog"] = "系统日志",
 		["status/iptables"] = "防火墙",
+		["status/procmgr"] = "进程管理",
 		["network/routes"] = "静态路由",
 		["system/fstab"] = "挂载点",
 		["system/autotimeset"] = "时间同步",
@@ -341,7 +342,7 @@
 <%# 全站放开一屏 + 组件细节统一层。必须放在 /nradio 条件块之外：
      iptables 等页面只渲染精简 head、不渲染 footer，放条件块内会漏掉；
      本层用 :where() 做低特异性基线，footer 里的专用层仍会正常覆盖。 %>
-<link rel="stylesheet" href="<%=media%>/ios-design.css?v=19">
+<link rel="stylesheet" href="<%=media%>/ios-design.css?v=21">
 </head>
 <body class="ios-body ios-embed" data-embed="1" data-home="<%=homeurl%>">
 <main class="ios-content ios-embed-content" id="maincontent">
@@ -388,7 +389,7 @@
 <script src="<%=media%>/ios-spa.js?v=5" defer></script>
 <%# 全站放开一屏 + 组件细节统一层。放在 /nradio 条件块之外，
      保证 iptables 等精简 head 页面也能加载。 %>
-<link rel="stylesheet" href="<%=media%>/ios-design.css?v=19">
+<link rel="stylesheet" href="<%=media%>/ios-design.css?v=21">
 </head>
 <body class="ios-body" data-model="<%=util.pcdata(model)%>" data-home="<%=homeurl%>" data-embed="0">
 <script>try{if(localStorage.getItem('iosCollapsed')==='1')document.body.classList.add('ios-collapsed')}catch(e){}</script>
