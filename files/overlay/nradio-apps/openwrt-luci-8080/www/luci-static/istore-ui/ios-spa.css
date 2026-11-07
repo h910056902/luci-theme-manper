@@ -177,7 +177,25 @@ body.ios-collapsed .ios-view{left:72px}
 .ios-cmd-item .fav{color:#f5a623;font-size:11px}
 .ios-cmd-item.on{background:var(--brand-soft);color:var(--brand)}
 .ios-cmd-item.on > i:first-child{color:var(--brand)}
-.ios-cmd-empty{padding:26px 14px;text-align:center;font-size:12.5px;color:var(--ink-3)}
+.ios-cmd-empty{padding:26px 14px;text-align:center;font-size:12.5px;color:var(--ink-3);line-height:1.7}
+.ios-cmd-empty span{font-size:11px;color:var(--ink-3);opacity:.8}
+/* 搜索命中的关键词高亮（只高亮首处，标题短、路径长） */
+.ios-cmd-item mark{
+  background:rgba(0,96,255,.14);color:inherit;
+  border-radius:3px;padding:0 1px;
+}
+.ios-cmd-item.on mark{background:rgba(0,96,255,.22)}
+/* 侧栏无结果时的「在全部页面中搜索」入口 */
+.ios-nav-empty-cmd{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:5px 10px;border-radius:999px;
+  border:1px solid rgba(0,96,255,.18);background:rgba(0,96,255,.05);
+  color:var(--brand);font-size:11px;font-weight:600;text-decoration:none;
+  transition:background .16s ease,border-color .16s ease;
+}
+.ios-nav-empty-cmd:hover{
+  background:rgba(0,96,255,.1);border-color:rgba(0,96,255,.34);text-decoration:none;
+}
 .ios-cmd-foot{
   display:flex;gap:14px;padding:8px 16px;border-top:1px solid var(--line);
   font-size:10.5px;color:var(--ink-3);background:var(--surface-2);

@@ -239,7 +239,14 @@
 			g.classList.toggle('is-hidden', q !== '' && !any);
 			if (any) visible++;
 		});
-		if (navEmpty) navEmpty.hidden = !(q !== '' && visible === 0);
+		if (navEmpty) {
+			navEmpty.hidden = !(q !== '' && visible === 0);
+			/* 侧栏只收主要入口；这里给一个通往「全部页面」搜索的入口，
+			   页面索引包含原厂子页与同名不同路径的页面。 */
+			if (!navEmpty.hidden) {
+				navEmpty.innerHTML = '<a href="#" class="ios-nav-empty-cmd">在全部页面中搜索 “' + escHtml(q) + '”</a>';
+			}
+		}
 	}
 	if (search) {
 		search.addEventListener('input', function () { filterNav(search.value); });
@@ -247,8 +254,25 @@
 			if (ev.key === 'Escape') { search.value = ''; filterNav(''); search.blur(); }
 			if (ev.key === 'Enter') {
 				var first = document.querySelector('.ios-nav-i[data-path]:not(.is-hidden)');
-				if (first) { first.click(); search.value = ''; filterNav(''); }
+				if (first) { first.click(); search.value = ''; filterNav(''); return; }
+				/* 侧栏无匹配 → 打开命令面板搜「全部页面」 */
+				var q = (search.value || '').trim();
+				if (q) {
+					openCmd();
+					if (cmdInput) { cmdInput.value = q; cmdInput.focus(); }
+					buildCmdList(q);
+				}
 			}
+		});
+		document.addEventListener('click', function (ev) {
+			var t = ev.target;
+			while (t && t !== document && !(t.classList && t.classList.contains('ios-nav-empty-cmd'))) t = t.parentNode;
+			if (!t || t === document) return;
+			ev.preventDefault();
+			var q = (search.value || '').trim();
+			openCmd();
+			if (cmdInput) { cmdInput.value = q; cmdInput.focus(); }
+			buildCmdList(q);
 		});
 	}
 
@@ -343,26 +367,93 @@
 	var cmdList = document.getElementById('iosCmdList');
 	var cmdItems = [], cmdIndex = 0;
 
+	/* 页面索引：ios-spa.js 在每次嵌入页 ready 时把「标题 + 路径」写入 localStorage。
+	   侧栏菜单只列主要入口，原厂大量子页（如「系统属性」「时间同步」内的分页）
+	   不在菜单里，靠这份索引才能搜到并跳转。 */
+	function pageIndex() {
+		try {
+			var a = JSON.parse(localStorage.getItem('iosPageIdx') || '[]');
+			return Array.isArray(a) ? a : [];
+		} catch (e) { return []; }
+	}
+	function escHtml(s) {
+		return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+		});
+	}
+	/* 只高亮命中的第一处：标题短、路径长，全高亮反而看不清 */
+	function markHtml(text, q) {
+		text = String(text == null ? '' : text);
+		if (!q) return escHtml(text);
+		var i = text.toLowerCase().indexOf(q);
+		if (i < 0) return escHtml(text);
+		return escHtml(text.slice(0, i)) +
+			'<mark>' + escHtml(text.slice(i, i + q.length)) + '</mark>' +
+			escHtml(text.slice(i + q.length));
+	}
+	/* 相关度：完全匹配 > 前缀 > 包含 > 多关键词 AND > 路径/面包屑命中 */
+	function cmdScore(d, q) {
+		if (!q) return 1;
+		var lab = String(d.label || '').toLowerCase();
+		var hay = (lab + ' ' + (d.group || '') + ' ' + (d.crumb || '') + ' ' + (d.url || '') + ' ' + (d.kw || '')).toLowerCase();
+		if (lab === q) return 120;
+		if (lab.indexOf(q) === 0) return 100;
+		if (lab.indexOf(q) > 0) return 80;
+		var parts = q.split(/\s+/).filter(Boolean);
+		if (parts.length > 1 && parts.every(function (p) { return hay.indexOf(p) >= 0; })) return 70;
+		if (hay.indexOf(q) >= 0) return 50;
+		return 0;
+	}
 	function buildCmdList(q) {
 		q = (q || '').trim().toLowerCase();
-		var rows = [];
+		var map = {};
+		/* ① 侧栏菜单（可点、有图标与分组），略微加权 */
 		menuItems().forEach(function (a) {
 			var d = itemData(a);
-			if (q && d.label.toLowerCase().indexOf(q) < 0) return;
-			rows.push(d);
+			var s = cmdScore(d, q);
+			if (!s) return;
+			map[d.url] = { d: d, s: s + 10 };
 		});
+		/* ② 已访问页面索引（覆盖原厂子页 / 同名不同路径） */
+		pageIndex().forEach(function (p) {
+			var kw = String(p.kw || '');
+			var label = p.title || p.url;
+			/* 浏览器标题只有一级名（「系统」）时，若命中的是页内小标题
+			   （「系统属性」），把命中词补进条目名，否则用户看不出为什么命中。 */
+			if (q && kw && kw.toLowerCase().indexOf(q) >= 0 && String(label).toLowerCase().indexOf(q) < 0) {
+				var parts = kw.split(/\s+/);
+				for (var i = 0; i < parts.length; i++) {
+					if (parts[i].toLowerCase().indexOf(q) >= 0) { label = label + ' · ' + parts[i]; break; }
+				}
+			}
+			var d = {
+				url: p.url,
+				label: label,
+				icon: 'fa-file-lines',
+				group: p.crumb || '',
+				crumb: p.crumb || '',
+				kw: kw
+			};
+			var s = cmdScore(d, q);
+			if (!s) return;
+			var cur = map[d.url];
+			if (!cur || s > cur.s) map[d.url] = { d: d, s: s };
+		});
+		var rows = Object.keys(map).map(function (k) { return map[k]; });
 		rows.sort(function (a, b) {
-			var fa = isFav(a.url) ? 0 : 1, fb = isFav(b.url) ? 0 : 1;
+			if (b.s !== a.s) return b.s - a.s;
+			var fa = isFav(a.d.url) ? 0 : 1, fb = isFav(b.d.url) ? 0 : 1;
 			if (fa !== fb) return fa - fb;
-			var ra = recentRank(a.url), rb = recentRank(b.url);
+			var ra = recentRank(a.d.url), rb = recentRank(b.d.url);
 			if (ra !== rb) return ra - rb;
-			return 0;
+			return String(a.d.label).localeCompare(String(b.d.label), 'zh');
 		});
+		rows = rows.slice(0, 40).map(function (x) { return x.d; });
 		cmdItems = rows;
 		cmdIndex = 0;
 		cmdList.innerHTML = '';
 		if (!rows.length) {
-			cmdList.innerHTML = '<div class="ios-cmd-empty">没有匹配的页面</div>';
+			cmdList.innerHTML = '<div class="ios-cmd-empty">没有匹配的页面<br><span>可试试菜单名、页面标题或路径关键词</span></div>';
 			return;
 		}
 		rows.forEach(function (d, i) {
@@ -370,11 +461,11 @@
 			el.className = 'ios-cmd-item' + (i === 0 ? ' on' : '');
 			el.href = d.url;
 			el.setAttribute('data-path', d.url);
-			el.innerHTML = '<i class="fas ' + d.icon + '" aria-hidden="true"></i>' +
-				'<span class="lb">' + d.label + '</span>' +
+			el.innerHTML = '<i class="fas ' + escHtml(d.icon) + '" aria-hidden="true"></i>' +
+				'<span class="lb">' + markHtml(d.label, q) + '</span>' +
 				(recentRank(d.url) < 99 ? '<span class="rc">最近</span>' : '') +
-				'<span class="gp">' + d.group + '</span>' +
-				(isFav(d.url) ? '<i class="fas fa-star fav"></i>' : '');
+				(d.group ? '<span class="gp">' + escHtml(d.group) + '</span>' : '') +
+				(isFav(d.url) ? '<i class="fas fa-star fav" aria-hidden="true"></i>' : '');
 			cmdList.appendChild(el);
 		});
 	}

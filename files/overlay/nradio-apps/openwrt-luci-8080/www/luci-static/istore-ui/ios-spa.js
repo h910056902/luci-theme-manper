@@ -170,6 +170,41 @@
 		announce(url);
 	}
 
+	/* 页面索引：把访问过的嵌入页标题落盘，供 shell.js 的搜索面板检索。
+	   侧栏菜单只有主要入口，原厂子页/同名不同路径的页面靠这份索引才搜得到。
+	   同 URL 只留最新一条，最多 200 条；存储不可用时静默忽略。 */
+	function rememberPage(title, url, doc) {
+		try {
+			url = cleanUrl(String(url || ''));
+			if (!url || url.indexOf('/cgi-bin/luci/') !== 0) return;
+			title = String(title || '')
+				.replace(/\s*·\s*C2000.*$/, '')
+				.replace(/\s*·\s*NRadio.*$/, '')
+				.replace(/\s*·\s*manper.*$/, '')
+				.trim();
+			if (!title) return;
+			/* 浏览器标题往往只有一级名（如「系统」），真正好搜的是页内小标题
+			   （「系统属性」「时间同步」），这里一并采集。 */
+			var kw = '';
+			if (doc) {
+				try {
+					kw = Array.prototype.slice.call(doc.querySelectorAll(
+						'#maincontent h2, #maincontent h3, #maincontent legend'
+					)).map(function (e) { return (e.innerText || '').replace(/\s+/g, ' ').trim(); })
+						.filter(function (s) { return s && s.length <= 24; })
+						.slice(0, 8).join(' ');
+				} catch (e) { kw = ''; }
+			}
+			var k = 'iosPageIdx';
+			var arr = [];
+			try { arr = JSON.parse(localStorage.getItem(k) || '[]'); } catch (e) { arr = []; }
+			if (!Array.isArray(arr)) arr = [];
+			arr = arr.filter(function (x) { return x && x.url !== url; });
+			arr.unshift({ url: url, title: title, kw: kw, ts: Date.now() });
+			localStorage.setItem(k, JSON.stringify(arr.slice(0, 200)));
+		} catch (e) {}
+	}
+
 	function setCrumbFromIndex(url) {
 		var best = null, bestLen = -1;
 		Array.prototype.forEach.call(document.querySelectorAll('.ios-nav-i[data-path]'), function (a) {
@@ -246,6 +281,9 @@
 			loading = false;
 			hideSkeletonWhenEmbedded();
 			if (d.title) setCrumb(String(d.title).replace(/\s*·\s*C2000.*$/, '').trim());
+			var _doc = null;
+			try { _doc = frame.contentDocument; } catch (e) {}
+			rememberPage(d.title, d.url || currentUrl, _doc);
 		} else if (d.type === 'leave') {
 			/* 子页即将跳转，保持骨架，避免白屏 */
 		}
