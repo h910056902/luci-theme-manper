@@ -341,7 +341,7 @@
 <%# 全站放开一屏 + 组件细节统一层。必须放在 /nradio 条件块之外：
      iptables 等页面只渲染精简 head、不渲染 footer，放条件块内会漏掉；
      本层用 :where() 做低特异性基线，footer 里的专用层仍会正常覆盖。 %>
-<link rel="stylesheet" href="<%=media%>/ios-design.css?v=17">
+<link rel="stylesheet" href="<%=media%>/ios-design.css?v=19">
 </head>
 <body class="ios-body ios-embed" data-embed="1" data-home="<%=homeurl%>">
 <main class="ios-content ios-embed-content" id="maincontent">
@@ -388,7 +388,7 @@
 <script src="<%=media%>/ios-spa.js?v=5" defer></script>
 <%# 全站放开一屏 + 组件细节统一层。放在 /nradio 条件块之外，
      保证 iptables 等精简 head 页面也能加载。 %>
-<link rel="stylesheet" href="<%=media%>/ios-design.css?v=17">
+<link rel="stylesheet" href="<%=media%>/ios-design.css?v=19">
 </head>
 <body class="ios-body" data-model="<%=util.pcdata(model)%>" data-home="<%=homeurl%>" data-embed="0">
 <script>try{if(localStorage.getItem('iosCollapsed')==='1')document.body.classList.add('ios-collapsed')}catch(e){}</script>

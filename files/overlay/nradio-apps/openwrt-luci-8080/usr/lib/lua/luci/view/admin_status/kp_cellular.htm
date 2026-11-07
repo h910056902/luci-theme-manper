@@ -11,10 +11,6 @@
 	local http = require "luci.http"
 	local util = require "luci.util"
 
-	local function num(v)
-		v = tonumber(v)
-		return v
-	end
 	local function fmt_bytes(v)
 		local n = tonumber(v)
 		if not n or n <= 0 then return "—" end
@@ -39,9 +35,41 @@
 		return s, g, cpe
 	end
 
+	-- 信号分级（与运营商经验阈值一致），返回 格数/等级/色/百分比
+	local function rsrp_grade(v)
+		local n = tonumber(v)
+		if not n then return 0, "无信号", "muted", 0 end
+		if n >= -85 then return 5, "极佳", "ok", 100 end
+		if n >= -95 then return 4, "良好", "ok", 78 end
+		if n >= -105 then return 3, "一般", "warn", 56 end
+		if n >= -115 then return 2, "较弱", "warn", 34 end
+		return 1, "很弱", "bad", 16
+	end
+	local function sinr_grade(v)
+		local n = tonumber(v)
+		if not n then return 0, "—" end
+		if n >= 25 then return 100, "优秀" end
+		if n >= 20 then return 82, "良好" end
+		if n >= 13 then return 62, "正常" end
+		if n >= 5 then return 38, "偏弱" end
+		return 16, "很差"
+	end
+	local function rsrq_grade(v)
+		local n = tonumber(v)
+		if not n then return 0, "—" end
+		if n >= -6 then return 100, "优秀" end
+		if n >= -10 then return 80, "良好" end
+		if n >= -15 then return 58, "正常" end
+		if n >= -20 then return 34, "偏弱" end
+		return 14, "很差"
+	end
+
 	-- JSON 模式：给前端轮询用
 	if http.formvalue("state") == "1" then
 		local s, g = read_all()
+		local bars, grade, color, rpct = rsrp_grade(s.rsrp)
+		local spct, sgrade = sinr_grade(s.sinr)
+		local qpct, qgrade = rsrq_grade(s.rsrq)
 		http.prepare_content("application/json")
 		http.write_json({
 			isp = pick(s, { "isp_company", "isp" }),
@@ -55,6 +83,8 @@
 			rsrp = pick(s, { "rsrp" }),
 			rsrq = pick(s, { "rsrq" }),
 			sinr = pick(s, { "sinr" }),
+			bars = bars, grade = grade, color = color, rpct = rpct,
+			spct = spct, sgrade = sgrade, qpct = qpct, qgrade = qgrade,
 			iccid = pick(s, { "iccid" }),
 			imsi = pick(s, { "imsi" }),
 			imei = pick(s, { "imei" }),
@@ -65,6 +95,8 @@
 			revision = pick(s, { "revision" }),
 			mtemp = pick(s, { "model_temp" }),
 			dtemp = tostring(g.device_temp or ""),
+			cpu = tostring(g.cpu or ""),
+			mem = tostring(g.mem or ""),
 			uptime = tostring(g.uptime or cpe.uptime or ""),
 			up = fmt_bytes(s.upload),
 			down = fmt_bytes(s.download),
@@ -102,15 +134,9 @@
 	local down    = fmt_bytes(s.download)
 	local flow    = fmt_bytes(s.sim_flow)
 
-	-- 信号等级（RSRP 分档，与运营商经验值一致）
-	local bars, sgrade, scolor = 0, "无信号", "muted"
-	if rsrp then
-		if rsrp >= -85 then bars, sgrade, scolor = 5, "极佳", "ok"
-		elseif rsrp >= -95 then bars, sgrade, scolor = 4, "良好", "ok"
-		elseif rsrp >= -105 then bars, sgrade, scolor = 3, "一般", "warn"
-		elseif rsrp >= -115 then bars, sgrade, scolor = 2, "较弱", "warn"
-		else bars, sgrade, scolor = 1, "很弱", "bad" end
-	end
+	local bars, sgrade, scolor, rpct = rsrp_grade(rsrp)
+	local spct, sgrade2 = sinr_grade(sinr)
+	local qpct, qgrade  = rsrq_grade(rsrq)
 	local up_days = math.floor(uptime / 86400)
 	local up_hours = math.floor((uptime % 86400) / 3600)
 -%>
@@ -121,10 +147,14 @@
 		<p class="sub">数据实时取自模组（infocd cpestatus），与厂商页面同源 · 每 10 秒刷新</p>
 	</div>
 	<div class="ios-page-actions">
-		<button class="ios-btn" type="button" id="cellRefresh"><i class="fas fa-rotate"></i> 刷新</button>
+		<button class="ios-btn" type="button" id="cellCopy"><i class="fas fa-copy"></i> 复制诊断</button>
+		<a class="ios-btn" href="/cgi-bin/luci/nradio/advanced" target="_blank" rel="noopener">
+			<i class="fas fa-sliders-h"></i> 网络模式 / 频段
+		</a>
 		<a class="ios-btn" href="/cgi-bin/luci/nradio/cellular" target="_blank" rel="noopener">
 			<i class="fas fa-external-link-alt"></i> 原厂页面
 		</a>
+		<button class="ios-btn primary" type="button" id="cellRefresh"><i class="fas fa-rotate"></i> 刷新</button>
 	</div>
 </div>
 
@@ -134,33 +164,74 @@
 		<div class="ios-card-h">
 			<h3>连接状态</h3>
 			<span class="sub"><%=util.pcdata(isp ~= "" and isp or "未注册网络")%></span>
-			<div class="right"><span class="ios-badge <%=scolor == "ok" and "ok" or (scolor == "warn" and "warn" or "")%>" id="cellGrade"><%=util.pcdata(sgrade)%></span></div>
-		</div>
-		<div class="ios-cell-hero">
-			<div class="ios-ring solid" style="--val:<%=bars * 20%>">
-				<div class="in"><b id="cRsrp"><%=rsrp and util.pcdata(tostring(rsrp)) or "—"%></b><small>dBm</small></div>
+			<div class="right">
+				<span class="ios-badge <%=scolor == "ok" and "ok" or (scolor == "warn" and "warn" or "")%>" id="cellGrade"><%=util.pcdata(sgrade)%></span>
 			</div>
-			<div class="ios-cell-meta">
+		</div>
+
+		<div class="cell-hero">
+			<div class="cell-signal">
+				<div class="cell-bars" id="cellBars" data-bars="<%=bars%>">
+					<i></i><i></i><i></i><i></i><i></i>
+				</div>
+				<div class="cell-rsrp">
+					<b id="cRsrp"><%=rsrp and util.pcdata(tostring(rsrp)) or "—"%></b><small>dBm · RSRP</small>
+				</div>
+			</div>
+			<div class="cell-meta">
 				<div class="row"><span>网络制式</span><b id="cMode"><%=util.pcdata(mode ~= "" and mode or "—")%></b></div>
 				<div class="row"><span>频段</span><b id="cBand"><%=band ~= "" and ("n" .. util.pcdata(band)) or "—"%></b></div>
 				<div class="row"><span>带宽</span><b><%=dlbw ~= "" and (tonumber(dlbw) and string.format("%d MHz", tonumber(dlbw) / 1000) or util.pcdata(dlbw)) or "—"%></b></div>
+				<div class="row"><span>实时速率</span><b class="cell-rate"><i class="fas fa-arrow-up" aria-hidden="true"></i><span id="cTx">0 B/s</span><i class="fas fa-arrow-down" aria-hidden="true"></i><span id="cRx">0 B/s</span></b></div>
 			</div>
 		</div>
-		<div class="ios-kpi-row">
-			<div class="ios-kpi"><span>SINR</span><b id="cSinr"><%=sinr and util.pcdata(tostring(sinr)) or "—"%><i> dB</i></b></div>
-			<div class="ios-kpi"><span>RSRQ</span><b id="cRsrq"><%=rsrq and util.pcdata(tostring(rsrq)) or "—"%><i> dB</i></b></div>
-			<div class="ios-kpi"><span>PCI</span><b id="cPci"><%=pci ~= "" and util.pcdata(pci) or "—"%></b></div>
+
+		<!-- 三项质量条 -->
+		<div class="cell-q">
+			<div class="q-row">
+				<span>信号</span>
+				<div class="q-bar"><i style="width:<%=rpct%>%" data-k="rpct"></i></div>
+				<b id="qRsrp"><%=rpct%>%</b>
+			</div>
+			<div class="q-row">
+				<span>SINR</span>
+				<div class="q-bar"><i style="width:<%=spct%>%" data-k="spct"></i></div>
+				<b id="qSinr"><%=sinr and util.pcdata(tostring(sinr)) or "—"%> dB</b>
+			</div>
+			<div class="q-row">
+				<span>RSRQ</span>
+				<div class="q-bar"><i style="width:<%=qpct%>%" data-k="qpct"></i></div>
+				<b id="qRsrq"><%=rsrq and util.pcdata(tostring(rsrq)) or "—"%> dB</b>
+			</div>
 		</div>
+
+		<!-- 信号历史（10s 采样，滚动 10 分钟） -->
+		<div class="cell-hist">
+			<div class="hist-h"><span>信号趋势</span><small id="cHistRange">最近 10 分钟</small></div>
+			<svg id="cHist" viewBox="0 0 300 46" preserveAspectRatio="none" aria-hidden="true">
+				<defs>
+					<linearGradient id="histFill" x1="0" y1="0" x2="0" y2="1">
+						<stop offset="0%" stop-color="rgba(0,96,255,.24)"/>
+						<stop offset="100%" stop-color="rgba(0,96,255,0)"/>
+					</linearGradient>
+				</defs>
+				<path id="cHistFill" d="" fill="url(#histFill)"></path>
+				<polyline id="cHistLine" points="" fill="none" stroke="#0060ff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"></polyline>
+			</svg>
+		</div>
+
 		<div class="ios-kv">
 			<div><span>频点</span><b id="cFcn"><%=fcn ~= "" and util.pcdata(fcn) or "—"%></b></div>
 			<div><span>TAC</span><b id="cTac"><%=tac ~= "" and util.pcdata(tac) or "—"%></b></div>
+			<div><span>PCI</span><b id="cPci"><%=pci ~= "" and util.pcdata(pci) or "—"%></b></div>
 			<div><span>小区 ID</span><b id="cCell"><%=cellid ~= "" and util.pcdata(cellid) or "—"%></b></div>
 			<div><span>运行时间</span><b><%=up_days > 0 and (up_days .. " 天 " .. up_hours .. " 时") or (up_hours .. " 时")%></b></div>
+			<div><span>模组温度</span><b id="cMtemp"><%=mtemp ~= "" and (util.pcdata(mtemp) .. " ℃") or "—"%></b></div>
 		</div>
 	</div>
 
 	<!-- SIM -->
-	<div class="ios-card">
+	<div class="ios-card cell-sim">
 		<div class="ios-card-h">
 			<h3>SIM 卡</h3>
 			<span class="sub"><%=util.pcdata(simname ~= "" and simname or "已识别")%></span>
@@ -172,7 +243,18 @@
 			<div><span>IMEI</span><b class="mono" id="cImei"><%=imei ~= "" and util.pcdata(imei) or "—"%></b></div>
 			<div><span>运营商</span><b><%=util.pcdata(isp ~= "" and isp or "—")%><%=ispcode ~= "" and ("（" .. util.pcdata(ispcode) .. "）") or ""%></b></div>
 		</div>
-		<div class="ios-note info" style="margin-top:12px">
+
+		<!-- SIM 卡诊断：把只读信息转成可判断的结论 -->
+		<div class="cell-diag">
+			<div class="diag-h"><i class="fas fa-stethoscope" aria-hidden="true"></i> SIM 诊断</div>
+			<ul class="diag-list">
+				<li class="<%=iccid ~= "" and "ok" or "bad"%>"><i></i>卡体识别 <b><%=iccid ~= "" and "正常" or "未读到 ICCID"%></b></li>
+				<li class="<%=imsi ~= "" and "ok" or "bad"%>"><i></i>网络注册 <b><%=imsi ~= "" and "已注册" or "未注册"%></b></li>
+				<li class="<%=bars >= 3 and "ok" or (bars == 0 and "bad" or "warn")%>"><i></i>信号质量 <b><%=bars >= 3 and "可用" or (bars == 0 and "无信号" or "偏弱")%></b></li>
+			</ul>
+		</div>
+
+		<div class="ios-note info">
 			<i class="fas fa-sim-card"></i>
 			<span>切换 SIM 卡请到「设置向导 → SIM 卡切换」，本页只读。</span>
 		</div>
@@ -183,14 +265,20 @@
 	<div class="ios-card tight">
 		<div class="ios-card-h"><h3>本月流量</h3></div>
 		<div class="ios-big"><b id="cFlow"><%=flow%></b></div>
+		<div class="cell-flow-bar"><i id="fFlow" style="width:100%"></i></div>
+		<div class="cell-flow-sub">套餐周期内累计</div>
 	</div>
 	<div class="ios-card tight">
 		<div class="ios-card-h"><h3>累计上行</h3></div>
 		<div class="ios-big"><b id="cUp"><%=up%></b></div>
+		<div class="cell-flow-bar up"><i id="fUp" style="width:100%"></i></div>
+		<div class="cell-flow-sub">本次统计周期</div>
 	</div>
 	<div class="ios-card tight">
 		<div class="ios-card-h"><h3>累计下行</h3></div>
 		<div class="ios-big"><b id="cDown"><%=down%></b></div>
+		<div class="cell-flow-bar down"><i id="fDown" style="width:100%"></i></div>
+		<div class="cell-flow-sub">本次统计周期</div>
 	</div>
 </div>
 
@@ -202,7 +290,7 @@
 	<div class="ios-kv">
 		<div><span>型号</span><b id="cModel"><%=model ~= "" and util.pcdata(model) or "—"%></b></div>
 		<div><span>固件版本</span><b class="mono" id="cRev"><%=rev ~= "" and util.pcdata(rev) or "—"%></b></div>
-		<div><span>模组温度</span><b id="cMtemp"><%=mtemp ~= "" and (util.pcdata(mtemp) .. " ℃") or "—"%></b></div>
+		<div><span>模组温度</span><b id="cMtemp2"><%=mtemp ~= "" and (util.pcdata(mtemp) .. " ℃") or "—"%></b></div>
 		<div><span>设备温度</span><b id="cDtemp"><%=dtemp ~= "" and (util.pcdata(dtemp) .. " ℃") or "—"%></b></div>
 	</div>
 </div>
@@ -210,39 +298,154 @@
 <script>
 (function () {
 	'use strict';
-	var btn = document.getElementById('cellRefresh');
+	var $ = function (id) { return document.getElementById(id); };
 	function setText(id, v) {
-		var el = document.getElementById(id);
+		var el = $(id);
 		if (el && v !== undefined && v !== null && v !== '') el.textContent = v;
 	}
+	function fmtRate(bps) {
+		var n = Number(bps);
+		if (!isFinite(n) || n < 0) n = 0;
+		var u = ['B/s', 'KB/s', 'MB/s', 'GB/s'], i = 0;
+		while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+		return (i === 0 ? Math.round(n) : n.toFixed(1)) + ' ' + u[i];
+	}
+	function setBars(n) {
+		var box = $('cellBars');
+		if (!box) return;
+		var list = box.querySelectorAll('i');
+		for (var i = 0; i < list.length; i++) {
+			list[i].className = i < n ? 'on' : '';
+		}
+	}
+	function setWidth(k, pct) {
+		var el = document.querySelector('.cell-q i[data-k="' + k + '"]');
+		if (el) el.style.width = Math.max(0, Math.min(100, pct)) + '%';
+	}
+
+	/* 信号趋势：10s 采样、60 点滚动，用 SVG 折线 + 面积填充 */
+	var HIST = [], MAXP = 60;
+	function pushHist(v) {
+		var n = Number(v);
+		if (!isFinite(n) || n === 0) return;
+		HIST.push(n);
+		if (HIST.length > MAXP) HIST.shift();
+		drawHist();
+	}
+	function drawHist() {
+		var line = $('cHistLine'), fill = $('cHistFill'), range = $('cHistRange');
+		if (!line || !fill) return;
+		if (HIST.length < 2) {
+			/* 首屏还没有两个采样点：明确提示，而不是留一块空白 */
+			if (range) range.textContent = '采样中…';
+			return;
+		}
+		if (range) range.textContent = '最近 10 分钟 · ' + HIST.length + ' 点';
+		var min = -125, max = -75;   /* RSRP 可视范围，越界钳制 */
+		var W = 300, H = 46, pts = [], i, x, y;
+		for (i = 0; i < HIST.length; i++) {
+			x = (i / (MAXP - 1)) * W;
+			y = H - ((Math.max(min, Math.min(max, HIST[i])) - min) / (max - min)) * (H - 4) - 2;
+			pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+		}
+		line.setAttribute('points', pts.join(' '));
+		fill.setAttribute('d', 'M0,' + H + ' L' + pts.join(' L') + ' L' + W + ',' + H + ' Z');
+	}
+
 	function refresh() {
 		fetch(location.pathname + '?state=1', { credentials: 'same-origin', cache: 'no-store' })
 			.then(function (r) { return r.json(); })
 			.then(function (d) {
 				setText('cRsrp', d.rsrp);
-				setText('cSinr', d.sinr);
-				setText('cRsrq', d.rsrq);
-				setText('cPci', d.pci);
 				setText('cBand', d.band ? 'n' + d.band : '');
 				setText('cMode', d.mode);
 				setText('cFcn', d.earfcn);
 				setText('cTac', d.tac);
 				setText('cCell', d.cell);
+				setText('cPci', d.pci);
 				setText('cIccid', d.iccid);
 				setText('cImsi', d.imsi);
 				setText('cImei', d.imei);
 				setText('cModel', d.model);
 				setText('cRev', d.revision);
 				setText('cMtemp', d.mtemp ? d.mtemp + ' ℃' : '');
+				setText('cMtemp2', d.mtemp ? d.mtemp + ' ℃' : '');
 				setText('cDtemp', d.dtemp ? d.dtemp + ' ℃' : '');
 				setText('cFlow', d.flow);
 				setText('cUp', d.up);
 				setText('cDown', d.down);
+
+				setBars(d.bars || 0);
+				setWidth('rpct', d.rpct || 0);
+				setWidth('spct', d.spct || 0);
+				setWidth('qpct', d.qpct || 0);
+				setText('qSinr', d.sinr ? d.sinr + ' dB' : '—');
+				setText('qRsrq', d.rsrq ? d.rsrq + ' dB' : '—');
+				setText('qRsrp', (d.rpct || 0) + '%');
+				var g = $('cellGrade');
+				if (g) {
+					g.textContent = d.grade || '—';
+					g.className = 'ios-badge ' + (d.color === 'ok' ? 'ok' : (d.color === 'warn' ? 'warn' : ''));
+				}
+				pushHist(d.rsrp);
 			})
 			.catch(function () {});
 	}
-	if (btn) btn.addEventListener('click', refresh);
+
+	/* 实时速率：复用外壳的 istore_stats（rx/tx 为字节/秒） */
+	function tickRate() {
+		fetch('/cgi-bin/luci/admin/istore_stats?state=1', { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.json(); })
+			.then(function (d) {
+				if (!d) return;
+				setText('cRx', fmtRate(d.rx));
+				setText('cTx', fmtRate(d.tx));
+			})
+			.catch(function () {});
+	}
+
+	/* 复制诊断信息：便于贴给客服/论坛排查 */
+	var copyBtn = $('cellCopy');
+	if (copyBtn) copyBtn.addEventListener('click', function () {
+		var rows = [
+			['运营商', (($('cellGrade') && '') || '') + (document.querySelector('.ios-card-h .sub') || {}).textContent || ''],
+			['RSRP', ($('cRsrp') || {}).textContent || ''],
+			['SINR', ($('qSinr') || {}).textContent || ''],
+			['RSRQ', ($('qRsrq') || {}).textContent || ''],
+			['制式', ($('cMode') || {}).textContent || ''],
+			['频段', ($('cBand') || {}).textContent || ''],
+			['频点', ($('cFcn') || {}).textContent || ''],
+			['PCI', ($('cPci') || {}).textContent || ''],
+			['TAC', ($('cTac') || {}).textContent || ''],
+			['小区 ID', ($('cCell') || {}).textContent || ''],
+			['ICCID', ($('cIccid') || {}).textContent || ''],
+			['IMEI', ($('cImei') || {}).textContent || ''],
+			['模组', ($('cModel') || {}).textContent || ''],
+			['固件', ($('cRev') || {}).textContent || '']
+		];
+		var text = rows.map(function (r) { return r[0] + ': ' + String(r[1]).trim(); }).join('\n');
+		var done = function () {
+			copyBtn.innerHTML = '<i class="fas fa-check"></i> 已复制';
+			setTimeout(function () { copyBtn.innerHTML = '<i class="fas fa-copy"></i> 复制诊断'; }, 1600);
+		};
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(text).then(done).catch(function () {});
+		} else {
+			var ta = document.createElement('textarea');
+			ta.value = text; document.body.appendChild(ta); ta.select();
+			try { document.execCommand('copy'); done(); } catch (e) {}
+			document.body.removeChild(ta);
+		}
+	});
+
+	var btn = $('cellRefresh');
+	if (btn) btn.addEventListener('click', function () { refresh(); tickRate(); });
+	refresh();
+	tickRate();
+	/* 首屏 1.5s 补一次采样，趋势图不用等满 10 秒才有第二个点 */
+	setTimeout(refresh, 1500);
 	setInterval(refresh, 10000);
+	setInterval(tickRate, 2000);
 })();
 </script>
 <%+footer%>

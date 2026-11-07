@@ -287,6 +287,101 @@ body :where(.progress) > :where(.progress-bar){
 .ios-content .ios-bar.warn > i{box-shadow:0 0 10px rgba(255,143,31,.28)}
 .ios-content .ios-bar.bad > i{box-shadow:0 0 10px rgba(245,72,74,.28)}
 
+/* ---------------------------- ㉑ 蜂窝详情 ---------------------------- */
+/* 信号柱 + RSRP 大数字 + 实时速率 */
+.cell-hero{display:flex;gap:18px;align-items:center;margin:8px 0 14px}
+.cell-signal{display:flex;align-items:flex-end;gap:14px}
+.cell-bars{display:flex;align-items:flex-end;gap:4px;height:38px}
+.cell-bars i{
+  width:8px;height:12px;border-radius:3px 3px 2px 2px;
+  background:linear-gradient(180deg,#dfe9f6,#e9f1fa);
+  transition:background .22s ease,box-shadow .22s ease;
+}
+.cell-bars i:nth-child(1){height:12px}
+.cell-bars i:nth-child(2){height:18px}
+.cell-bars i:nth-child(3){height:24px}
+.cell-bars i:nth-child(4){height:30px}
+.cell-bars i:nth-child(5){height:36px}
+.cell-bars i.on{
+  background:linear-gradient(180deg,#38b6ff,#0060ff);
+  box-shadow:0 0 8px rgba(0,96,255,.30);
+}
+.cell-rsrp b{
+  display:block;
+  font:700 30px/1 var(--mono,ui-monospace,monospace);
+  color:#1e2b48;letter-spacing:-1px;
+  font-variant-numeric:tabular-nums;
+}
+.cell-rsrp small{display:block;margin-top:3px;font-size:10.5px;color:#8898aa;letter-spacing:.1px}
+.cell-meta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}
+.cell-meta .row{display:flex;justify-content:space-between;gap:12px;font-size:11.5px;color:#8898aa}
+.cell-meta .row b{color:#1e2b48;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell-rate{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono,monospace);font-size:11px}
+.cell-rate i{font-size:9px;color:#94a3b8}
+.cell-rate span{font-variant-numeric:tabular-nums}
+.cell-rate #cTx{color:#00935f}
+.cell-rate #cRx{color:#0052d9}
+
+/* 三项质量条 */
+.cell-q{display:flex;flex-direction:column;gap:8px;margin:2px 0 14px}
+.cell-q .q-row{display:grid;grid-template-columns:44px 1fr 78px;gap:10px;align-items:center}
+.cell-q .q-row>span{font-size:11px;color:#8898aa}
+.cell-q .q-bar{
+  height:6px;border-radius:999px;overflow:hidden;
+  background:linear-gradient(180deg,#eef4fc,#e6eefb);
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.12);
+}
+.cell-q .q-bar i{
+  display:block;height:100%;border-radius:999px;
+  background:linear-gradient(90deg,#38b6ff,#0060ff 62%,#7ae8ff);
+  box-shadow:0 0 8px rgba(0,96,255,.26);
+  transition:width .5s cubic-bezier(.2,.7,.3,1);
+}
+.cell-q .q-row>b{
+  text-align:right;font:600 10.5px/1 var(--mono,monospace);
+  color:#1e2b48;font-variant-numeric:tabular-nums;
+}
+
+/* 信号趋势 */
+.cell-hist{margin:0 0 14px}
+.cell-hist .hist-h{display:flex;justify-content:space-between;font-size:10.5px;color:#8898aa;margin-bottom:4px}
+.cell-hist svg{width:100%;height:46px;display:block}
+
+/* SIM 诊断 */
+.cell-diag{
+  margin:14px 0 10px;padding:10px 12px;
+  border-radius:10px;background:rgba(248,251,255,.85);
+  box-shadow:0 0 0 1px rgba(30,50,90,.06);
+}
+.cell-diag .diag-h{
+  display:flex;align-items:center;gap:6px;
+  font-size:11px;font-weight:600;color:#5b6b8c;margin-bottom:7px;
+}
+.cell-diag .diag-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.cell-diag .diag-list li{display:flex;align-items:center;gap:7px;font-size:11px;color:#1e2b48}
+.cell-diag .diag-list li i{
+  width:6px;height:6px;border-radius:50%;flex:0 0 6px;background:#c8d6e6;
+}
+.cell-diag .diag-list li.ok i{background:#00b578;box-shadow:0 0 0 3px rgba(0,181,120,.14)}
+.cell-diag .diag-list li.warn i{background:#ff8f1f;box-shadow:0 0 0 3px rgba(255,143,31,.14)}
+.cell-diag .diag-list li.bad i{background:#f5484a;box-shadow:0 0 0 3px rgba(245,72,74,.14)}
+.cell-diag .diag-list li b{
+  margin-left:auto;font-weight:600;font-size:10.5px;color:#5b6b8c;
+}
+
+/* 流量卡占比条 */
+.cell-flow-bar{height:5px;border-radius:999px;background:#eef4fc;margin:9px 0 5px;overflow:hidden}
+.cell-flow-bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#38b6ff,#0060ff)}
+.cell-flow-bar.up i{background:linear-gradient(90deg,#12c98c,#00b578)}
+.cell-flow-bar.down i{background:linear-gradient(90deg,#7ae8ff,#009aff)}
+.cell-flow-sub{font-size:10px;color:#94a3b8;letter-spacing:.1px}
+/* SIM 卡内容比左卡短，不参与等高拉伸，避免下半部大片空白 */
+.cell-sim{align-self:start}
+@media(max-width:760px){
+  .cell-hero{flex-direction:column;align-items:flex-start;gap:12px}
+  .cell-q .q-row{grid-template-columns:40px 1fr 70px}
+}
+
 /* ---------------------------- ⑮ 全站表格统一 ---------------------------- */
 /* 旧版问题：裸 table 无圆角、border-collapse:collapse、表头纯色或无表头区分、
    td padding 不一致（3/6/8/26/28px）。这里分两层：
