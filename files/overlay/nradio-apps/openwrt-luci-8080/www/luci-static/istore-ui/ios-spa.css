@@ -1,6 +1,6 @@
 /* ==========================================================================
    ios-spa.css · 单页控制台层
-   · 侧栏搜索 / 常用收藏 / 底部实时状态
+   · 侧栏搜索 / 菜单分组 / 底部实时状态
    · 顶栏指标区 / 图标按钮
    · 内容区单 iframe 容器、骨架屏、失败提示
    · Ctrl+K 命令面板
@@ -49,23 +49,7 @@
 }
 body.ios-collapsed .ios-search{display:none}
 
-/* ---------------------------- 侧栏：收藏 ---------------------------- */
-.ios-nav-t.is-static{cursor:default}
-.ios-nav-t.is-static:hover{background:transparent;color:var(--ink-3)}
-.ios-nav-g.ios-fav{margin-top:2px}
-.ios-nav-g.ios-fav > .ios-nav-t .gi{color:#f5a623}
-
 .ios-nav-i{position:relative}
-.fav-btn{
-  position:absolute;right:4px;top:50%;transform:translateY(-50%);
-  width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;
-  border:0;border-radius:6px;background:transparent;color:var(--ink-3);
-  cursor:pointer;opacity:0;transition:opacity .15s,color .15s,background .15s;font-size:11px;
-}
-.ios-nav-i:hover .fav-btn{opacity:.75}
-.fav-btn:hover{background:var(--surface-3);color:#e09a12;opacity:1}
-.fav-btn.on{opacity:1;color:#f5a623}
-body.ios-collapsed .fav-btn{display:none}
 
 /* ---------------------------- 侧栏：状态块 ---------------------------- */
 .ios-side-stats{
@@ -174,7 +158,6 @@ body.ios-collapsed .ios-view{left:72px}
 .ios-cmd-item > i:first-child{width:15px;text-align:center;font-size:12px;color:var(--ink-3)}
 .ios-cmd-item .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ios-cmd-item .gp{font-size:11px;color:var(--ink-3);background:var(--surface-3);border-radius:999px;padding:1px 8px}
-.ios-cmd-item .fav{color:#f5a623;font-size:11px}
 .ios-cmd-item.on{background:var(--brand-soft);color:var(--brand)}
 .ios-cmd-item.on > i:first-child{color:var(--brand)}
 .ios-cmd-empty{padding:26px 14px;text-align:center;font-size:12.5px;color:var(--ink-3);line-height:1.7}

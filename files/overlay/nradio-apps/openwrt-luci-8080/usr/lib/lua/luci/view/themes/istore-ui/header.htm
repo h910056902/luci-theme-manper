@@ -1,6 +1,6 @@
 <%#
  istore-ui · 第三套主题外壳（自研，iStoreOS 视觉语言）
- · 左侧白色侧栏（分组 + 二级菜单 + 搜索 + 常用） / 顶部吸顶页头（面包屑 + 实时指标） / 浅色内容区
+ · 左侧白色侧栏（分组 + 二级菜单 + 搜索） / 顶部吸顶页头（面包屑 + 实时指标） / 浅色内容区
  · 单页控制台：侧栏常驻，内容区由 ios-spa.js 用单 iframe 无刷新切换；首屏仍走服务端渲染
  · 嵌入模式（_embed=1）：只输出精简骨架，供 iframe 内部页面使用；脱离外壳直接打开时自动回跳
  · 媒体目录 /luci-static/istore-ui，模板目录 themes/istore-ui（= mediaurlbase 的 basename）
@@ -317,9 +317,9 @@
 <link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
 <link rel="stylesheet" href="<%=media%>/istore-ui.css?v=9">
 <link rel="stylesheet" href="<%=media%>/ios-ops.css?v=2">
-<link rel="stylesheet" href="<%=media%>/ios-spa.css?v=2">
+<link rel="stylesheet" href="<%=media%>/ios-spa.css?v=3">
 <link rel="stylesheet" href="<%=media%>/ios-fit.css?v=2">
-<link rel="stylesheet" href="<%=media%>/ios-look.css?v=4">
+<link rel="stylesheet" href="<%=media%>/ios-look.css?v=5">
 <link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=9">
 <link rel="stylesheet" href="<%=media%>/ios-tokens.css?v=1">
 <%
@@ -358,10 +358,10 @@
 <title><%=util.pcdata(title)%> · <%=util.pcdata(model)%></title>
 <link rel="stylesheet" href="/fontawesome/all.min.css?v=1">
 <link rel="stylesheet" href="<%=media%>/istore-ui.css?v=9">
-<link rel="stylesheet" href="<%=media%>/ios-spa.css?v=2">
+<link rel="stylesheet" href="<%=media%>/ios-spa.css?v=3">
 <link rel="stylesheet" href="<%=media%>/ios-ops.css?v=2">
 <link rel="stylesheet" href="<%=media%>/ios-fit.css?v=2">
-<link rel="stylesheet" href="<%=media%>/ios-look.css?v=4">
+<link rel="stylesheet" href="<%=media%>/ios-look.css?v=5">
 <link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=9">
 <link rel="stylesheet" href="<%=media%>/ios-tokens.css?v=1">
 <%
@@ -385,8 +385,8 @@
 <% if _need_jq then %><script>window.jQuery || document.write('<script src="/luci-static/nradio/js/jquery.min.js"><\/script>');</script><% end %>
 <script src="/luci-static/resources/cbi.js"></script>
 <script src="/luci-static/resources/xhr.js"></script>
-<script src="<%=media%>/shell.js?v=13" defer></script>
-<script src="<%=media%>/ios-spa.js?v=5" defer></script>
+<script src="<%=media%>/shell.js?v=14" defer></script>
+<script src="<%=media%>/ios-spa.js?v=6" defer></script>
 <%# 全站放开一屏 + 组件细节统一层。放在 /nradio 条件块之外，
      保证 iptables 等精简 head 页面也能加载。 %>
 <link rel="stylesheet" href="<%=media%>/ios-design.css?v=31">
@@ -410,12 +410,6 @@
 		<kbd>Ctrl K</kbd>
 	</div>
 	<nav class="ios-nav" aria-label="主导航">
-		<div class="ios-nav-g ios-fav" id="iosFav" hidden>
-			<div class="ios-nav-t is-static">
-				<i class="fas fa-star gi" aria-hidden="true"></i><span>常用</span>
-			</div>
-			<div class="ios-nav-c" id="iosFavList"></div>
-		</div>
 		<%
 			for _, g in ipairs(GROUPS) do
 				local items = buckets[g.key]

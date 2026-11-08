@@ -28,7 +28,7 @@
 	var timer = null;
 	var loading = false;
 
-	/* 侧栏给的是路径，也可能传来同源绝对 URL（脚本调用 / 收藏链接），统一归一 */
+	/* 侧栏给的是路径，也可能传来同源绝对 URL（脚本调用 / 快捷链接），统一归一 */
 	function normalize(u) {
 		if (!u) return u;
 		if (u.charAt(0) === '/') return u;

@@ -1,6 +1,6 @@
 /* istore-ui · 外壳交互
    · 整栏折叠（桌面 72px 图标栏 / 窄屏抽屉）与分组折叠，均持久化
-   · 菜单搜索、常用收藏置顶、实时状态（顶栏 + 侧栏底部）
+   · 菜单搜索、实时状态（顶栏 + 侧栏底部）
    · 快捷键：Ctrl+K 命令面板、[ 折叠侧栏、Esc 关闭
    依赖：无（原生 ES5）；与 ios-spa.js 通过 ios:navigate 事件和 window.IosSpa 协作
 */
@@ -9,7 +9,6 @@
 	var body = document.body;
 	var KEY = 'iosCollapsed';
 	var KGRP = 'iosGroups';
-	var KFAV = 'iosFav';
 	var burger = document.getElementById('iosBurger');
 	var backdrop = document.getElementById('iosBackdrop');
 	var collapse = document.getElementById('iosCollapse');
@@ -104,9 +103,7 @@
 
 	/* ---------- 菜单索引 ---------- */
 	function menuItems() {
-		return Array.prototype.slice.call(document.querySelectorAll('.ios-nav-i[data-path]')).filter(function (a) {
-			return !(favList && favList.contains(a));
-		});
+		return Array.prototype.slice.call(document.querySelectorAll('.ios-nav-i[data-path]'));
 	}
 	function itemData(a) {
 		return {
@@ -158,67 +155,6 @@
 		setActive(u);
 		pushRecent(u);
 	});
-
-	/* ---------- 常用收藏 ---------- */
-	var favs = [];
-	try { favs = JSON.parse(localStorage.getItem(KFAV) || '[]') || []; } catch (e) { favs = []; }
-	var favBox = document.getElementById('iosFav');
-	var favList = document.getElementById('iosFavList');
-
-	function saveFavs() { try { localStorage.setItem(KFAV, JSON.stringify(favs)); } catch (e) {} }
-	function isFav(url) { return favs.indexOf(url) >= 0; }
-	function toggleFav(url) {
-		var i = favs.indexOf(url);
-		if (i >= 0) favs.splice(i, 1); else favs.push(url);
-		saveFavs();
-		renderFavs();
-		renderFavButtons();
-	}
-	function renderFavs() {
-		if (!favBox || !favList) return;
-		favList.innerHTML = '';
-		var all = menuItems();
-		var map = {};
-		all.forEach(function (a) { map[a.getAttribute('data-path')] = a; });
-		favs.forEach(function (u) {
-			var src = map[u];
-			if (!src) return;
-			var d = itemData(src);
-			var a = document.createElement('a');
-			a.className = 'ios-nav-i';
-			a.href = d.url;
-			a.setAttribute('data-path', d.url);
-			a.setAttribute('data-label', d.label);
-			a.setAttribute('data-icon', d.icon);
-			a.setAttribute('data-group', 'fav');
-			a.setAttribute('data-gtitle', '常用');
-			a.innerHTML = '<i class="fas ' + d.icon + '" aria-hidden="true"></i><span>' + d.label + '</span>';
-			favList.appendChild(a);
-		});
-		favBox.hidden = favList.children.length === 0;
-	}
-	function renderFavButtons() {
-		Array.prototype.forEach.call(document.querySelectorAll('.ios-nav-i[data-path]'), function (a) {
-			var url = a.getAttribute('data-path');
-			var btn = a.querySelector('.fav-btn');
-			if (!btn) {
-				btn = document.createElement('button');
-				btn.type = 'button';
-				btn.className = 'fav-btn';
-				btn.setAttribute('aria-label', '收藏此页');
-				btn.addEventListener('click', function (ev) {
-					ev.preventDefault();
-					ev.stopPropagation();
-					toggleFav(url);
-				});
-				a.appendChild(btn);
-			}
-			btn.innerHTML = '<i class="fas ' + (isFav(url) ? 'fa-star' : 'fa-star-o') + '"></i>';
-			btn.classList.toggle('on', isFav(url));
-		});
-	}
-	renderFavs();
-	renderFavButtons();
 
 	/* ---------- 搜索过滤 ---------- */
 	var search = document.getElementById('iosSearch');
@@ -442,8 +378,6 @@
 		var rows = Object.keys(map).map(function (k) { return map[k]; });
 		rows.sort(function (a, b) {
 			if (b.s !== a.s) return b.s - a.s;
-			var fa = isFav(a.d.url) ? 0 : 1, fb = isFav(b.d.url) ? 0 : 1;
-			if (fa !== fb) return fa - fb;
 			var ra = recentRank(a.d.url), rb = recentRank(b.d.url);
 			if (ra !== rb) return ra - rb;
 			return String(a.d.label).localeCompare(String(b.d.label), 'zh');
@@ -464,8 +398,7 @@
 			el.innerHTML = '<i class="fas ' + escHtml(d.icon) + '" aria-hidden="true"></i>' +
 				'<span class="lb">' + markHtml(d.label, q) + '</span>' +
 				(recentRank(d.url) < 99 ? '<span class="rc">最近</span>' : '') +
-				(d.group ? '<span class="gp">' + escHtml(d.group) + '</span>' : '') +
-				(isFav(d.url) ? '<i class="fas fa-star fav" aria-hidden="true"></i>' : '');
+				(d.group ? '<span class="gp">' + escHtml(d.group) + '</span>' : '');
 			cmdList.appendChild(el);
 		});
 	}
