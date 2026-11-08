@@ -48,11 +48,11 @@
 <% if _packages then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-packages.css?v=2"><% end %>
 <% if _realtime then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-realtime.css?v=2"><% end %>
 </main>
-<script src="/luci-static/istore-ui/ios-enhance.js?v=9" defer></script>
+<script src="/luci-static/istore-ui/ios-enhance.js?v=10" defer></script>
 <% if _ocspeed then %><script src="/luci-static/istore-ui/ios-ocspeed.js?v=4" defer></script><% end %>
 <% if _realtime then %><script src="/luci-static/istore-ui/ios-realtime.js?v=1" defer></script><% end %>
 <%# 全站放开一屏 + 组件细节统一层：必须最后加载，才能覆盖前面所有高度/overflow 锁 %>
-<link rel="stylesheet" href="/luci-static/istore-ui/ios-design.css?v=30">
+<link rel="stylesheet" href="/luci-static/istore-ui/ios-design.css?v=31">
 <script>
 /* 嵌入态：脱壳保护 + 内部链接/表单保持 _embed + 向父窗口回报状态 */
 (function () {
@@ -138,11 +138,11 @@
 <% if _realtime then %><link rel="stylesheet" href="/luci-static/istore-ui/ios-realtime.css?v=2"><% end %>
 <%# 全站运维层：卡片折叠 / 脏标记保存条（运维指标已并入吸顶页头） %>
 <link rel="stylesheet" href="/luci-static/istore-ui/ios-ops.css?v=2">
-<script src="/luci-static/istore-ui/ios-enhance.js?v=9" defer></script>
+<script src="/luci-static/istore-ui/ios-enhance.js?v=10" defer></script>
 <% if _ocspeed then %><script src="/luci-static/istore-ui/ios-ocspeed.js?v=4" defer></script><% end %>
 <% if _realtime then %><script src="/luci-static/istore-ui/ios-realtime.js?v=1" defer></script><% end %>
 <%# 全站放开一屏 + 组件细节统一层：必须最后加载，才能覆盖前面所有高度/overflow 锁 %>
-<link rel="stylesheet" href="/luci-static/istore-ui/ios-design.css?v=30">
+<link rel="stylesheet" href="/luci-static/istore-ui/ios-design.css?v=31">
 	</main>
 </div><!-- /ios-main -->
 </div><!-- /ios-shell -->

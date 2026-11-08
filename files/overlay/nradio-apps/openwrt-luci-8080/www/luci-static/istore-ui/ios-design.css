@@ -700,6 +700,30 @@ body :where(.progress) > :where(.progress-bar){
   margin:10px 0!important;
 }
 
+/* ---------------------------- ㉗ 短页紧凑化 ---------------------------- */
+/* 全站放开一屏后，ios-shortpage.css 仍把 form 与首个 fieldset 撑到视口高度，
+   备份/升级等短页因此凭空留出 130px+ 空白。这里归零，卡片按内容自然收拢。 */
+body #maincontent > form{min-height:0!important}
+body #maincontent > form > div.cbi-map > fieldset.cbi-section.ios-card:first-of-type{min-height:0!important}
+body #maincontent > .ios-card,
+body #maincontent > .P > .ios-card{min-height:0!important}
+/* 备份/升级页专用：卡片内边距、表单行距、说明文字、操作条全部收紧 */
+body.ios-page-flashops #maincontent fieldset.cbi-section.ios-card{
+  padding:8px 14px 10px!important;
+  margin-bottom:10px!important;
+}
+body.ios-page-flashops #maincontent .cbi-value{
+  padding:5px 0!important;gap:5px 14px!important;
+}
+body.ios-page-flashops #maincontent .cbi-value-title,
+body.ios-page-flashops #maincontent .cbi-value-field{font-size:11.5px}
+body.ios-page-flashops #maincontent .cbi-section-descr{
+  margin:0 0 6px!important;font-size:10.5px!important;line-height:1.5!important;
+}
+body.ios-page-flashops #maincontent .cbi-page-actions{
+  margin-top:8px!important;padding:8px 2px 2px!important;
+}
+
 @media(max-width:960px){
   .ios-side{
     position:fixed!important;left:0!important;top:0!important;bottom:0!important;

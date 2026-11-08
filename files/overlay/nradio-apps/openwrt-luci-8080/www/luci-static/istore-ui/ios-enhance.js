@@ -268,6 +268,10 @@
    -------------------------------------------------------------------------- */
 (function () {
 	'use strict';
+	/* 页面级标记：备份/升级页需要专用紧凑排版 */
+	if (/\/system\/flashops(\/|$|\?)/.test(location.pathname)) {
+		document.body.classList.add('ios-page-flashops');
+	}
 	if (typeof window.create_info_box !== 'function') {
 		window.create_info_box = function (opt) {
 			opt = opt || {};
