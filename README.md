@@ -25,9 +25,9 @@
 - **侧栏不重绘**：点任意菜单都在右侧 iframe 内无刷新换页，地址栏同步，浏览器始终只有一个页面；首屏仍走服务端渲染，不额外请求
 - **一屏总览**：默认落地「仪表盘」，上行链路 / 在线终端 / 内存 / 温度四宫格，叠加连接状态、资源占用、Wi-Fi、终端与服务状态、常用入口九宫格
 - **侧栏能力**：菜单搜索、常用收藏置顶（星标）、分组折叠、整栏 72px 图标栏（hover 气泡）、底部实时状态（WAN / 终端 / 负载 / 温度）
-- **侧栏固定不滚动**：分组采用手风琴（一次只展开当前分组，服务端渲染时已做静态兜底），菜单区没有滚动条，所有入口常驻一屏
-- **每页只有一屏**：全局紧凑布局 + 轻度等比缩放；超长页面自动切成「页内分段」导航，页面级永远不出现滚动条，单块过长时仅块内可滚动以保证内容可达
-- **视觉层独立**：`ios-look.css` 只覆写颜色/阴影/圆角/字重与伪元素（深蓝锚点 + 玻璃渐变 + 克制微动效），不参与布局，可单独去掉回滚
+- **侧栏分组手风琴**：一次只展开当前分组（服务端渲染时已做静态兜底），菜单区不滚动，所有入口常驻一屏
+- **自然滚动（已放开一屏）**：页面级可滚动，`sticky` 侧栏与顶栏始终固定；`ios-fit.js` 已停用，不再做页内分段 / 等比缩放，超长表格与日志改用块内滚动、分页渲染保证内容可达
+- **视觉层独立**：`ios-design.css` 作为最后加载的统一层，用 `:where()` 低特异性基线覆盖全站按钮 / 表格 / 进度条 / 卡片；`ios-look.css` 只覆写颜色、阴影、圆角、字重与伪元素（深蓝锚点 + 玻璃渐变 + 克制微动效），不参与布局，可单独去掉回滚
 - **快捷键**：`Ctrl+K` 命令面板（搜索直达任意页面，↑↓ 选择 / Enter 打开）、`[` 折叠侧栏、`Esc` 关闭
 - **安全网**：切页前拦截未保存改动；加载骨架 + 12 秒超时；异常时提供「整页打开」兜底；会话过期自动回登录页
 - **嵌入模式**：iframe 内页面以 `_embed=1` 精简渲染（不带侧栏顶栏），内部链接与表单自动保持该标记；直接打开带 `_embed` 的地址会自动脱壳回完整页
@@ -41,6 +41,50 @@ uci commit argon
 
 > 80 端口原 LuCI 与其余两套主题（manper / myos）完全不受影响。
 
+### 近期升级（2026-11）
+
+| 模块 | 说明 |
+| --- | --- |
+| 组件统一 | 进度条统一 8px 胶囊轨道 + 品牌渐变 + 扫光（含 ocspeed 步骤条）；数据表统一圆角 12 + sticky 渐变表头 + 斑马纹 + hover；键值表单独分层，不套表头 |
+| 原厂内联样式清理 |  LuCI 纯内联的 200px / 300px 灰框进度条、`<EMBED>` 黑框、HTML4 `<font>`、`float:left` 图标、`#EEEEEE` 网卡盒、`<fieldset>` 默认 `2px groove` 直角框、`<hr>` 深灰线 —— 全部用属性选择器 / 最后加载层覆盖 |
+| 系统日志 + 内核日志 | 统一查看器替代裸 `textarea`：等宽字体 + 行号 + 错误/警告分级着色、搜索高亮、级别 chips、自动刷新（5s）、复制、下载 `.log`、点击展开长行、固定高度内部滚动（不再撑到 19000px） |
+| 系统进程管理 | 新增 `/admin/status/procmgr`：`/proc` 两次 300ms 采样算 CPU%，`VmRSS` 取内存，搜索 / 状态筛选 / 四字段排序 / 5s 轮询；识别 **199 项插件与服务**（LuCI 应用 + `init.d` + ubus），运行中约 107 项，支持隐藏系统项、勾选批量清日志、停止 / 启动 / 重启 / 清运行时缓存（openclash 实测通过） |
+| 内存清理 | 分级 `drop_caches`（轻量仅页缓存 / 标准全部缓存）、清理前可用率提示（≥70% 提示通常无需清理）、最近 5 次清理历史；openclash 等耗时服务操作后台异步执行避免 CGI 超时 |
+| 全局搜索 | 命令面板从「只搜侧栏菜单」扩展为「侧栏 + 已访问页面索引 + 页内 `h2/h3/legend` 小标题」，相关度排序、关键词高亮、多关键词 AND、侧栏无结果时一键跳全页面搜索 |
+| 蜂窝详情 | 5 格信号柱 + RSRP 大数字、信号/SINR/RSRQ 质量条、SVG 信号趋势、实时上下行速率、SIM 三项诊断、三张流量卡占比条、复制诊断与快捷入口 |
+| 表单与短页 | 系统属性页移除 fieldset 默认边框并修 Bootstrap 输入组 flex（NTP 上下移动按钮不再被挤出）；备份/升级页去掉残留的「一屏撑满」`min-height`，外层卡片 650→450px |
+| 深度审计 | 35 页浏览器实测（样式计算值 + 真实点击 + 接口 / JS / console / 资源异常 + 逐页截图）；补 `create_info_box` 兼容垫片、过滤不安全的 XHR 请求头 |
+
+验收基线：**34 页回归 34/34**、渲染扫描异常页 0 / JS 异常 0、设计层加载 35/35、横向溢出 0。详见仓库内 `build/UI-MODERNIZE.md`、`DEEP-AUDIT.md`、`PROCESS-MANAGER.md`、`CELLULAR-UPGRADE.md`、`SEARCH-ENHANCE.md`（若随包分发）。
+
+### 第三套主题截图集
+
+以下截图均为**当前最新版**（1440×900，移动端为 390×844），随仓库 `res/` 一起分发：
+
+| 截图 | 内容 |
+| --- | --- |
+| `preview-istore.png` | 仪表盘首页：四宫格 + 连接状态 + 资源占用 + Wi-Fi / 服务 / 常用入口 |
+| `istore-overview.png` | 系统信息：胶囊渐变进度条 + 白胶囊数字 + 现代化键值表 |
+| `istore-cellular.png` | 蜂窝详情：信号柱 / 质量条 / 趋势 / SIM 诊断 / 流量卡 |
+| `istore-syslog.png` | 系统日志查看器：搜索 / 级别筛选 / 自动刷新 / 分级着色 |
+| `istore-dmesg.png` | 内核日志查看器：1132 行固定高度滚动 + 行号 |
+| `istore-procmgr.png` | 进程管理：4 KPI + 可排序进程表 + 工具栏 |
+| `istore-plugins.png` | 插件运行区：来源标签 / 运行状态 / 关联进程 / 批量操作 |
+| `istore-flashops.png` | 备份/升级紧凑化后的表单卡片 |
+| `istore-network.png` | 网络接口：现代化网卡盒与数据表 |
+| `istore-search.png` | 全局搜索：原厂页面名 / 页内小标题命中与高亮 |
+| `istore-mobile.png` | 390px 移动端：抽屉侧栏 + 自适应卡片 |
+
+**几张典型页**
+
+![istore-procmgr](res/istore-procmgr.png)
+
+![istore-syslog](res/istore-syslog.png)
+
+![istore-cellular](res/istore-cellular.png)
+
+另有 `res/allpages_contact.png`（34 页缩略图拼图）用于整体一致性检查。
+
 ## 📸 预览
 
 **manper 定制风格（默认）**
@@ -51,8 +95,13 @@ uci commit argon
 
 ![preview-myos](res/preview-myos.png)
 
-> 两套主题并行安装、随时切换：8080 界面「系统 → Argon 主题设置 → 界面风格」。
-> `manper` = 星空登录页 + 驾驶舱首页等定制外观；`orig` = 上游 luci-theme-argon 原版外观（紫蓝 #5e72e4、浅色经典布局）。
+**iStoreOS 风格（第三套主题 · 自研单页控制台）**
+
+![preview-istore](res/preview-istore.png)
+
+> 三套主题并行安装、随时切换：8080 界面「系统 → Argon 主题设置 → 界面风格」。
+> `manper` = 星空登录页 + 驾驶舱首页；`myos` = 上游 MYOS UI 外观移植；`istore` = 浅色卡片 + 蓝色渐变的单页控制台。
+> 第三套主题说明见上方专章，完整截图集见文末「第三套主题截图集」。
 
 ## 🚀 快速上手
 
@@ -133,6 +182,11 @@ uci commit argon
 | 外壳交互 | `www/luci-static/istore-ui/shell.js`（抽屉菜单/时钟/高亮兜底） |
 | 外壳模板 | `view/themes/istore-ui/{header,footer,sysauth}.htm`（侧栏 + 顶栏 + 渐变登录页） |
 | 首页 | `view/admin_status/istore_home.htm`（连接/资源/Wi-Fi/终端/服务/自动测速，10s 轮询） |
+| 统一设计层 | `www/luci-static/istore-ui/ios-design.css`（最后加载；进度条 / 表格 / 日志 / 进程 / 蜂窝 / 表单的统一基线） |
+| 日志查看器 | `www/luci-static/istore-ui/ios-logs.js` + `view/admin_status/{kp_syslog,dmesg}.htm` |
+| 进程管理 | `usr/lib/lua/luci/controller/kp_procmgr.lua` + `view/admin_status/kp_procmgr.htm`（状态 → 进程管理） |
+| 外壳增强 | `www/luci-static/istore-ui/ios-enhance.js`（脏条检测、原厂 `create_info_box` 垫片、XHR 不安全头过滤、页面标记） |
+| 搜索与索引 | `shell.js`（命令面板）+ `ios-spa.js`（已访问页面 / 页内小标题索引） |
 
 该模式下保留原厂调度树（`/nradio/*` 全部可用），并在侧栏注入「设置向导」与「原厂页面」分组。
 
