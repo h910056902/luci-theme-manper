@@ -374,3 +374,25 @@ start() {
 
 改完 `/etc/init.d/lingti restart` 即可；之后重装/升级不再卡住
 （实测：修复后 `lingti` 的 fd1/fd2 指向 `/dev/null`，`apk add` 正常结束）。
+
+### 灵缇手机 App「检测不到环境」的排查
+
+路由器侧判据（全部应满足）：
+
+| 检查 | 命令 | 期望 |
+| --- | --- | --- |
+| 进程唯一 | `ps w \| grep "[v]ar/bin/lingti"` | **只有 1 个** |
+| 端口监听 | `netstat -lntup \| grep 9666` | TCP+UDP 均在 LISTEN |
+| TCP 可连 | `curl -v -m4 http://192.168.66.1:9666/` | `Empty reply from server`（TCP 通，非 HTTP 服务） |
+| 插件状态 | `/cgi-bin/luci/admin/services/lingti/status` | `{"running":true}` |
+| 开关 | `uci get lingti.lingti.enabled` | `1` |
+| 防火墙 | `zone_lan_input` 为 ACCEPT | LAN 可达 |
+
+**曾出现的故障**：`/etc/init.d/lingti` 与 `/etc/init.d/lingti_luci` **两个脚本都直接启动二进制**，
+且都没有防重入 → 反复点「保存并应用」会累积多个 `lingti` 进程抢 9666，插件状态不稳，App 就扫不到环境。
+
+**修复**：`lingti` 的 `start()` 改为幂等（已在跑就直接返回）、输出重定向到 `/dev/null`；
+`lingti_luci` 不再直启，统一委托 `/etc/init.d/lingti start`。
+
+**若仍检测不到**，按顺序排查：手机与路由器是否同一 Wi-Fi/网段（192.168.66.x）→
+手机是否挂着 VPN/分流 → App 内删除旧设备重新扫描配对 → 路由器上确认上表全部为绿。
