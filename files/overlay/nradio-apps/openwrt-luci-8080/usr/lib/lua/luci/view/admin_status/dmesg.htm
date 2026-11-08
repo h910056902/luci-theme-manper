@@ -1,0 +1,33 @@
+<%#
+ istore-ui · 内核日志（统一查看器）
+ 原厂 admin_status/dmesg.htm 用 rows=<行数+2> 渲染 textarea，
+ 1132 行会把页面撑到 19000px、字体还是系统 UI 字体。
+ 这里改为固定高度的可滚动日志视图，数据仍来自 dmesg。
+ 支持 ?action=fetch 返回 JSON。
+-%>
+<%
+	local http = require "luci.http"
+	local util = require "luci.util"
+	local sys  = require "luci.sys"
+
+	local function read_log()
+		local a = util.trim(sys.exec("dmesg 2>/dev/null | tail -n 1500") or "")
+		if a ~= "" then return a, "dmesg" end
+		return "", ""
+	end
+
+	local text, src = read_log()
+
+	if http.formvalue("action") == "fetch" then
+		http.prepare_content("application/json")
+		http.write_json({ ok = true, text = text, src = src, ts = os.time() })
+		return
+	end
+-%>
+<%+header%>
+<div id="logApp"></div>
+<textarea id="logRaw" hidden data-title="内核日志" data-kernel="1"
+	data-src="<%=util.pcdata(src ~= "" and src or "无")%>"
+	data-fetch="?action=fetch"><%=util.pcdata(text)%></textarea>
+<script src="<%=media%>/ios-logs.js?v=2"></script>
+<%+footer%>

@@ -534,6 +534,140 @@ body :where(.progress) > :where(.progress-bar){
 .pm-op:disabled{opacity:.5;cursor:not-allowed}
 .pm-op.danger{color:#c73b3d;border-color:rgba(245,72,74,.22)}
 .pm-op.danger:hover:not(:disabled){color:#b32628;border-color:rgba(245,72,74,.45);background:rgba(245,72,74,.05)}
+
+/* ---------------------------- ㉓ 日志查看器（系统日志 / 内核日志） ---------------------------- */
+.log-card{padding:0!important;overflow:hidden}
+.log-head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding:12px 16px;border-bottom:1px solid rgba(30,50,90,.06);
+}
+.log-head-l h3{margin:0;font-size:13px;font-weight:650;color:#1e2b48}
+.log-head-l .sub{display:block;margin-top:2px;font-size:10.5px;color:#8898aa;font-variant-numeric:tabular-nums}
+.log-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.log-auto{display:flex;align-items:center;gap:5px;font-size:10.5px;color:#5b6b8c;cursor:pointer;margin-right:4px}
+.log-auto input{accent-color:#0060ff}
+.log-toolbar{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:9px 16px;background:rgba(248,251,255,.7);
+  border-bottom:1px solid rgba(30,50,90,.05);
+}
+.log-search{
+  display:flex;align-items:center;gap:7px;flex:1 1 220px;min-width:180px;
+  height:30px;padding:0 10px;border-radius:9px;
+  border:1px solid rgba(30,50,90,.14);background:#fff;
+}
+.log-search i{font-size:10.5px;color:#94a3b8}
+.log-search input{flex:1;min-width:0;border:0;outline:0;background:transparent;font-size:11.5px;color:#1e2b48}
+.log-chips{display:flex;gap:5px}
+.log-chip{
+  height:26px;padding:0 9px;border-radius:999px;
+  border:1px solid rgba(30,50,90,.12);background:#fff;
+  font:600 10.5px/1 var(--font,sans-serif);color:#5b6b8c;cursor:pointer;
+  display:inline-flex;align-items:center;gap:5px;
+}
+.log-chip b{font:700 9.5px/1 var(--mono,monospace);color:#8898aa;font-variant-numeric:tabular-nums}
+.log-chip.on{background:rgba(0,96,255,.08);border-color:rgba(0,96,255,.28);color:#0052d9}
+.log-chip.on b{color:#0052d9}
+.log-chip.err b{color:#c73b3d}
+.log-chip.warn b{color:#d97706}
+.log-jump{display:flex;gap:5px}
+.log-mini{
+  width:26px;height:26px;border-radius:8px;
+  border:1px solid rgba(30,50,90,.12);background:#fff;color:#5b6b8c;cursor:pointer;
+}
+.log-mini:hover{border-color:rgba(0,96,255,.3);color:#0052d9}
+.log-view{
+  height:min(66vh,680px);overflow:auto;
+  background:linear-gradient(180deg,#fbfdff,#fff);
+  font-family:var(--mono,ui-monospace,monospace);font-size:11.5px;line-height:1.7;
+  font-variant-numeric:tabular-nums;padding:6px 0;outline:none;
+  scrollbar-width:thin;scrollbar-color:rgba(110,145,190,.42) transparent;
+}
+.log-row{
+  display:grid;grid-template-columns:56px minmax(0,1fr);
+  padding:0 12px 0 0;min-height:19px;border-left:3px solid transparent;
+}
+.log-row:hover{background:rgba(0,96,255,.035)}
+.log-n{
+  position:sticky;left:0;z-index:1;
+  padding:0 10px;text-align:right;color:#b6c2d2;
+  background:#fbfdff;user-select:none;
+  border-right:1px solid rgba(30,50,90,.05);
+  font-size:10px;line-height:19px;
+}
+.log-t{
+  white-space:pre;overflow:hidden;text-overflow:ellipsis;
+  color:#41506b;padding-left:12px;line-height:19px;
+}
+.log-row.lv-err{border-left-color:#f5484a;background:rgba(245,72,74,.035)}
+.log-row.lv-err .log-t{color:#c73b3d;font-weight:600}
+.log-row.lv-warn{border-left-color:#ff8f1f;background:rgba(255,143,31,.03)}
+.log-row.lv-warn .log-t{color:#b45309}
+.log-row.lv-debug .log-t{color:#9aa8bb}
+.log-row{cursor:pointer}
+.log-row.expanded{background:#fff!important;border-left-color:#0060ff}
+.log-row.expanded .log-n{background:#fff}
+.log-row.expanded .log-t{
+  white-space:pre-wrap;overflow:visible;text-overflow:clip;
+  word-break:break-all;line-height:1.6;padding-top:2px;padding-bottom:3px;
+}
+.log-row mark{background:rgba(255,214,80,.55);color:inherit;border-radius:2px;padding:0 1px}
+.log-empty{padding:40px 16px;text-align:center;color:#8898aa;font-size:12px;font-family:var(--font,sans-serif)}
+.log-foot{
+  display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding:8px 16px;border-top:1px solid rgba(30,50,90,.06);
+  font-size:10.5px;color:#5b6b8c;background:#fbfdff;
+}
+.log-foot-dim{color:#94a3b8}
+.log-foot-dim.log-ok{color:#0a8f61;font-weight:600}
+.log-foot-dim.log-bad{color:#c73b3d;font-weight:600}
+@media(max-width:760px){
+  .log-head{padding:10px 12px}
+  .log-toolbar{padding:8px 12px}
+  .log-view{height:min(60vh,520px);font-size:10.5px}
+  .log-row{grid-template-columns:42px minmax(0,1fr)}
+  .log-n{padding:0 6px}
+  .log-actions{gap:5px}
+  .log-search{flex:1 1 100%;min-width:0}
+  .log-chips{flex-wrap:wrap}
+  .log-t{padding-left:8px}
+}
+
+/* ---------------------------- ㉔ 窄屏抽屉回归 ---------------------------- */
+/* istore-ui.css 后面一条 .ios-side{position:relative} 覆盖了响应式里的
+   position:fixed 抽屉规则，窄屏侧栏仍占 236px、主内容被挤成一条。
+   本层最后加载，这里强制恢复抽屉语义并让主区占满。 */
+/* ---------------------------- ㉕ 原厂提示框垫片 ---------------------------- */
+/* create_info_box 的轻量主题化实现，见 ios-enhance.js 末尾 */
+.ios-info-box{
+  position:fixed;left:50%;top:50%;z-index:200;
+  transform:translate(-50%,-46%) scale(.97);
+  width:min(380px,90vw);padding:18px 20px;
+  border-radius:14px;background:#fff;
+  box-shadow:0 24px 64px rgba(24,38,64,.28),0 0 0 1px rgba(30,50,90,.08);
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .18s ease,transform .18s ease,visibility .18s;
+  text-align:center;
+}
+.ios-info-box.show{opacity:1;visibility:visible;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+.ios-info-box p{margin:0 0 14px;font-size:12.5px;line-height:1.7;color:#1e2b48}
+
+@media(max-width:960px){
+  .ios-side{
+    position:fixed!important;left:0!important;top:0!important;bottom:0!important;
+    width:236px!important;flex:0 0 236px!important;
+    transform:translateX(-100%)!important;
+    box-shadow:0 0 40px rgba(50,50,93,.18);
+    z-index:40;
+  }
+  body.ios-drawer .ios-side{transform:translateX(0)!important}
+  .ios-main{width:100%!important;min-width:0!important;flex:1 1 100%!important}
+  #maincontent,.ios-content{
+    width:100%!important;max-width:100%!important;min-width:0!important;
+    margin-left:0!important;
+  }
+  .ios-view{left:0!important}
+}
 .pm-plug{
   border-radius:10px;background:#fff;
   box-shadow:0 0 0 1px rgba(30,50,90,.06);

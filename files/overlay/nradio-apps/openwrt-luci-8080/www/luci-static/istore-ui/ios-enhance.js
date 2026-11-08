@@ -257,3 +257,52 @@
 		init();
 	}
 })();
+
+/* --------------------------------------------------------------------------
+   原厂兼容垫片
+   1) nradio_adv 页面（reset/expand/boot/cpe_upgrade…）会调用 create_info_box，
+      但主题层未加载定义它的 /luci-static/nradio/js/main.min.js，
+      点「升级」时抛 ReferenceError。这里给等价的轻量主题化提示框。
+   2) 部分原厂脚本用 XHR 设置 Content-Length / Connection 等禁止的请求头，
+      浏览器会打印 console error；过滤这些头不改变实际请求行为。
+   -------------------------------------------------------------------------- */
+(function () {
+	'use strict';
+	if (typeof window.create_info_box !== 'function') {
+		window.create_info_box = function (opt) {
+			opt = opt || {};
+			var msg = String(opt.msg || opt.message || '');
+			var btn = String(opt.btn_val || opt.btn || 'OK');
+			var cb = (typeof opt.callback === 'function') ? opt.callback : null;
+			var box = document.getElementById('iosInfoBox');
+			if (!box) {
+				box = document.createElement('div');
+				box.id = 'iosInfoBox';
+				box.className = 'ios-info-box';
+				box.setAttribute('role', 'dialog');
+				document.body.appendChild(box);
+			}
+			box.innerHTML = '';
+			var p = document.createElement('p');
+			p.textContent = msg;
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'ios-btn primary';
+			b.textContent = btn;
+			b.addEventListener('click', function () {
+				box.classList.remove('show');
+				if (cb) cb();
+			});
+			box.appendChild(p);
+			box.appendChild(b);
+			box.classList.add('show');
+		};
+	}
+	if (window.XMLHttpRequest && XMLHttpRequest.prototype.setRequestHeader) {
+		var orig = XMLHttpRequest.prototype.setRequestHeader;
+		XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+			if (/^(Content-Length|Connection|Host|Cookie|Cookie2|Origin|Referer|User-Agent)$/i.test(String(name))) return;
+			return orig.apply(this, arguments);
+		};
+	}
+})();
