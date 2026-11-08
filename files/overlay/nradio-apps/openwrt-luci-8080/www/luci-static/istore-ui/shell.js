@@ -545,6 +545,6 @@
 	if (document.querySelector('link[href*="ios-design.css"]')) return;
 	var l = document.createElement('link');
 	l.rel = 'stylesheet';
-	l.href = '/luci-static/istore-ui/ios-design.css?v=28';
+	l.href = '/luci-static/istore-ui/ios-design.css?v=30';
 	(document.head || document.documentElement).appendChild(l);
 })();
