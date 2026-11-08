@@ -345,3 +345,32 @@ rm -f /tmp/luci-indexcache-argon* /tmp/luci-indexcache-bootstrap*
 `网络 → 网络诊断`（`/admin/network/diagnostics`）在**原厂 80 端口同样返回 500**：
 `Model 'admin_network/diagnostics' not found` —— 固件缺少
 `/usr/lib/lua/luci/model/cbi/admin_network/diagnostics.lua`。本项目未改动该文件，两种界面模式下表现一致。
+
+## 🧯 已知固件问题与修复（灵缇加速器安装卡 90%）
+
+**现象**：iStore 安装「灵缇加速器 v1.4.4」时进度卡在 90%，页面一直转圈。
+
+**根因**（实测定位）：
+
+1. iStore 用 `apk add app-meta-lingti-gameacc` 安装，包内 `post-install` 调用 OpenWrt 的
+   `default_postinst` → 启动 `lingti` 服务；
+2. 该包自带的 `/etc/init.d/lingti` 用 `/var/bin/lingti &` 后台启动，**没有重定向输出**；
+3. `lingti` 继承并长期持有 `apk` 的 stdout/stderr 管道 → **apk 永远等不到 EOF** → 安装进程挂起。
+
+证据：`/proc/<apk>/fd/9,11` 与 `/proc/<lingti>/fd/1,2` 指向同一对 `pipe:[...]`；
+手动 `kill` 掉 lingti 后 apk 立即继续 `(2/3) Installing ...`。
+
+**修复**：把 `/etc/init.d/lingti` 的后台启动改为重定向输出，并去掉 `start↔restart` 互调：
+
+```sh
+start() {
+	if pgrep -f "/var/bin/lingti" >/dev/null 2>&1; then
+		stop; sleep 1
+	fi
+	/var/bin/lingti >/dev/null 2>&1 &
+	echo "LingTiGameAcc Started..."
+}
+```
+
+改完 `/etc/init.d/lingti restart` 即可；之后重装/升级不再卡住
+（实测：修复后 `lingti` 的 fd1/fd2 指向 `/dev/null`，`apk add` 正常结束）。
