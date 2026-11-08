@@ -396,3 +396,36 @@ start() {
 
 **若仍检测不到**，按顺序排查：手机与路由器是否同一 Wi-Fi/网段（192.168.66.x）→
 手机是否挂着 VPN/分流 → App 内删除旧设备重新扫描配对 → 路由器上确认上表全部为绿。
+
+### 新版灵缇插件（luci-app-lingti-router 2.8.14）安装失败 退出码 1
+
+**报错**：
+
+```
+ERROR: luci-app-lingti-router-2.8.14-r4: trying to overwrite etc/config/lingti       owned by luci-app-LingTiGameAcc-20200726-r1
+ERROR: ... etc/init.d/lingti        owned by LingTiGameAcc-1.4.4
+ERROR: ... usr/bin/lingti           owned by LingTiGameAcc-1.4.4
+1 error
+```
+
+**原因**：新版插件与 2020 年的旧版（`app-meta-lingti-gameacc` → `LingTiGameAcc` + `luci-app-LingTiGameAcc`）
+**文件路径重叠**，apk 拒绝覆盖别人的文件。
+
+**正确升级顺序**（元包在依赖链顶端，必须最先删）：
+
+```sh
+apk del app-meta-lingti-gameacc        # 1. 元包
+apk del luci-app-LingTiGameAcc LingTiGameAcc   # 2. 旧版应用与插件
+rm -f /var/bin/lingti /etc/rc.d/S99lingti      # 3. 旧脚本残留
+# 4. 再从手机 App / iStore 安装 luci-app-lingti-router
+```
+
+> 注意：`apk del <插件>` 会连带卸掉它的依赖（本次误删了 `rpcd-mod-file`、`rpcd-mod-ucode`），
+> 需要补回：`apk add rpcd-mod-file rpcd-mod-ucode`。
+
+**新版特性**：`/etc/init.d/lingti` 使用 `USE_PROCD=1`，由 procd 托管，单实例、端口 9666（TCP+UDP），
+不再有旧版的"重复进程 / 管道继承"问题。
+
+**LuCI 页面说明**：新插件是 **JS 视图**（`view/lingti/lingti.js` + `menu.d`），
+需要现代 ucode/JS 版 LuCI；本固件是 Lua LuCI，故 `/admin/services/lingti` 返回 404。
+**不影响手机 App**——App 直接通过 9666 端口的 API 通信。
