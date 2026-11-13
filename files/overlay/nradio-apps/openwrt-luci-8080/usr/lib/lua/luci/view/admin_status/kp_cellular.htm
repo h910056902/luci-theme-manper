@@ -64,12 +64,45 @@
 		return 14, "很差"
 	end
 
+	-- 邻区：华为模组 ^MONNC 是只读监控命令，经 atsd 守护进程的 ubus 接口下发，
+	-- 不直接写串口、不触发主动扫描、不改任何配置。返回形如
+	--   ^MONNC: NR,627264,324,-102,-12,3
+	-- 字段 = 制式, 频点, PCI(十六进制), RSRP, RSRQ, SINR。
+	-- 该调用会阻塞约 2.5s，因此只在 ncell=1 时执行，不参与页面常规轮询。
+	local function read_neighbours()
+		local ok, r = pcall(util.ubus, "atsdcpe", "at_cmd",
+			{ cmd = "AT^MONNC", wait = 2500, block = 1 })
+		if not ok or type(r) ~= "table" then return {}, "邻区接口不可用" end
+		-- atsd 返回的字段名是 respone（上游拼写），兼容标准的 response
+		local txt = tostring(r.respone or r.response or "")
+		local out = {}
+		for line in txt:gmatch("[^\r\n]+") do
+			local rat, fcn, pci, rsrp, rsrq, sinr = line:match(
+				"%^MONNC:%s*([%w]+),([%d]+),([%w]+),([%-]?%d+),([%-]?%d+),([%-]?%d+)")
+			if rat then
+				local b, g, c, pct = rsrp_grade(tonumber(rsrp))
+				out[#out + 1] = {
+					rat = rat, earfcn = fcn, pci = pci,
+					pci_dec = tonumber(pci, 16) or 0,
+					rsrp = tonumber(rsrp) or 0, rsrq = tonumber(rsrq) or 0,
+					sinr = tonumber(sinr) or 0,
+					bars = b, grade = g, color = c, pct = pct
+				}
+			end
+		end
+		table.sort(out, function(a, b) return a.rsrp > b.rsrp end)
+		return out, (#out > 0 and "" or "模组当前未上报邻区")
+	end
+
 	-- JSON 模式：给前端轮询用
 	if http.formvalue("state") == "1" then
 		local s, g = read_all()
 		local bars, grade, color, rpct = rsrp_grade(s.rsrp)
 		local spct, sgrade = sinr_grade(s.sinr)
 		local qpct, qgrade = rsrq_grade(s.rsrq)
+		-- 邻区只在显式请求时采集，避免每次 10s 轮询都占用 AT 串口
+		local nc, ncerr = {}, ""
+		if http.formvalue("ncell") == "1" then nc, ncerr = read_neighbours() end
 		http.prepare_content("application/json")
 		http.write_json({
 			isp = pick(s, { "isp_company", "isp" }),
@@ -101,6 +134,13 @@
 			up = fmt_bytes(s.upload),
 			down = fmt_bytes(s.download),
 			flow = fmt_bytes(s.sim_flow),
+			serving = {
+				rsrp = pick(s, { "rsrp" }), rsrq = pick(s, { "rsrq" }),
+				sinr = pick(s, { "sinr" }), pci = pick(s, { "pci" }),
+				earfcn = pick(s, { "earfcn", "dl_fcn" }), cell = pick(s, { "cell" }),
+				mode = pick(s, { "mode" }), band = pick(s, { "band" }),
+			},
+			ncells = nc, nc_count = #nc, nc_error = ncerr,
 		})
 		return
 	end
@@ -154,7 +194,7 @@
 		<a class="ios-btn" href="/cgi-bin/luci/nradio/cellular" target="_blank" rel="noopener">
 			<i class="fas fa-external-link-alt"></i> 原厂页面
 		</a>
-		<button class="ios-btn primary" type="button" id="cellRefresh"><i class="fas fa-rotate"></i> 刷新</button>
+		<button class="ios-btn primary" type="button" id="cellRefresh"><i class="fas fa-sync"></i> 刷新</button>
 	</div>
 </div>
 
@@ -282,6 +322,28 @@
 	</div>
 </div>
 
+<!-- 邻区信号与强度：只读 AT^MONNC，异步采集，不拖慢主页面 -->
+<div class="ios-card cell-nc">
+	<div class="ios-card-h">
+		<h3>邻区信号与强度</h3>
+		<span class="sub" id="ncSub">模组上报的相邻小区 · 按 RSRP 排序</span>
+		<div class="right">
+			<button class="ios-btn sm" type="button" id="ncRefresh"><i class="fas fa-sync"></i> 刷新邻区</button>
+		</div>
+	</div>
+	<div class="nc-head">
+		<span>小区 / PCI</span><span>频点</span><span>RSRP 强度</span>
+		<span>RSRQ</span><span>SINR</span><span>相对服务区</span>
+	</div>
+	<div class="nc-body" id="ncBody">
+		<div class="nc-empty">正在读取邻区…</div>
+	</div>
+	<div class="nc-foot">
+		<span id="ncStat">—</span>
+		<span class="nc-foot-dim">PCI 为十六进制；Δ 为与服务小区的 RSRP 差值（越负越弱）</span>
+	</div>
+</div>
+
 <div class="ios-card">
 	<div class="ios-card-h">
 		<h3>模组</h3>
@@ -350,6 +412,104 @@
 		}
 		line.setAttribute('points', pts.join(' '));
 		fill.setAttribute('d', 'M0,' + H + ' L' + pts.join(' L') + ' L' + W + ',' + H + ' Z');
+	}
+
+	/* ---------------- 邻区信号 ---------------- */
+	/* LuCI 的 write_json 会把空 Lua table 输出成 {}，这里两种形态都兼容 */
+	function ncRows(d) {
+		var a = d && d.ncells;
+		if (Array.isArray(a)) return a;
+		if (a && typeof a === 'object') return Object.keys(a).map(function (k) { return a[k]; });
+		return [];
+	}
+	function ncCell(tag, cls, text) {
+		var e = document.createElement(tag);
+		if (cls) e.className = cls;
+		e.textContent = (text === undefined || text === null || text === '') ? '—' : String(text);
+		return e;
+	}
+	function ncStrength(rsrp, pct, bars, color) {
+		var w = document.createElement('div'); w.className = 'nc-strength';
+		var track = document.createElement('div'); track.className = 'nc-track';
+		var fill = document.createElement('i');
+		fill.style.width = Math.max(0, Math.min(100, Number(pct) || 0)) + '%';
+		if (color === 'bad') fill.className = 'bad';
+		else if (color === 'warn') fill.className = 'warn';
+		track.appendChild(fill);
+		var num = ncCell('b', 'nc-num', rsrp + ' dBm');
+		var dots = document.createElement('span'); dots.className = 'nc-dots';
+		for (var k = 0; k < 5; k++) {
+			var dot = document.createElement('i');
+			if (k < (Number(bars) || 0)) dot.className = 'on';
+			dots.appendChild(dot);
+		}
+		w.appendChild(track); w.appendChild(num); w.appendChild(dots);
+		return w;
+	}
+	function renderNC(d) {
+		var box = $('ncBody');
+		if (!box) return;
+		var arr = ncRows(d), sv = (d && d.serving) || {};
+		var svRsrp = Number(sv.rsrp);
+		if (!isFinite(svRsrp)) svRsrp = null;
+		box.innerHTML = '';
+		/* 服务小区作为强度基准置顶 */
+		if (sv.pci || sv.rsrp) {
+			var sr = document.createElement('div'); sr.className = 'nc-row nc-serving';
+			var name = document.createElement('div'); name.className = 'nc-name';
+			name.appendChild(ncCell('b', '', '当前服务小区'));
+			name.appendChild(ncCell('small', '', 'PCI ' + (sv.pci || '—') + (sv.cell ? ' · ' + sv.cell : '')));
+			sr.appendChild(name);
+			sr.appendChild(ncCell('span', 'mono', sv.earfcn));
+			sr.appendChild(ncStrength(sv.rsrp || '—', 100, 5, 'ok'));
+			sr.appendChild(ncCell('span', 'mono', sv.rsrq ? sv.rsrq + ' dB' : '—'));
+			sr.appendChild(ncCell('span', 'mono', sv.sinr ? sv.sinr + ' dB' : '—'));
+			sr.appendChild(ncCell('b', 'nc-delta base', '基准'));
+			box.appendChild(sr);
+		}
+		arr.forEach(function (n, idx) {
+			var r = document.createElement('div');
+			r.className = 'nc-row' + (n.color === 'bad' ? ' weak' : '');
+			var name = document.createElement('div'); name.className = 'nc-name';
+			name.appendChild(ncCell('b', '', '邻区 ' + (idx + 1)));
+			name.appendChild(ncCell('small', '', 'PCI ' + String(n.pci || '—') +
+				(n.pci_dec ? ' (' + n.pci_dec + ')' : '')));
+			r.appendChild(name);
+			r.appendChild(ncCell('span', 'mono', n.earfcn));
+			r.appendChild(ncStrength(n.rsrp, n.pct, n.bars, n.color));
+			r.appendChild(ncCell('span', 'mono', n.rsrq + ' dB'));
+			r.appendChild(ncCell('span', 'mono', n.sinr + ' dB'));
+			var delta = (svRsrp !== null && isFinite(Number(n.rsrp)))
+				? (Number(n.rsrp) - svRsrp).toFixed(0) + ' dB' : '—';
+			r.appendChild(ncCell('b', 'nc-delta', delta));
+			box.appendChild(r);
+		});
+		if (!arr.length) {
+			var empty = ncCell('div', 'nc-empty', (d && d.nc_error) || '模组当前未上报邻区');
+			box.appendChild(empty);
+		}
+		var t = new Date();
+		var hm = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + ':' + ('0' + t.getSeconds()).slice(-2);
+		setText('ncStat', '共 ' + arr.length + ' 个邻区 · 采集于 ' + hm);
+		var sub = $('ncSub');
+		if (sub) sub.textContent = arr.length
+			? '最强邻区 RSRP ' + arr[0].rsrp + ' dBm · 按强度排序'
+			: '模组上报的相邻小区';
+	}
+	function loadNC() {
+		var btn = $('ncRefresh'), box = $('ncBody');
+		if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 采集中'; }
+		if (box) box.innerHTML = '<div class="nc-empty">正在向模组读取邻区（约 2.5 秒）…</div>';
+		fetch(location.pathname + '?state=1&ncell=1', { credentials: 'same-origin', cache: 'no-store' })
+			.then(function (r) { return r.json(); })
+			.then(renderNC)
+			.catch(function () {
+				if (box) box.innerHTML = '<div class="nc-empty">邻区读取失败，请稍后重试</div>';
+				setText('ncStat', '读取失败');
+			})
+			.then(function () {
+				if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync"></i> 刷新邻区'; }
+			});
 	}
 
 	function refresh() {
@@ -421,7 +581,8 @@
 			['ICCID', ($('cIccid') || {}).textContent || ''],
 			['IMEI', ($('cImei') || {}).textContent || ''],
 			['模组', ($('cModel') || {}).textContent || ''],
-			['固件', ($('cRev') || {}).textContent || '']
+			['固件', ($('cRev') || {}).textContent || ''],
+			['邻区', ($('ncStat') || {}).textContent || '']
 		];
 		var text = rows.map(function (r) { return r[0] + ': ' + String(r[1]).trim(); }).join('\n');
 		var done = function () {
@@ -440,10 +601,14 @@
 
 	var btn = $('cellRefresh');
 	if (btn) btn.addEventListener('click', function () { refresh(); tickRate(); });
+	var ncb = $('ncRefresh');
+	if (ncb) ncb.addEventListener('click', loadNC);
 	refresh();
 	tickRate();
 	/* 首屏 1.5s 补一次采样，趋势图不用等满 10 秒才有第二个点 */
 	setTimeout(refresh, 1500);
+	/* 邻区单独异步采集一次（AT 调用约 2.5s），不参与 10s 常规轮询 */
+	setTimeout(loadNC, 900);
 	setInterval(refresh, 10000);
 	setInterval(tickRate, 2000);
 })();

@@ -109,7 +109,7 @@
 		return {
 			url: a.getAttribute('data-path'),
 			label: a.getAttribute('data-label') || '',
-			icon: a.getAttribute('data-icon') || 'fa-circle-dot',
+			icon: a.getAttribute('data-icon') || 'fa-dot-circle',
 			group: a.getAttribute('data-gtitle') || ''
 		};
 	}
@@ -365,7 +365,7 @@
 			var d = {
 				url: p.url,
 				label: label,
-				icon: 'fa-file-lines',
+				icon: 'fa-file-alt',
 				group: p.crumb || '',
 				crumb: p.crumb || '',
 				kw: kw
@@ -478,6 +478,6 @@
 	if (document.querySelector('link[href*="ios-design.css"]')) return;
 	var l = document.createElement('link');
 	l.rel = 'stylesheet';
-	l.href = '/luci-static/istore-ui/ios-design.css?v=31';
+	l.href = '/luci-static/istore-ui/ios-design.css?v=32';
 	(document.head || document.documentElement).appendChild(l);
 })();

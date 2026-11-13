@@ -505,7 +505,7 @@
 	</div>
 	<div class="ios-page-actions">
 		<button class="ios-btn" type="button" id="pmPause"><i class="fas fa-pause"></i> 暂停刷新</button>
-		<button class="ios-btn" type="button" id="pmRefresh"><i class="fas fa-rotate"></i> 刷新</button>
+		<button class="ios-btn" type="button" id="pmRefresh"><i class="fas fa-sync"></i> 刷新</button>
 		<select class="pm-lvsel" id="pmCleanLevel" title="清理级别">
 			<option value="3">标准 · 全部缓存</option>
 			<option value="1">轻量 · 仅页缓存</option>
@@ -540,7 +540,7 @@
 
 <!-- 内存清理结果 -->
 <div class="pm-clean" id="pmCleanResult" hidden>
-	<i class="fas fa-circle-check" aria-hidden="true"></i>
+	<i class="fas fa-check-circle" aria-hidden="true"></i>
 	<div>
 		<b id="pmCleanTitle">已释放 0</b>
 		<span id="pmCleanDetail"></span>
@@ -571,7 +571,7 @@
 			<option value="name">名称</option>
 		</select>
 		<button type="button" class="pm-order" id="pmOrder" title="切换降序/升序">
-			<i class="fas fa-arrow-down-wide-short" aria-hidden="true"></i>
+			<i class="fas fa-sort-amount-down" aria-hidden="true"></i>
 		</button>
 	</div>
 	<label class="pm-only"><input type="checkbox" id="pmOnlyBusy"> 只看活跃</label>
@@ -783,7 +783,7 @@
 				'<div class="pm-plug-ops">' +
 					(p.has_init
 						? (p.running
-							? '<button type="button" class="pm-op" data-name="' + esc(p.name) + '" data-op="restart"><i class="fas fa-rotate" aria-hidden="true"></i>重启</button>' +
+							? '<button type="button" class="pm-op" data-name="' + esc(p.name) + '" data-op="restart"><i class="fas fa-sync" aria-hidden="true"></i>重启</button>' +
 							  '<button type="button" class="pm-op danger" data-name="' + esc(p.name) + '" data-op="stop"><i class="fas fa-stop" aria-hidden="true"></i>停止</button>'
 							: '<button type="button" class="pm-op" data-name="' + esc(p.name) + '" data-op="start"><i class="fas fa-play" aria-hidden="true"></i>启动</button>')
 						: '') +

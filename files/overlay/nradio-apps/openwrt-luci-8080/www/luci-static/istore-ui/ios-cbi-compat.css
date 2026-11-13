@@ -221,3 +221,8 @@ body.ios-embed .ios-content:has(ul.tabs) #app > .cbi-section{max-height:calc(100
 .ios-content:has(ul.tabs) #app .containers::-webkit-scrollbar-thumb:hover{
   background:rgba(0,96,255,.4);background-clip:padding-box
 }
+
+/* 原厂 fa-nradio-note（CBI 字段说明图标）：固件未提供该自定义字体，FA5 也没有此字形，
+   在 8080 主题下会渲染成空白。用 solid info-circle 兜底，保留可点击的说明入口。 */
+.fa-nradio-note::before { content: "\f05a"; }
+.far.fa-nradio-note { font-family: "Font Awesome 5 Free"; font-weight: 900; }

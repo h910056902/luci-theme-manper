@@ -70,34 +70,38 @@
 	-- 一级分组 → 二级页面。iStoreOS 侧栏是「分组标题 + 条目」两层结构，
 	-- 更深的层级不展开（保持侧栏干净），子页面通过页内 Tab 导航。
 	local ICONS = {
-		status = "fa-tachometer-alt", overview = "fa-tachometer-alt", details = "fa-tachometer-alt",
+		-- 仪表盘(details) 与 系统信息(overview) 需区分，否则两个入口同图标
+		status = "fa-tachometer-alt", overview = "fa-info-circle", details = "fa-tachometer-alt",
 		network = "fa-globe", wireless = "fa-wifi", interfaces = "fa-network-wired",
-		services = "fa-layer-group", openclash = "fa-shield-alt",
+		services = "fa-layer-group", openclash = "fa-mask",
 		system = "fa-cog", admin = "fa-cog", logout = "fa-sign-out-alt",
 		modem = "fa-broadcast-tower", cellular = "fa-signal", simcard = "fa-sim-card",
 		docker = "fa-cube", terminal = "fa-terminal", ttyd = "fa-terminal",
 		store = "fa-store", istore = "fa-store", statistics = "fa-chart-line",
-		firewall = "fa-shield-alt", vpn = "fa-lock", nas = "fa-hdd",
+		firewall = "fa-shield-alt", iptables = "fa-shield-alt", vpn = "fa-lock", nas = "fa-hdd",
 		quickstart = "fa-compass", network_guide = "fa-compass",
 		-- 状态类
-		routes = "fa-route", staticroutes = "fa-signs-post",
-		dmesg = "fa-microchip", log = "fa-file-alt", logs = "fa-file-alt",
-		syslog = "fa-file-alt", processes = "fa-list-ul", realtime = "fa-chart-line",
+		-- 注意：本固件 FontAwesome 为 5.15.4，只能用 FA5 名称
+		-- （signs-post / circle-dot / calendar-days 属 FA6 命名，缺失会显示空白）
+		routes = "fa-route", staticroutes = "fa-map-signs",
+		dmesg = "fa-scroll", log = "fa-file-alt", logs = "fa-file-alt",
+		syslog = "fa-file-alt", processes = "fa-list-ul", procmgr = "fa-tasks",
+		realtime = "fa-chart-line",
 		-- 系统类
 		security = "fa-lock", software = "fa-box-open", backup = "fa-save",
 		startup = "fa-power-off", crontab = "fa-clock", mount = "fa-hdd",
 		leds = "fa-lightbulb", reboot = "fa-redo",
 		argon = "fa-palette", ["argon-config"] = "fa-palette", argonconfig = "fa-palette",
 		-- 网络类
-		ocspeed = "fa-bolt", autotimeset = "fa-history", reset = "fa-undo",
+		ocspeed = "fa-bolt", fastnet = "fa-rocket", autotimeset = "fa-history", reset = "fa-undo",
 		dhcp = "fa-server", hosts = "fa-tags", diagnostics = "fa-stethoscope",
 		passwall = "fa-shield-alt", passwall2 = "fa-shield-alt",
 		wireguard = "fa-shield-alt", openvpn = "fa-shield-alt",
 		zerotier = "fa-shield-alt", tailscale = "fa-shield-alt",
 		ddns = "fa-cloud", nros = "fa-cloud", myosnros = "fa-cloud",
-		myosupdate = "fa-rotate", update = "fa-rotate",
+		myosupdate = "fa-sync", update = "fa-sync",
 		-- 其余常见
-		devices = "fa-desktop", clients = "fa-users", traffic = "fa-chart-bar",
+		devices = "fa-desktop", deviceinfo = "fa-desktop", clients = "fa-users", traffic = "fa-chart-bar",
 		wireless_radio = "fa-wifi", fancontrol = "fa-fan", ttyd2 = "fa-terminal",
 	}
 
@@ -106,7 +110,7 @@
 		{ "概览", "fa-tachometer-alt" }, { "overview", "fa-tachometer-alt" },
 		{ "状态", "fa-tachometer-alt" }, { "status", "fa-tachometer-alt" },
 		{ "防火", "fa-shield-alt" }, { "firewall", "fa-shield-alt" },
-		{ "静态路由", "fa-signs-post" }, { "static route", "fa-signs-post" },
+		{ "静态路由", "fa-map-signs" }, { "static route", "fa-map-signs" },
 		{ "路由", "fa-route" }, { "route", "fa-route" },
 		{ "系统日志", "fa-file-alt" }, { "system log", "fa-file-alt" },
 		{ "内核", "fa-microchip" }, { "kernel", "fa-microchip" },
@@ -118,7 +122,7 @@
 		{ "固件", "fa-download" }, { "firmware", "fa-download" },
 		{ "启动", "fa-power-off" }, { "startup", "fa-power-off" },
 		{ "计划任务", "fa-clock" }, { "scheduled task", "fa-clock" },
-		{ "定时", "fa-calendar-days" }, { "scheduled setting", "fa-calendar-days" },
+		{ "定时", "fa-calendar-alt" }, { "scheduled setting", "fa-calendar-alt" },
 		{ "挂载", "fa-hdd" }, { "mount", "fa-hdd" },
 		{ "led", "fa-lightbulb" },
 		{ "重启", "fa-redo" }, { "reboot", "fa-redo" },
@@ -129,11 +133,11 @@
 		{ "无线", "fa-wifi" }, { "wireless", "fa-wifi" }, { "wifi", "fa-wifi" },
 		{ "接口", "fa-network-wired" }, { "interface", "fa-network-wired" },
 		{ "蜂窝", "fa-signal" }, { "cellular", "fa-signal" },
-		{ "sim", "fa-sim-card" }, { "设备", "fa-microchip" }, { "device", "fa-microchip" },
+		{ "sim", "fa-sim-card" }, { "设备", "fa-desktop" }, { "device", "fa-desktop" },
 		{ "docker", "fa-cube" }, { "容器", "fa-cube" },
 		{ "终端", "fa-terminal" }, { "terminal", "fa-terminal" }, { "ttyd", "fa-terminal" },
 		{ "商店", "fa-store" }, { "store", "fa-store" },
-		{ "代理", "fa-shield-alt" }, { "clash", "fa-shield-alt" },
+		{ "代理", "fa-mask" }, { "clash", "fa-mask" },
 		{ "日志", "fa-file-alt" }, { "log", "fa-file-alt" },
 		{ "统计", "fa-chart-line" }, { "图表", "fa-chart-line" },
 		{ "退出", "fa-sign-out-alt" }, { "logout", "fa-sign-out-alt" },
@@ -147,7 +151,7 @@
 		for _, r in ipairs(TITLE_ICONS) do
 			if t:find(r[1], 1, true) then return r[2] end
 		end
-		return "fa-circle-dot"
+		return "fa-dot-circle"
 	end
 
 	local tree = disp.node()
@@ -211,9 +215,23 @@
 		["system/autotimeset"] = "时间同步",
 		["system/security"] = "安全设置",
 		["system/flashops"] = "备份 / 刷机",
-		["system/reset"] = "恢复出厂",
+		["system/reset"] = "原厂备份/升级",
 		["system/packages"] = "软件包",
 		["system/argon-config"] = "主题设置",
+	}
+	-- 按 URL 精确指定图标：节点重名时（如 status/routes 与 network/routes 都叫 routes）
+	-- 单靠 ICONS[name] 无法区分，这里以完整路径为准，保证侧栏每个入口图标唯一。
+	local ICON_URL = {
+		["status/details"]   = "fa-tachometer-alt",  -- 仪表盘
+		["status/overview"]  = "fa-info-circle",     -- 系统信息
+		["status/routes"]    = "fa-route",           -- 路由表
+		["network/routes"]   = "fa-map-signs",       -- 静态路由
+		["status/iptables"]  = "fa-shield-alt",      -- 防火墙
+		["services/openclash"] = "fa-mask",          -- OpenClash
+		["status/dmesg"]     = "fa-scroll",          -- 内核日志
+		["status/processes"] = "fa-list-ul",         -- 进程
+		["status/procmgr"]   = "fa-tasks",           -- 进程管理
+		["system/reset"]     = "fa-download",        -- 原厂备份/升级（固件升级）
 	}
 	-- 不进侧栏（登录/退出这类由页脚或页头承担）
 	local SKIP = { logout = true }
@@ -289,6 +307,7 @@
 		if items then
 			for _, it in ipairs(items) do
 				if it.key and TITLE_URL[it.key] then it.title = TITLE_URL[it.key] end
+				if it.key and ICON_URL[it.key] then it.icon = ICON_URL[it.key] end
 			end
 			table.sort(items, function(a, b) return (a.order or 50) < (b.order or 50) end)
 		end
@@ -320,7 +339,7 @@
 <link rel="stylesheet" href="<%=media%>/ios-spa.css?v=3">
 <link rel="stylesheet" href="<%=media%>/ios-fit.css?v=2">
 <link rel="stylesheet" href="<%=media%>/ios-look.css?v=5">
-<link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=9">
+<link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=10">
 <link rel="stylesheet" href="<%=media%>/ios-tokens.css?v=1">
 <%
 	if reqstr:match("^/nradio") then
@@ -342,7 +361,7 @@
 <%# 全站放开一屏 + 组件细节统一层。必须放在 /nradio 条件块之外：
      iptables 等页面只渲染精简 head、不渲染 footer，放条件块内会漏掉；
      本层用 :where() 做低特异性基线，footer 里的专用层仍会正常覆盖。 %>
-<link rel="stylesheet" href="<%=media%>/ios-design.css?v=31">
+<link rel="stylesheet" href="<%=media%>/ios-design.css?v=32">
 </head>
 <body class="ios-body ios-embed" data-embed="1" data-home="<%=homeurl%>">
 <main class="ios-content ios-embed-content" id="maincontent">
@@ -362,7 +381,7 @@
 <link rel="stylesheet" href="<%=media%>/ios-ops.css?v=2">
 <link rel="stylesheet" href="<%=media%>/ios-fit.css?v=2">
 <link rel="stylesheet" href="<%=media%>/ios-look.css?v=5">
-<link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=9">
+<link rel="stylesheet" href="<%=media%>/ios-cbi-compat.css?v=10">
 <link rel="stylesheet" href="<%=media%>/ios-tokens.css?v=1">
 <%
 	-- 原厂路由（/nradio/*）内容基于 bootstrap 栅格与 panel，需要在壳内补基础样式 + 适配层
@@ -389,7 +408,7 @@
 <script src="<%=media%>/ios-spa.js?v=6" defer></script>
 <%# 全站放开一屏 + 组件细节统一层。放在 /nradio 条件块之外，
      保证 iptables 等精简 head 页面也能加载。 %>
-<link rel="stylesheet" href="<%=media%>/ios-design.css?v=31">
+<link rel="stylesheet" href="<%=media%>/ios-design.css?v=32">
 </head>
 <body class="ios-body" data-model="<%=util.pcdata(model)%>" data-home="<%=homeurl%>" data-embed="0">
 <script>try{if(localStorage.getItem('iosCollapsed')==='1')document.body.classList.add('ios-collapsed')}catch(e){}</script>
@@ -424,7 +443,7 @@
 				<%
 					for _, it in ipairs(items) do
 						local on = it.path and is_active(it.path)
-						local icon = icon_of(it.name, it.title)
+						local icon = it.icon or icon_of(it.name, it.title)
 				%>
 				<a class="ios-nav-i<%= on and " active" or ""%>" href="<%=it.url%>" data-path="<%=it.url%>" data-label="<%=util.pcdata(it.title)%>" data-icon="<%=icon%>" data-group="<%=g.key%>" data-gtitle="<%=util.pcdata(g.title)%>">
 					<i class="fas <%=icon%>" aria-hidden="true"></i><span><%=util.pcdata(it.title)%></span>

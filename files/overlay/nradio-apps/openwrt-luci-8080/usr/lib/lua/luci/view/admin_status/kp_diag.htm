@@ -1,0 +1,131 @@
+<%#
+ istore-ui · 网络诊断（自建）
+ 背景：固件缺 CBI 模型 `admin_network/diagnostics`，原「网络诊断」页直接 500。
+       这里用同 URL 提供可用替代：ping / ping6 / traceroute，服务端执行、结果原样输出。
+ 安全：目标地址白名单字符（字母数字 . - :），长度 ≤100；方法白名单；命令拼接不经过 shell 元字符。
+-%>
+<%
+	local http = require "luci.http"
+	local sys  = require "luci.sys"
+	local util = require "luci.util"
+
+	local METHODS = {
+		ping = { label = "Ping（IPv4）", tip = "测试到目标的连通性与延迟" },
+		ping6 = { label = "Ping（IPv6）", tip = "IPv6 连通性测试" },
+		traceroute = { label = "路由追踪", tip = "查看数据包经过的每一跳（最多 15 跳）" },
+	}
+
+	local method = http.formvalue("method") or "ping"
+	if not METHODS[method] then method = "ping" end
+	local target = util.trim(http.formvalue("target") or "")
+	local count = tonumber(http.formvalue("count")) or 4
+	if count < 1 then count = 1 elseif count > 10 then count = 10 end
+	local count = math.floor(count)
+
+	local output, err
+	if target ~= "" then
+		if #target > 100 or not target:match("^[%w%.%-:]+$") then
+			err = "目标地址只允许字母、数字、点、横线与冒号（例如 223.5.5.5 或 www.baidu.com）"
+		else
+			local cmd
+			if method == "ping" then
+				cmd = string.format("ping -c %d -W 2 %s 2>&1", count, target)
+			elseif method == "ping6" then
+				cmd = string.format("ping6 -c %d -W 2 %s 2>&1", count, target)
+			else
+				cmd = string.format("traceroute -m 15 -q 1 -w 2 %s 2>&1", target)
+			end
+			output = sys.exec(cmd) or ""
+			if output == "" then output = "（命令没有输出，请检查目标是否可达）" end
+			if #output > 20000 then output = output:sub(1, 20000) .. "\n… 输出过长已截断" end
+		end
+	end
+-%>
+<%+header%>
+<div class="ios-grid ios-g2x">
+	<div class="ios-card">
+		<div class="ios-card-h">
+			<h3>网络诊断</h3>
+			<span class="sub">ping / ping6 / traceroute</span>
+		</div>
+		<form method="post" action="" id="diagForm">
+			<div class="ios-field">
+				<label for="dgTarget">目标地址</label>
+				<input class="ios-input" id="dgTarget" name="target" type="text"
+					value="<%=util.pcdata(target)%>" placeholder="223.5.5.5 或 www.baidu.com"
+					autocomplete="off" spellcheck="false" required>
+				<span class="hint">支持域名、IPv4、IPv6；不要带 http:// 前缀</span>
+			</div>
+			<div class="ios-grid ios-g2" style="margin:0;gap:12px">
+				<div class="ios-field">
+					<label for="dgMethod">诊断方式</label>
+					<select class="ios-select" id="dgMethod" name="method">
+						<% for k, v in pairs(METHODS) do %>
+						<option value="<%=k%>"<%= method == k and " selected" or ""%>><%=util.pcdata(v.label)%></option>
+						<% end %>
+					</select>
+				</div>
+				<div class="ios-field">
+					<label for="dgCount">次数（Ping）</label>
+					<select class="ios-select" id="dgCount" name="count">
+						<% for _, n in ipairs({ 1, 2, 4, 6, 10 }) do %>
+						<option value="<%=n%>"<%= count == n and " selected" or ""%>><%=n%> 次</option>
+						<% end %>
+					</select>
+				</div>
+			</div>
+			<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+				<button class="ios-btn primary" type="submit"><i class="fas fa-play"></i> 开始诊断</button>
+				<button class="ios-btn" type="button" data-fill="223.5.5.5">阿里 DNS</button>
+				<button class="ios-btn" type="button" data-fill="www.baidu.com">百度</button>
+				<button class="ios-btn" type="button" data-fill="192.168.66.1">网关</button>
+			</div>
+		</form>
+	</div>
+
+	<div class="ios-card">
+		<div class="ios-card-h"><h3>使用说明</h3></div>
+		<div class="ios-list">
+			<div class="ios-li"><div class="ico"><i class="fas fa-info-circle"></i></div>
+				<div class="txt"><b>Ping</b><small>判断目标是否可达、平均延迟与丢包</small></div></div>
+			<div class="ios-li"><div class="ico"><i class="fas fa-route"></i></div>
+				<div class="txt"><b>路由追踪</b><small>查看每一跳，用于判断在哪一段网络变慢</small></div></div>
+			<div class="ios-li"><div class="ico"><i class="fas fa-shield-alt"></i></div>
+				<div class="txt"><b>仅本机执行</b><small>目标地址做字符白名单校验，不经过 shell 拼接</small></div></div>
+		</div>
+		<div class="ios-note info" style="margin-top:12px">
+			<i class="fas fa-lightbulb"></i>
+			<span>原固件缺少该页的数据模型（访问会 500），此页为 manper 主题自建替代。</span>
+		</div>
+	</div>
+</div>
+
+<% if err then %>
+<div class="ios-card">
+	<div class="ios-note bad"><i class="fas fa-exclamation-circle"></i><span><%=util.pcdata(err)%></span></div>
+</div>
+<% end %>
+
+<% if output then %>
+<div class="ios-card">
+	<div class="ios-card-h">
+		<h3>诊断结果</h3>
+		<span class="sub"><%=util.pcdata(METHODS[method].label)%> · <%=util.pcdata(target)%></span>
+		<div class="right"><span class="ios-badge"><%=util.pcdata(method)%></span></div>
+	</div>
+	<pre class="ios-log"><%=util.pcdata(output)%></pre>
+</div>
+<% end %>
+
+<script>
+(function () {
+	'use strict';
+	Array.prototype.forEach.call(document.querySelectorAll('[data-fill]'), function (b) {
+		b.addEventListener('click', function () {
+			var i = document.getElementById('dgTarget');
+			if (i) { i.value = b.getAttribute('data-fill'); i.focus(); }
+		});
+	});
+})();
+</script>
+<%+footer%>

@@ -66,7 +66,7 @@
 		'    </div>',
 		'    <div class="log-actions">',
 		'      <label class="log-auto"><input type="checkbox" id="logAuto"> 自动刷新</label>',
-		'      <button type="button" class="ios-btn sm" id="logRefresh"><i class="fas fa-rotate"></i> 刷新</button>',
+		'      <button type="button" class="ios-btn sm" id="logRefresh"><i class="fas fa-sync"></i> 刷新</button>',
 		'      <button type="button" class="ios-btn sm" id="logCopy"><i class="fas fa-copy"></i> 复制</button>',
 		'      <button type="button" class="ios-btn sm" id="logDownload"><i class="fas fa-download"></i> 下载</button>',
 		'    </div>',

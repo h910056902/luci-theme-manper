@@ -76,10 +76,18 @@
 			if name:find("wan", 1, true) then score = score + 2 end
 			if route_dev ~= "" and (ifc.l3_device == route_dev or ifc.device == route_dev) then score = score + 20 end
 			if name == "lan" or name == "loopback" or name == "docker" then score = 0 end
-			if ifc.up and score > best_score then
-				best_score = score
-				wan = { name = name, ip = ip, up = true }
-			end
+				if ifc.up and score > best_score then
+					best_score = score
+					-- 接口名对用户无意义（cpe_4/wan6…），按类型给出可读标签，原接口名放 title 里备查
+					local ln = name:lower()
+					local kind = "其他"
+					if ln:find("cpe", 1, true) or ln:find("wwan", 1, true) or ln:find("usb", 1, true) or ln:find("modem", 1, true) then
+						kind = "蜂窝"
+					elseif ln:find("wan", 1, true) or ln:find("pppoe", 1, true) or ln:find("eth", 1, true) then
+						kind = "宽带"
+					end
+					wan = { name = name, ip = ip, up = true, kind = kind }
+				end
 		end
 		st.wan = wan
 
@@ -125,10 +133,22 @@
 		st.disk = { total = total_k, used = used_k, avail = avail_k }
 
 		-- 服务
+		-- 未安装与已停止是两种状态：ttyd 在这版固件里默认不预装，
+		-- 显示「已停止」会让人以为能启动，实际是缺包。
+		local function installed(bin, init)
+			local f = io.open(bin, "r")
+			if f then f:close(); return true end
+			local g = io.open(init, "r")
+			if g then g:close(); return true end
+			return false
+		end
 		st.svc = {
 			openclash = (sys.call("pidof clash >/dev/null") == 0),
 			docker    = (sys.call("pidof dockerd >/dev/null") == 0),
 			ttyd      = (sys.call("pidof ttyd >/dev/null") == 0),
+			ttyd_inst = installed("/usr/sbin/ttyd", "/etc/init.d/ttyd"),
+			docker_inst = installed("/usr/bin/dockerd", "/etc/init.d/dockerd"),
+			openclash_inst = installed("/etc/init.d/openclash", "/usr/share/openclash/openclash.sh"),
 		}
 
 		-- 自动测速最近结果
@@ -195,6 +215,18 @@
 		return tostring(m or "") ~= "" and tostring(m) or "蜂窝"
 	end
 
+	-- 频段裸数字（78）对用户没有含义：5G 补 n 前缀、4G 补 B 前缀，如 n78 / B3
+	local function band_label(m, b)
+		local s = tostring(b or "")
+		if s == "" then return "" end
+		if s:match("^%d+$") then
+			local ms = mode_short(m)
+			if ms:find("5G", 1, true) then return "n" .. s end
+			if ms:find("4G", 1, true) then return "B" .. s end
+		end
+		return s
+	end
+
 	local op = (c.operator ~= "" and c.operator) or "未识别运营商"
 -%>
 <%+header%>
@@ -204,7 +236,7 @@
 		<div class="ios-kpi">
 			<span class="k"><i class="fas fa-globe"></i> 上行链路</span>
 			<span class="v" style="font-size:17px" data-k="wanip"><%=util.pcdata(st.wan.ip ~= "" and st.wan.ip or "未连接")%></span>
-			<span class="s"><span class="ios-badge <%= st.wan.up and "ok" or "bad"%>" data-k="wanbadge"><%= st.wan.up and "在线" or "离线"%></span> <span data-k="wanname"><%=util.pcdata(st.wan.name ~= "" and st.wan.name or "—")%></span></span>
+			<span class="s"><span class="ios-badge <%= st.wan.up and "ok" or "bad"%>" data-k="wanbadge"><%= st.wan.up and "在线" or "离线"%></span> <span data-k="wanname" title="<%=util.pcdata(st.wan.name)%>"><%=util.pcdata(st.wan.name ~= "" and (st.wan.kind or st.wan.name) or "—")%></span></span>
 		</div>
 	</div>
 	<div class="ios-card tight">
@@ -236,7 +268,7 @@
 	<div class="ios-card">
 		<div class="ios-card-h">
 			<h3>连接状态</h3>
-			<span class="ios-badge"><%=util.pcdata(mode_short(c.mode))%><%= c.band ~= "" and (" · " .. util.pcdata(c.band)) or ""%></span>
+			<span class="ios-badge"><%=util.pcdata(mode_short(c.mode))%><%= c.band ~= "" and (" · " .. util.pcdata(band_label(c.mode, c.band))) or ""%></span>
 			<div class="right">
 				<a class="ios-btn sm" href="/cgi-bin/luci/admin/cellular">详情 <i class="fas fa-chevron-right"></i></a>
 			</div>
@@ -317,17 +349,17 @@
 			<div class="ios-li">
 				<div class="ico" style="background:var(--ok-soft);color:var(--ok)"><i class="fas fa-shield-alt"></i></div>
 				<div class="txt"><b>OpenClash</b><small>代理出口</small></div>
-				<div class="rt"><span class="ios-badge <%= st.svc.openclash and "ok" or "bad"%>" data-k="svc-oc"><%= st.svc.openclash and "运行中" or "已停止"%></span></div>
+				<div class="rt"><span class="ios-badge <%= not st.svc.openclash_inst and "warn" or (st.svc.openclash and "ok" or "bad")%>" data-k="svc-oc"><%= not st.svc.openclash_inst and "未安装" or (st.svc.openclash and "运行中" or "已停止")%></span></div>
 			</div>
 			<div class="ios-li">
 				<div class="ico" style="background:var(--brand-soft);color:var(--brand)"><i class="fas fa-cube"></i></div>
 				<div class="txt"><b>Docker</b><small>容器引擎</small></div>
-				<div class="rt"><span class="ios-badge <%= st.svc.docker and "ok" or "bad"%>" data-k="svc-docker"><%= st.svc.docker and "运行中" or "已停止"%></span></div>
+				<div class="rt"><span class="ios-badge <%= not st.svc.docker_inst and "warn" or (st.svc.docker and "ok" or "bad")%>" data-k="svc-docker"><%= not st.svc.docker_inst and "未安装" or (st.svc.docker and "运行中" or "已停止")%></span></div>
 			</div>
 			<div class="ios-li">
 				<div class="ico" style="background:var(--surface-3);color:var(--ink-2)"><i class="fas fa-terminal"></i></div>
 				<div class="txt"><b>终端</b><small>Web SSH</small></div>
-				<div class="rt"><span class="ios-badge <%= st.svc.ttyd and "ok" or "bad"%>" data-k="svc-ttyd"><%= st.svc.ttyd and "运行中" or "已停止"%></span></div>
+				<div class="rt"><span class="ios-badge <%= not st.svc.ttyd_inst and "warn" or (st.svc.ttyd and "ok" or "bad")%>" data-k="svc-ttyd"><%= not st.svc.ttyd_inst and "未安装" or (st.svc.ttyd and "运行中" or "已停止")%></span></div>
 			</div>
 		</div>
 	</div>
@@ -379,8 +411,9 @@
 		if (h > 0) return h + ' 时 ' + m + ' 分';
 		return m + ' 分';
 	}
-	function svc(k, on) {
+	function svc(k, on, inst) {
 		Array.prototype.forEach.call(document.querySelectorAll('[data-k="' + k + '"]'), function (n) {
+			if (inst === false) { n.textContent = '未安装'; n.className = 'ios-badge warn'; return; }
 			n.textContent = on ? '运行中' : '已停止';
 			n.className = 'ios-badge ' + (on ? 'ok' : 'bad');
 		});
@@ -416,16 +449,16 @@
 				if (typeof d.sessions === 'number') set('sessions', d.sessions);
 				if (d.wan) {
 					set('wanip', d.wan.ip || '未连接');
-					set('wanname', d.wan.name || '—');
+					set('wanname', d.wan.kind || d.wan.name || '—');
 					Array.prototype.forEach.call(document.querySelectorAll('[data-k="wanbadge"]'), function (n) {
 						n.textContent = d.wan.up ? '在线' : '离线';
 						n.className = 'ios-badge ' + (d.wan.up ? 'ok' : 'bad');
 					});
 				}
 				if (d.svc) {
-					svc('svc-oc', !!d.svc.openclash);
-					svc('svc-docker', !!d.svc.docker);
-					svc('svc-ttyd', !!d.svc.ttyd);
+					svc('svc-oc', !!d.svc.openclash, d.svc.openclash_inst);
+					svc('svc-docker', !!d.svc.docker, d.svc.docker_inst);
+					svc('svc-ttyd', !!d.svc.ttyd, d.svc.ttyd_inst);
 				}
 			})
 			.catch(function () {});
