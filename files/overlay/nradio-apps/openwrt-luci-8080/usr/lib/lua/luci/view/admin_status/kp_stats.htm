@@ -20,7 +20,12 @@
 
 	-- 上行接口：蜂窝是 cpe_4（proto dhcp，device eth3），cpe 本身是 wwan 无地址；
 	-- 打分时「有 IPv4 地址」权重最高，其次名字含 cpe/wan
-	local dump = util.ubus("network.interface", "dump") or {}
+	local route_dev = ""
+do
+	local f = io.popen("ip route show default 2>/dev/null")
+	if f then local l = f:read("*l") or ""; f:close(); route_dev = l:match("dev%s+(%S+)") or "" end
+end
+local dump = util.ubus("network.interface", "dump") or {}
 	local wan, wan_name, wan_ip, wan_up, wan_dev = nil, "", "", false, ""
 	for _, iface in ipairs(dump.interface or {}) do
 		local up = (iface.up == true)
@@ -34,6 +39,8 @@
 		if name:find("cpe", 1, true) then score = score + 3 end
 		if name:find("wan", 1, true) then score = score + 2 end
 		if name:find("_4", 1, true) then score = score + 1 end
+		-- 真实上行以系统默认路由为准(宽带优先时不能被 cpe 名字权重压过)
+		if route_dev ~= "" and (iface.l3_device == route_dev or iface.device == route_dev) then score = score + 20 end
 		if name == "lan" or name == "loopback" or name == "docker" then score = 0 end
 		if up and score > 0 then
 			if score > (wan and wan.score or 0) then
