@@ -239,6 +239,35 @@
 		sync();
 	}
 
+	/* ---------- 老版 PNG 小图标矢量化 ---------- */
+	// LuCI 的接口/无线列表还在用 16px 位图（ethernet.png / wifi.png…），
+	// 在高分屏上发虚、看着像裂图。映射为 FontAwesome 矢量图标，
+	// 禁用态降低不透明度以保留「未启用」的语义。
+	var LEGACY_ICONS = {
+		'ethernet.png': 'fa-network-wired',
+		'ethernet_disabled.png': 'fa-network-wired',
+		'wifi.png': 'fa-wifi',
+		'wifi_disabled.png': 'fa-wifi',
+		'wifi_big_disabled.png': 'fa-wifi',
+		'port_up.png': 'fa-plug',
+		'port_down.png': 'fa-plug'
+	};
+	function vectorizeLegacyIcons(scope) {
+		$$('img[src*="/icons/"]', scope || document).forEach(function (img) {
+			var m = (img.getAttribute('src') || '').match(/icons\/([a-z0-9_-]+\.png)$/i);
+			var fa = m && LEGACY_ICONS[m[1].toLowerCase()];
+			if (!fa || img.getAttribute('data-vec')) return;
+			img.setAttribute('data-vec', '1');
+			var off = /disabled|down/.test(m[1]);
+			var i = document.createElement('i');
+			i.className = 'fas ' + fa;
+			i.setAttribute('aria-hidden', 'true');
+			i.style.cssText = 'display:inline-block;width:18px;text-align:center;font-size:14px;vertical-align:-2px;color:var(--ink-2,#5b6b7c);opacity:' + (off ? '.5' : '.95');
+			img.parentNode.insertBefore(i, img);
+			img.style.display = 'none';
+		});
+	}
+
 	/* ---------- 启动 ---------- */
 	function init() {
 		var host = document.getElementById('maincontent');
@@ -247,6 +276,9 @@
 		foldLongSections();
 		dirtyWatch();
 		dedupeActions();
+		vectorizeLegacyIcons(host);
+		// JS 渲染的表格（无线关联列表等）稍后才出现，补一次
+		setTimeout(function () { vectorizeLegacyIcons(host); }, 1200);
 		if (/\/network\/dhcp/.test(location.pathname)) dhcpModule(host);
 		if (/\/system\/argon-config/.test(location.pathname)) themeModule(host);
 	}
