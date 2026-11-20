@@ -378,6 +378,75 @@ body :where(.progress) > :where(.progress-bar){
 /* SIM 卡内容比左卡短，不参与等高拉伸，避免下半部大片空白 */
 .cell-sim{align-self:start}
 
+/* ---------------------------- 邻区信号与强度 ---------------------------- */
+.nc-head,.nc-row{
+  display:grid;
+  grid-template-columns:minmax(130px,1.3fr) minmax(74px,.6fr) minmax(190px,1.8fr) 70px 70px 86px;
+  gap:10px;align-items:center;
+}
+.nc-head{
+  padding:7px 12px;border-bottom:1px solid rgba(30,50,90,.07);
+  font-size:10px;font-weight:600;color:#8898aa;letter-spacing:.1px;
+  background:linear-gradient(180deg,#f8fbff,#eef4fc);
+}
+.nc-body{max-height:320px;overflow:auto}
+.nc-row{padding:8px 12px;border-bottom:1px solid rgba(30,50,90,.05);font-size:11px;color:#1e2b48}
+.nc-row:hover{background:rgba(0,96,255,.035)}
+.nc-row:last-child{border-bottom:0}
+.nc-row.nc-serving{background:rgba(0,96,255,.045);box-shadow:inset 3px 0 0 #0060ff}
+.nc-row.weak{opacity:.86}
+.nc-name{display:flex;flex-direction:column;gap:2px;min-width:0}
+.nc-name b{font-size:11.5px;font-weight:600;color:#1e2b48}
+.nc-name small{font-size:9.5px;color:#94a3b8;font-family:var(--mono,monospace)}
+.nc-row .mono{
+  font-family:var(--mono,monospace);font-size:10.5px;
+  color:#5b6b8c;font-variant-numeric:tabular-nums;
+}
+.nc-strength{display:flex;align-items:center;gap:7px}
+.nc-track{
+  flex:1;min-width:56px;height:6px;border-radius:999px;overflow:hidden;
+  background:linear-gradient(180deg,#eef4fc,#e6eefb);
+  box-shadow:inset 0 1px 2px rgba(30,50,90,.12);
+}
+.nc-track i{
+  display:block;height:100%;border-radius:999px;
+  background:linear-gradient(90deg,#38b6ff,#0060ff 62%,#7ae8ff);
+  box-shadow:0 0 8px rgba(0,96,255,.24);
+  transition:width .5s cubic-bezier(.2,.7,.3,1);
+}
+.nc-track i.warn{background:linear-gradient(90deg,#ffc46b,#ff8f1f);box-shadow:0 0 8px rgba(255,143,31,.24)}
+.nc-track i.bad{background:linear-gradient(90deg,#ff9d9e,#f5484a);box-shadow:0 0 8px rgba(245,72,74,.24)}
+.nc-num{
+  flex:0 0 auto;min-width:56px;
+  font:600 10.5px/1 var(--mono,monospace);
+  color:#1e2b48;font-variant-numeric:tabular-nums;
+}
+.nc-dots{display:inline-flex;gap:2px;flex:0 0 auto}
+.nc-dots i{width:3px;height:9px;border-radius:1px;background:#dfe9f6}
+.nc-dots i.on{background:#0060ff}
+.nc-delta{
+  text-align:right;font:600 10.5px/1 var(--mono,monospace);
+  color:#8898aa;font-variant-numeric:tabular-nums;
+}
+.nc-delta.base{color:#0052d9}
+.nc-empty{padding:24px 12px;text-align:center;color:#8898aa;font-size:11.5px}
+.nc-foot{
+  display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding:8px 12px;border-top:1px solid rgba(30,50,90,.06);
+  font-size:10.5px;color:#5b6b8c;background:#fbfdff;
+}
+.nc-foot-dim{color:#94a3b8}
+@media(max-width:760px){
+  .nc-head,.nc-row{grid-template-columns:minmax(96px,1fr) minmax(140px,1.3fr) 64px;gap:6px}
+  .nc-head > span:nth-child(2),
+  .nc-head > span:nth-child(4),
+  .nc-head > span:nth-child(5),
+  .nc-row > .mono:nth-child(2),
+  .nc-row > .mono:nth-child(4),
+  .nc-row > .mono:nth-child(5),
+  .nc-dots{display:none}
+}
+
 /* ---------------------------- ㉒ 进程管理 ---------------------------- */
 .pm-kpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px}
 .pm-kpi .ios-card{margin:0}
