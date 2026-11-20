@@ -1006,5 +1006,19 @@
         $(".container_right").eq(id).removeClass("hide");
     });
 </script>
-<link rel="stylesheet" href="/luci-static/nradio/css/manper-store.css?v=4">
+<script>
+(function(){
+  function msHead(){
+    var c = document.querySelector('.appcontainer');
+    if (!c || document.querySelector('.ms-head')) return;
+    var d = document.createElement('div');
+    d.className = 'ms-head';
+    d.innerHTML = '<div><h1>应用商店</h1><p>管理已安装应用与本机插件</p></div>';
+    c.parentNode.insertBefore(d, c);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', msHead);
+  else msHead();
+})();
+</script>
+<link rel="stylesheet" href="/luci-static/nradio/css/manper-store.css?v=5">
 <%+footer%>

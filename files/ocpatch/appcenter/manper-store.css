@@ -1,212 +1,264 @@
 /* ==========================================================================
-   manper store skin v1 — 应用商店 / 插件库外观美化
-   只覆盖样式，不改 DOM 结构与任何交互逻辑。
-   作用域：nradio_adv/system/appcenter（外层商店）+ store.htm 桥接壳
+   manper store skin v2 — 参考 Apple App Store / Linear / Vercel
+   设计原则：
+   · 深色中性底 + 1px 细边，强调色只用于主操作与激活态（Apple 蓝 #0a84ff）
+   · 应用列表用「行」而不是小卡片：图标 64、标题 16/600、描述 13、操作右对齐
+   · 大留白、清晰层级、无多余渐变；悬浮只做极轻微的亮度与位移
    ========================================================================== */
 
-/* ---------- 外层应用商店 ---------- */
+/* ---------- 页面骨架 ---------- */
 .appcontainer {
-  --ms-accent: #00d5ff;
-  --ms-accent-2: #0072ff;
-  --ms-surface: #1c1d23;
-  --ms-surface-2: #22242b;
-  --ms-border: #2e3038;
-  --ms-ink: #e9ebf2;
-  --ms-ink-2: #9aa2b1;
-  --ms-ink-3: #8f97a7;
-  gap: 18px;
+  --ms-bg: #0b0c0e;
+  --ms-surface: #15171b;
+  --ms-surface-2: #1b1e23;
+  --ms-line: #262a31;
+  --ms-line-2: #31363e;
+  --ms-text: #f5f7fa;
+  --ms-text-2: #a9b1bc;
+  --ms-text-3: #737c88;
+  --ms-accent: #0a84ff;
+  --ms-accent-2: #409cff;
+  --ms-danger: #ff453a;
+
+  display: grid !important;
+  grid-template-columns: 216px minmax(0, 1fr) !important;
+  gap: 20px 28px !important;
+  align-items: start;
 }
 
-/* 顶部工具区：存储卡 */
+/* 顶部标题（由 appcenter.htm 注入 .ms-head） */
+.ms-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 2px 0 2px;
+}
+.ms-head h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  color: var(--ms-text);
+}
+.ms-head p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ms-text-3);
+}
+
+/* ---------- 工具条：存储 + 操作 ---------- */
 .appcontainer .app_btn_box {
-  background: linear-gradient(180deg, #1e1f26, #191a20);
-  border: 1px solid var(--ms-border);
+  grid-column: 1 / -1;
+  background: var(--ms-surface);
+  border: 1px solid var(--ms-line);
   border-radius: 16px;
-  padding: 14px 18px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .22);
+  padding: 16px 20px;
+  box-shadow: none;
 }
 .appcontainer .app_btn_box .mem_track {
   max-width: none;
   flex: 1 1 auto;
   margin-left: 0;
-  gap: 8px;
+  gap: 10px;
 }
 .appcontainer .mem_header {
   font-size: 12px;
-  letter-spacing: .2px;
-  color: var(--ms-ink-2);
+  letter-spacing: .01em;
+  color: var(--ms-text-3);
 }
 .appcontainer .mem_header #memory_detail {
-  color: var(--ms-ink);
+  color: var(--ms-text);
+  font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
 }
 .appcontainer .mem_progress {
-  height: 9px;
-  background: #2b2d35;
+  height: 6px;
+  background: #23262c;
   border-radius: 999px;
   overflow: hidden;
   margin-top: 0;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .4);
+  box-shadow: none;
 }
 .appcontainer .mem_progress_inner {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #00d5ff, #0072ff);
-  box-shadow: 0 0 14px rgba(0, 213, 255, .4);
-  transition: width .5s ease;
+  background: var(--ms-accent);
+  box-shadow: none;
+  transition: width .45s cubic-bezier(.2, .7, .2, 1);
+}
+.appcontainer .app_btn_group {
+  display: flex;
+  gap: 8px;
 }
 .appcontainer .app_btn_group .app_btn_class {
-  padding: 8px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--ms-border);
-  background: #23252d;
-  color: var(--ms-ink);
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--ms-line-2);
+  background: transparent;
+  color: var(--ms-text-2);
   font-size: 13px;
-  line-height: 1.4;
-  transition: .18s;
+  font-weight: 500;
+  line-height: 1;
+  transition: background .16s, border-color .16s, color .16s;
 }
 .appcontainer .app_btn_group .app_btn_class:hover {
-  border-color: rgba(0, 213, 255, .5);
-  color: #7fe6ff;
-  background: #262a33;
-  transform: translateY(-1px);
+  background: var(--ms-surface-2);
+  border-color: #3a4049;
+  color: var(--ms-text);
 }
 
-/* 左侧导航 */
+/* ---------- 左侧导航 ---------- */
 .appcontainer .container_left ul {
-  background: var(--ms-surface);
-  border: 1px solid var(--ms-border);
-  border-radius: 16px;
-  padding: 8px;
+  background: transparent;
+  border: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   margin: 0;
+}
+.appcontainer .container_left ul::before {
+  content: "应用";
+  display: block;
+  padding: 4px 12px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: var(--ms-text-3);
+  text-transform: uppercase;
 }
 .appcontainer .container_left .app_menu {
   margin: 0;
-  padding: 10px 14px;
+  padding: 0 12px;
+  height: 40px;
+  display: flex;
+  align-items: center;
   border-radius: 10px;
-  line-height: 1.4;
-  font-size: 13.5px;
-  color: var(--ms-ink-2);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ms-text-2);
   cursor: pointer;
-  transition: .18s;
+  transition: background .16s, color .16s;
   position: relative;
-}
-.appcontainer .container_left .app_menu:hover {
-  background: #24262e;
-  color: var(--ms-ink);
-}
-.appcontainer .container_left .app_menu,
-.appcontainer .container_left .app_menu.menu_active {
   -webkit-text-fill-color: currentColor !important;
 }
+.appcontainer .container_left .app_menu:hover {
+  background: var(--ms-surface-2);
+  color: var(--ms-text);
+}
 .appcontainer .container_left .app_menu.menu_active {
-  background: linear-gradient(90deg, rgba(0, 213, 255, .16), rgba(0, 114, 255, .08));
-  color: #8be9ff;
+  background: var(--ms-surface-2);
+  color: var(--ms-text);
   font-weight: 600;
 }
 .appcontainer .container_left .app_menu.menu_active::before {
   content: "";
   position: absolute;
   left: 0;
-  top: 20%;
-  bottom: 20%;
+  top: 50%;
+  transform: translateY(-50%);
   width: 3px;
+  height: 18px;
   border-radius: 3px;
-  background: linear-gradient(180deg, #00d5ff, #0072ff);
+  background: var(--ms-accent);
 }
 .appcontainer .mem_mobile {
-  padding: 10px 12px;
-  color: var(--ms-ink-2);
+  padding: 12px;
+  color: var(--ms-text-3);
   font-size: 12px;
 }
 
-/* 卡片 */
-.appcontainer .container_right { gap: 14px; align-content: start; }
+/* ---------- 应用列表：Apple App Store 行式 ---------- */
+.appcontainer .container_right {
+  grid-template-columns: 1fr !important;
+  gap: 10px !important;
+  align-content: start;
+}
 .appcontainer .app_box {
   height: auto !important;
   overflow: visible !important;
-  background: linear-gradient(180deg, #22232a, #1b1c22);
-  border: 1px solid var(--ms-border);
+  display: flex !important;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: #16181c;
+  border: 1px solid var(--ms-line);
   border-radius: 16px;
-  padding: 16px 16px 14px;
-  grid-template-columns: 56px 1fr;
-  grid-template-areas: "icon info" "action action";
-  gap: 12px 14px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
-  position: relative;
-  overflow: hidden;
-  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  box-shadow: none;
+  transition: background .16s, border-color .16s, transform .16s;
 }
-.appcontainer .app_box::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .18), transparent);
-}
+.appcontainer .app_box::after { display: none; }
 .appcontainer .app_box:hover {
-  transform: translateY(-2px);
-  border-color: rgba(0, 213, 255, .35);
-  box-shadow: 0 14px 32px rgba(0, 0, 0, .35), 0 0 0 1px rgba(0, 213, 255, .12);
+  background: var(--ms-surface-2);
+  border-color: var(--ms-line-2);
+  transform: translateY(-1px);
+  box-shadow: none;
 }
 .appcontainer .app_box .app_icon {
-  grid-area: icon;
-  width: 56px;
-  height: 56px;
+  width: 64px;
+  height: 64px;
   margin: 0;
   float: none;
-  border-radius: 14px;
-  background: rgba(0, 213, 255, .08);
-  border: 1px solid rgba(0, 213, 255, .14);
+  flex: 0 0 64px;
+  border-radius: 16px;
+  background: #0e1013;
+  border: 1px solid var(--ms-line);
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 .appcontainer .app_box .app_icon_img {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
   object-fit: contain;
 }
 .appcontainer .app_box .app_info {
-  grid-area: info;
+  flex: 1 1 auto;
+  min-width: 0;
   width: auto;
   margin: 0;
   float: none;
-  min-width: 0;
 }
 .appcontainer .app_box .app_name {
   float: none;
   width: auto;
   height: auto;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
-  color: var(--ms-ink);
-  letter-spacing: .2px;
+  letter-spacing: -.01em;
+  color: var(--ms-text);
+  line-height: 1.3;
 }
 .appcontainer .app_box .app_version {
   float: none;
   width: auto;
   height: auto;
-  display: inline-block;
-  margin-top: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: #2b2d35;
-  color: var(--ms-ink-2);
-  font-size: 11px;
-  line-height: 1.5;
+  display: block;
+  margin-top: 2px;
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  color: var(--ms-text-3);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .appcontainer .app_box .app_des {
   float: none;
   width: auto;
-  margin-top: 8px;
-  color: var(--ms-ink-3);
-  font-size: 12.5px;
+  margin-top: 6px;
+  color: var(--ms-text-2);
+  font-size: 13px;
   line-height: 1.55;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -214,151 +266,215 @@
   overflow: hidden;
 }
 .appcontainer .app_box .app_action {
-  grid-area: action;
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  margin-left: 8px;
 }
 .appcontainer .action_list {
   float: none;
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+/* 主操作：Apple 实心胶囊 */
 .appcontainer .action_list_li {
-  padding: 7px 16px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 20px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1;
   cursor: pointer;
   user-select: none;
-  background: rgba(0, 213, 255, .10);
-  border: 1px solid rgba(0, 213, 255, .25);
-  color: #6fe4ff;
-  transition: .16s;
+  background: var(--ms-accent);
+  border: 1px solid transparent;
+  color: #fff;
+  -webkit-text-fill-color: currentColor;
+  transition: background .16s, opacity .16s, transform .1s;
 }
-.appcontainer .action_list_li:hover {
-  background: linear-gradient(135deg, #00d5ff, #0072ff);
-  color: #04121a;
-  border-color: transparent;
-  box-shadow: 0 4px 14px rgba(0, 213, 255, .3);
-}
+.appcontainer .action_list_li:hover { background: var(--ms-accent-2); }
+.appcontainer .action_list_li:active { transform: scale(.97); }
+/* 卸载：次级描边按钮，红仅用于 hover */
 .appcontainer .action_list_li[onclick*="uninstall"] {
-  background: rgba(255, 90, 90, .08);
-  border-color: rgba(255, 90, 90, .25);
-  color: #ff9b9b;
+  background: transparent;
+  border-color: var(--ms-line-2);
+  color: var(--ms-text-2);
 }
 .appcontainer .action_list_li[onclick*="uninstall"]:hover {
-  background: linear-gradient(135deg, #ff6b6b, #c92a2a);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(255, 90, 90, .25);
+  background: rgba(255, 69, 58, .1);
+  border-color: rgba(255, 69, 58, .55);
+  color: #ff6b61;
 }
 
-/* 顶部已打开应用 tab */
+/* ---------- 顶部已打开应用：分段控件 ---------- */
 #app_top_menu {
-  display: flex !important;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: inline-flex !important;
   align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
   height: auto !important;
-  margin: 0 0 12px;
+  margin: 0 0 14px;
+  padding: 4px;
+  background: var(--ms-surface);
+  border: 1px solid var(--ms-line);
+  border-radius: 12px;
 }
 #app_top_menu .top_menu {
   margin: 0 !important;
-  padding: 7px 14px !important;
-  height: auto !important;
+  padding: 0 12px !important;
+  height: 30px !important;
   min-height: 0 !important;
-  line-height: 1.5 !important;
-  border-radius: 999px;
-  background: #1f2027;
-  border: 1px solid var(--ms-border);
-  color: #c9cfdb !important;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9px;
+  border: 1px solid transparent !important;
+  background: transparent;
+  color: var(--ms-text-2) !important;
   -webkit-text-fill-color: currentColor !important;
-  border-bottom: none;
   font-size: 13px;
+  font-weight: 500;
+  line-height: 1 !important;
+  transition: background .16s, color .16s;
 }
-#app_top_menu .top_menu:hover { color: #8be9ff !important; border-color: rgba(0, 213, 255, .35); }
+#app_top_menu .top_menu:hover { color: var(--ms-text) !important; background: var(--ms-surface-2); }
 #app_top_menu .top_menu_active {
-  background: linear-gradient(135deg, rgba(0, 213, 255, .18), rgba(0, 114, 255, .12));
-  border-color: rgba(0, 213, 255, .35);
-  color: #8be9ff !important;
+  background: var(--ms-surface-2);
+  color: var(--ms-text) !important;
+  border-color: var(--ms-line-2) !important;
+  font-weight: 600;
+}
+#app_top_menu .top_menu_inner_icon,
+#app_top_menu .svg-inline--fa {
+  width: 14px;
+  height: 14px;
+  padding: 4px;
+  margin-left: 4px;
+  border-radius: 7px;
+  color: var(--ms-text-3);
+  cursor: pointer;
+  transition: background .16s, color .16s;
+}
+#app_top_menu .top_menu_inner_icon:hover,
+#app_top_menu .svg-inline--fa:hover {
+  background: rgba(255, 69, 58, .14);
+  color: var(--ms-danger);
 }
 
-/* 应用内嵌弹窗 */
+/* ---------- 内嵌应用弹窗 ---------- */
 .modal.app_frame .modal-content {
-  background: #16171c;
-  border: 1px solid var(--ms-border);
-  border-radius: 18px;
+  background: #101215;
+  border: 1px solid var(--ms-line-2);
+  border-radius: 20px;
   overflow: hidden;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, .55);
+  box-shadow: 0 40px 120px rgba(0, 0, 0, .72);
 }
-.modal.app_frame .modal-body { padding: 0; background: #16171c; }
-.bootstrap-dialog-message > iframe {
-  border-radius: 14px;
-  background: #16171c;
+.modal.app_frame .modal-body { padding: 0; background: #101215; }
+.bootstrap-dialog-message > iframe { border-radius: 14px; background: #101215; }
+.modal.app_frame .close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 5;
+  color: var(--ms-text-2);
+  opacity: .8;
+  text-shadow: none;
 }
-.modal-backdrop.in {
-  backdrop-filter: blur(6px);
-  background: #0b0c10;
-  opacity: .72;
-}
+.modal.app_frame .close:hover { color: #fff; opacity: 1; }
+.modal-backdrop.in { backdrop-filter: blur(10px); background: #000; opacity: .6; }
 
 /* ---------- 插件库桥接壳 ---------- */
 .ns-wrap {
-  background: linear-gradient(180deg, #1a1b21, #14151a);
-  color: #e9ebf2;
-  border: 1px solid #2e3038;
+  background: #101215;
+  color: var(--ms-text, #f5f7fa);
+  border: 1px solid #262a31;
   border-radius: 16px;
-  padding: 12px;
+  padding: 10px;
 }
-.ns-frame { background: #14151a; border-radius: 12px; }
-.ns-fbox h3 { color: #e9ebf2; }
-.ns-fbox p { color: #8f97a7; }
+.ns-frame { background: #101215; border-radius: 12px; }
+.ns-fbox h3 { color: #f5f7fa; font-weight: 600; letter-spacing: -.01em; }
+.ns-fbox p { color: #737c88; }
 .ns-fbox code {
-  background: #1f2128;
-  border: 1px solid #2e3038;
-  color: #9aa2b1;
+  background: #15171b;
+  border: 1px solid #262a31;
+  color: #a9b1bc;
   border-radius: 10px;
 }
 .ns-btn {
-  background: linear-gradient(135deg, #00d5ff, #0072ff);
+  height: 34px;
+  padding: 0 18px;
+  background: #0a84ff;
   border-radius: 999px;
-  color: #04121a;
+  color: #fff;
   font-weight: 600;
+  -webkit-text-fill-color: #fff;
 }
-.ns-btn:hover { filter: brightness(1.06); }
+.ns-btn:hover { background: #409cff; filter: none; }
 .ns-btn.sec {
-  background: #22242b;
-  color: #c9cfdb;
-  border: 1px solid #31343e;
+  background: transparent;
+  color: #a9b1bc;
+  border: 1px solid #31363e;
 }
-.ns-spin {
-  border: 3px solid #2a2c34;
-  border-top-color: #00d5ff;
-}
+.ns-btn.sec:hover { background: #1b1e23; color: #f5f7fa; }
+.ns-spin { border: 3px solid #262a31; border-top-color: #0a84ff; }
 .ns-switch {
-  background: #221d10;
-  border: 1px solid #4a3c17;
-  color: #f0c36d;
+  background: #1d1a12;
+  border: 1px solid #453a1c;
+  color: #e8c06a;
   border-radius: 12px;
 }
 .ns-fw {
-  background: #241715;
-  border: 1px solid #4f2a22;
-  color: #ffb4a8;
+  background: #1f1412;
+  border: 1px solid #4a2621;
+  color: #ff8f85;
   border-radius: 12px;
 }
 
-/* 手机窄屏 */
-@media (max-width: 767px) {
-  .appcontainer .container_left ul {
-    flex-direction: row;
-    padding: 6px;
-  }
-  .appcontainer .container_left .app_menu { flex: 1 1 auto; text-align: center; }
-  .appcontainer .app_box { padding: 14px; }
-  .appcontainer .app_box .app_icon { width: 50px; height: 50px; border-radius: 12px; }
-  .appcontainer .app_box .app_icon_img { width: 38px; height: 38px; }
-  .appcontainer .app_box .app_name { font-size: 14.5px; }
-  .appcontainer .container_right { gap: 12px; }
+
+/* ---------- 覆盖 vendor 的 float/百分比宽度（flex/grid 下会塌缩） ---------- */
+.appcontainer .container_left,
+.appcontainer .container_right,
+.appcontainer .app_box,
+.appcontainer .app_action,
+.appcontainer .app_info,
+.appcontainer .app_name,
+.appcontainer .app_version,
+.appcontainer .app_des,
+.appcontainer .app_icon,
+.appcontainer .action_list {
+  float: none !important;
+}
+.appcontainer .container_left { width: 100% !important; }
+.appcontainer .container_right { width: 100% !important; }
+.appcontainer .app_box { width: 100% !important; }
+.appcontainer .app_action { width: auto !important; flex: 0 0 auto !important; }
+.appcontainer .app_info { width: auto !important; flex: 1 1 auto !important; min-width: 0 !important; }
+.appcontainer .app_icon { width: 64px !important; flex: 0 0 64px !important; }
+.appcontainer .app_name,
+.appcontainer .app_version,
+.appcontainer .app_des { width: auto !important; }
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 900px) {
+  .appcontainer { grid-template-columns: 1fr !important; gap: 16px !important; }
+  .appcontainer .container_left ul { flex-direction: row; gap: 4px; }
+  .appcontainer .container_left ul::before { display: none; }
+  .appcontainer .container_left .app_menu { flex: 1 1 auto; justify-content: center; }
+  .ms-head h1 { font-size: 21px; }
+}
+@media (max-width: 600px) {
+  .appcontainer .app_box { flex-wrap: wrap; gap: 12px; padding: 14px; }
+  .appcontainer .app_box .app_icon { width: 52px; height: 52px; flex-basis: 52px; border-radius: 13px; }
+  .appcontainer .app_box .app_icon_img { width: 44px; height: 44px; border-radius: 10px; }
+  .appcontainer .app_box .app_info { flex-basis: calc(100% - 76px); }
+  .appcontainer .app_box .app_action { flex: 1 0 100%; margin: 2px 0 0; }
+  .appcontainer .action_list { width: 100%; justify-content: flex-end; }
+  .appcontainer .app_btn_box { padding: 14px 16px; }
+  .appcontainer .app_btn_group { width: 100%; justify-content: flex-end; }
 }
