@@ -25,6 +25,10 @@ _OC_PORT=$(uci -q get openclash.config.cn_port 2>/dev/null)
 _OC_SECRET=$(uci -q get openclash.config.dashboard_password 2>/dev/null)
 # 兼容 nradio-genshin（原神启动，OpenClash 修改版）
 [ -z "$_OC_SECRET" ] && _OC_SECRET=$(uci -q get nradio-genshin.config.panel_secret 2>/dev/null)
+# provider 模式（nradio-genshin / 原神启动）：真实节点不在 /proxies，
+# 单节点 delay 接口会返回 404，必须改走 /group/<组>/delay 一次拿全组延迟。
+PROVIDER_MODE=0
+[ -n "$(uci -q get nradio-genshin.config.panel_secret 2>/dev/null)" ] && PROVIDER_MODE=1
 # 未设置 dashboard_password 时按无密钥访问；切勿把真实密钥写死进仓库
 # 验收/测试隔离覆盖点（默认全部关闭，不影响线上行为）：
 #   KP_API_OVERRIDE  把 OpenClash API 指向本地 stub，用于端到端自动切换测试
@@ -105,10 +109,37 @@ set_progress() { # phase msg pct
   printf '{"phase":"%s","msg":"%s","pct":%s}' "$1" "$2" "$3" > $DIR/progress.json 2>/dev/null
 }
 
+# provider 模式下的「单节点延迟」：组测速一次覆盖全组，按 URL 缓存 90 秒，
+# 避免备用预选/故障转移/Gemini 每个节点都触发一次全组测试。
+provider_group_delay() { # name url timeout -> ms or empty
+  local n="$1" u="$2" t="$3" g enc ck cache stamp now last
+  g=$(get group); [ -z "$g" ] && return 0
+  enc=$(urlenc "$g")
+  # 不依赖 cksum/md5sum（部分老固件没装）：直接把 URL 规整成文件名
+  ck=$(printf '%s' "$u" | tr -c 'A-Za-z0-9' '_' | cut -c1-80)
+  [ -z "$ck" ] && ck=default
+  cache="$DIR/pdelay_$ck.json"; stamp="$DIR/pdelay_$ck.ts"
+  now=$(date +%s); last=$(cat "$stamp" 2>/dev/null || echo 0)
+  if [ ! -s "$cache" ] || [ $((now - last)) -ge 90 ]; then
+    curl -s -m $((t/1000+20)) -H "Authorization: Bearer $SECRET"       "$API/group/$enc/delay?timeout=$t&url=$(urlenc "$u")" > "$cache" 2>/dev/null
+    date +%s > "$stamp"
+  fi
+  [ -s "$cache" ] || return 0
+  # 注意: lua -e 后面的参数会被当成脚本文件名，不能用来传节点名；
+  # 用环境变量传参（os.getenv），否则节点名会被当作文件打开导致永远取不到值。
+  NODE_NAME="$n" lua -e 'local ok,j=pcall(require,"luci.jsonc"); if not ok then os.exit(0) end
+    local d=j.parse(io.read("*a") or ""); if type(d)~="table" then os.exit(0) end
+    local v=d[os.getenv("NODE_NAME")]; if type(v)=="number" then print(v) end' < "$cache" 2>/dev/null
+}
+
 node_delay() { # name url timeout -> ms or empty
   local n="$1" u="$2" t="$3" r d
   r=$(curl -s -m $((t/1000+3)) -H "Authorization: Bearer $SECRET" "$API/proxies/$(urlenc "$n")/delay?url=$(urlenc "$u")&timeout=$t" 2>/dev/null)
   d=$(echo "$r" | grep -o '"delay":[0-9]*' | head -1 | cut -d: -f2)
+  # provider 模式兜底: /proxies 里没有该节点(返回 Resource not found)
+  if [ -z "$d" ] && [ "$PROVIDER_MODE" = "1" ]; then
+    d=$(provider_group_delay "$n" "$u" "$t")
+  fi
   [ -n "$d" ] && echo "$d"
 }
 
