@@ -23,6 +23,8 @@
 _OC_PORT=$(uci -q get openclash.config.cn_port 2>/dev/null)
 [ -z "$_OC_PORT" ] && _OC_PORT=9090
 _OC_SECRET=$(uci -q get openclash.config.dashboard_password 2>/dev/null)
+# 兼容 nradio-genshin（原神启动，OpenClash 修改版）
+[ -z "$_OC_SECRET" ] && _OC_SECRET=$(uci -q get nradio-genshin.config.panel_secret 2>/dev/null)
 # 未设置 dashboard_password 时按无密钥访问；切勿把真实密钥写死进仓库
 # 验收/测试隔离覆盖点（默认全部关闭，不影响线上行为）：
 #   KP_API_OVERRIDE  把 OpenClash API 指向本地 stub，用于端到端自动切换测试
@@ -140,7 +142,8 @@ probe_delay_multi() { # name timeout [max_alt]
 # 决定性对照: 台湾01 的 alive 原文是 false, 旧方法把它记成 true;
 # 而当前节点(139ms, 全场最快)真实 alive=true 却被记成 false, 于是永远当不了备用节点。
 json_nodes_tsv() {
-  awk '
+  local TD="${2:-3}"
+  awk -v TD="$TD" '
   { s = s $0 }
   END {
     n = length(s); depth = 0; instr = 0; esc = 0; mode = 0
@@ -155,7 +158,7 @@ json_nodes_tsv() {
           if (mode == 1) { mode = 3 }
           else if (mode == 2) {
             mode = 0
-            if (depth == 3) {
+            if (depth == TD) {
               if (key == "name") nm = val
               else if (key == "type") tp = val
             }
@@ -172,15 +175,15 @@ json_nodes_tsv() {
       if (c == ":") { if (mode == 3) { mode = 4; val = "" } continue }
       if (c == "{") { depth++; mode = 0; continue }
       if (c == "}") {
-        if (mode == 4 && depth == 3 && key == "alive") al = val
-        if (depth == 3 && nm != "") {
+        if (mode == 4 && depth == TD && key == "alive") al = val
+        if (depth == TD && nm != "") {
           printf "%s\t%s\t%s\n", nm, al, tp
           nm = ""; tp = ""; al = ""
         }
         depth--; mode = 0; continue
       }
       if (c == ",") {
-        if (mode == 4 && depth == 3 && key == "alive") al = val
+        if (mode == 4 && depth == TD && key == "alive") al = val
         mode = 0; val = ""; continue
       }
       if (mode == 4) val = val c
@@ -191,6 +194,14 @@ json_nodes_tsv() {
 collect_all_nodes() {
   api_get /proxies > $DIR/proxies.json
   json_nodes_tsv $DIR/proxies.json > $DIR/nt.tsv
+  # provider 模式（如 nradio-genshin / 原神启动）：真实节点只出现在
+  # /providers/proxies，/proxies 里只有策略组与内置出站。此时补抓并合并。
+  real=$(awk -F'	' 'tolower($3) ~ /^(vless|vmess|trojan|hysteria|hysteria2|tuic|wireguard|snell|shadowsocks|ss|ssr|socks5|http|mieru|ssh|anytls|shadowtls)$/ {c++} END{print c+0}' $DIR/nt.tsv 2>/dev/null)
+  if [ "$real" -eq 0 ]; then
+    api_get /providers/proxies > $DIR/providers.json
+    json_nodes_tsv $DIR/providers.json 4 >> $DIR/nt.tsv
+    log collect "provider 模式: 从 /providers/proxies 合并节点"
+  fi
   # 兜底: 万一深度解析零输出(上游结构变了), 退回旧的 grep 配对,
   # 宁可拿到错位的数据, 也不能一个节点都收集不到导致整轮空跑。
   if [ ! -s $DIR/nt.tsv ]; then
@@ -223,6 +234,8 @@ collect_all_nodes() {
     esac
     printf '%s\t%s\t%s\n' "$name" "$type" "$alive" >> $DIR/allnodes.txt
   done < $DIR/nt.tsv
+  # 线路1/线路2 两个 provider 常有同名节点，按名字去重，避免页面出现重复行
+  awk -F "$(printf '	')" '!seen[$1]++' $DIR/allnodes.txt > $DIR/allnodes.dedup 2>/dev/null && mv $DIR/allnodes.dedup $DIR/allnodes.txt
 }
 
 is_fake() {
@@ -268,6 +281,24 @@ speedtest() { # url timeout outfile [total]
   cat $DIR/par_$$.out >> $out 2>/dev/null
   rm -f $DIR/par_$$.out
   sort -n $out > $out.tmp 2>/dev/null && mv $out.tmp $out
+}
+
+# provider 模式（nradio-genshin / 原神启动）的组测速:
+# 节点不在 /proxies, 单节点 delay 会 404; 但 /group/<组>/delay 能一次返回
+# 全组成员(含 provider 节点)的延迟映射 {"节点名":毫秒}。
+speedtest_group() { # group timeout outfile
+  local g="$1" t="$2" out="$3"
+  local tu=$(get test_url); [ -z "$tu" ] && tu='https://www.gstatic.com/generate_204'
+  local enc=$(urlenc "$g")
+  set_progress "testing" "组测速中 ($g)" 50
+  api_get "/group/$enc/delay?timeout=$t&url=$(urlenc "$tu")" > $DIR/groupdelay.json
+  : > "$out"
+  if [ -s $DIR/groupdelay.json ] && command -v lua >/dev/null 2>&1; then
+    lua -e 'local ok,j=pcall(require,"luci.jsonc"); if not ok then os.exit(1) end
+      local d=j.parse(io.read("*a") or ""); if type(d)~="table" then os.exit(1) end
+      for k,v in pairs(d) do if type(v)=="number" then print(v.."	"..k) end end'       < $DIR/groupdelay.json 2>/dev/null | sort -n > "$out"
+  fi
+  [ -s "$out" ] && log run "组测速完成: $(wc -l < "$out") 个节点有结果" || log run "组测速无结果 (group=$g)"
 }
 
 # 注意: trap 必须同时清 running —— 只清 lock 的话, lock 在 tmpfs 上重启即没,
@@ -442,7 +473,11 @@ speedtest_full() {
 
   cut -f1 $DIR/allnodes.txt > $DIR/allnodes.list
   set_progress "testing" "全量测速中 ($n_all 节点)" 40
-  speedtest "$test_url" "$timeout" $DIR/allresults.txt $n_all
+  if [ -s $DIR/providers.json ]; then
+    speedtest_group "$group" "$timeout" $DIR/allresults.txt
+  else
+    speedtest "$test_url" "$timeout" $DIR/allresults.txt $n_all
+  fi
   if [ ! -s $DIR/allresults.txt ]; then
     run_mark_clear
     log run "全部节点测速超时"
@@ -451,7 +486,7 @@ speedtest_full() {
   build_nodes_json
   set_progress "nodes" "节点状态已生成" 60
 
-  now=$(api_get "/proxies/$group" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
+  now=$(api_get "/proxies/$(urlenc "$group")" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
 
   : > $DIR/stage1.txt
   local TAB=$(printf '\t')
@@ -467,6 +502,13 @@ speedtest_full() {
   # 决赛目标是 gemini.google.com, 国内不可达、必须走代理, 抖动可达 2.3 倍
   # (实测同节点两轮 908ms / 2108ms), 而切换阈值只有 50ms —— 拿它排名等于掷骰子。
   # 后果: 历史 8 次切换里 4 次是劣化, 152ms 的节点被 656ms 的顶掉, 半小时后又切回来。
+  if [ -s $DIR/providers.json ]; then
+    # provider 模式: 单节点无法调 gemini 延迟接口, 跳过决赛闸门, 直接按初赛排序
+    cp $DIR/stage1.txt $DIR/top5d.txt
+    cut -f2 $DIR/top5d.txt > $DIR/top5.txt
+    cp $DIR/stage1.txt $DIR/stage2.txt
+    cut -f2 $DIR/stage2.txt > $DIR/stage2_names.txt
+  else
   cp $DIR/stage1.txt $DIR/top5d.txt                   # v1.0: 闸门扩到全部候选(仍按初赛升序)
   cut -f2 $DIR/top5d.txt > $DIR/top5.txt
   : > $DIR/stage2.txt
@@ -484,6 +526,7 @@ speedtest_full() {
   done < $DIR/top5.txt
   sort -n $DIR/stage2.txt > $DIR/stage2.tmp 2>/dev/null && mv $DIR/stage2.tmp $DIR/stage2.txt
   cut -f2 $DIR/stage2.txt > $DIR/stage2_names.txt 2>/dev/null
+  fi
 
   # 按初赛顺序过闸门, 第一个通过决赛的就是目标
   : > $DIR/best_order.txt
@@ -526,7 +569,7 @@ speedtest_full() {
         log run "当前 $now 初赛无结果(失效或被排除), 将切到 $best (初赛${bestd}ms)"
       fi
       if [ $dosw -eq 1 ]; then
-        curl -s -m 8 -X PUT -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/json' -d "{\"name\":\"$(json_esc "$best")\"}" "$API/proxies/$group" >/dev/null 2>&1
+        curl -s -m 8 -X PUT -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/json' -d "{\"name\":\"$(json_esc "$best")\"}" "$API/proxies/$(urlenc "$group")" >/dev/null 2>&1
         switched=1
         # 日志补齐 curd1, 事后才分得清「真的更快」还是「当前节点决赛没测出来」
         log run "已切换 $group: $now (初赛${curd1:-无}) -> $best (初赛${bestd}ms, 决赛${bestfin})"
@@ -617,7 +660,7 @@ backup_do() {
   local keep=$(get backup_keep); [ -z "$keep" ] && keep=3
   local to=$(get timeout); [ -z "$to" ] && to=4000
 
-  local cur=$(api_get "/proxies/$group" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
+  local cur=$(api_get "/proxies/$(urlenc "$group")" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
   local TAB=$(printf '\t')
   # cur 为空时 grep -vF "" 会把所有行都过滤掉, 用一个不可能出现的哨兵兜住
   local curf="$cur"
@@ -770,7 +813,7 @@ gemini_failover() {
     return 1
   fi
   local group=$(get group); [ -z "$group" ] && group='宝贝云'
-  local cur=$(api_get "/proxies/$group" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
+  local cur=$(api_get "/proxies/$(urlenc "$group")" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
   grep -o '"n":"[^"]*","d":[0-9]*,"g":[0-9]*' $DATA/backup.json 2>/dev/null \
     | sed 's/"n":"//; s/","d":[^,]*,"g":/\t/' | sort -n -k2 > $DIR/gem_cand.txt
   if [ ! -s $DIR/gem_cand.txt ]; then
@@ -822,7 +865,7 @@ gemini_check() {
   gemini_state_set last_check "$now"
   [ "$mode" = "auto" ] && gemini_state_set last_auto_check "$now"
   local group=$(get group); [ -z "$group" ] && group='宝贝云'
-  local cur=$(api_get "/proxies/$group" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
+  local cur=$(api_get "/proxies/$(urlenc "$group")" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
   local netok=0 gok=0 gdelay=0 switched=0 fc=0 d=""
   local bgc=0
   [ -f $DATA/backup.json ] && bgc=$(grep -o '"g":[0-9]*' $DATA/backup.json 2>/dev/null | wc -l)
@@ -871,7 +914,7 @@ failover_check() { # 断线自动故障转移
   v=$(api_get /version)
   echo "$v" | grep -q version || { log failover "API不可达, 跳过"; return 0; }
   local group=$(get group); [ -z "$group" ] && group='宝贝云'
-  local cur=$(api_get "/proxies/$group" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
+  local cur=$(api_get "/proxies/$(urlenc "$group")" | grep -o '"now":"[^"]*"' | head -1 | cut -d'"' -f4)
   [ -z "$cur" ] && return 0
   case "$cur" in GLOBAL|DIRECT|REJECT|REJECT-DROP|COMPATIBLE|PASS|PASS-RULE|自动选择|延迟最低|宝贝云) return 0 ;; esac
   # 静默期: 一轮 44 节点全量测速结束后, mihomo 的延迟探测通道会留下十几秒的
@@ -1106,7 +1149,7 @@ testnode() {
 switchnode() {
   local name="$1"
   local group=$(get group); [ -z "$group" ] && group='宝贝云'
-  curl -s -m 8 -X PUT -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/json' -d "{\"name\":\"$(json_esc "$name")\"}" "$API/proxies/$group"
+  curl -s -m 8 -X PUT -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/json' -d "{\"name\":\"$(json_esc "$name")\"}" "$API/proxies/$(urlenc "$group")"
 }
 
 case "$1" in
